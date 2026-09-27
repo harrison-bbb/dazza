@@ -31,6 +31,8 @@ class ScriptedProvider implements AgentProvider {
     return [];
   }
 
+  async signIn() {}
+
   async *run(options: AgentRunOptions): AsyncGenerator<AgentEvent> {
     this.runs.push(options);
     const behaviour = this.script[Math.min(this.runs.length - 1, this.script.length - 1)];

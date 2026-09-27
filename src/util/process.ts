@@ -44,8 +44,10 @@ export async function execCommand(
 
 export interface SpawnLinesOptions {
   cwd: string;
-  /** Written to the process's stdin, which is then closed. */
+  /** Written to the process's stdin, which is then closed (unless `keepStdinOpen`). */
   input?: string;
+  /** For conversational processes that exit when stdin closes; stopped via the signal. */
+  keepStdinOpen?: boolean;
   /** The child's whole environment; defaults to this process's. */
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
@@ -66,7 +68,8 @@ export async function* spawnLines(
     ...(options.env && { env: options.env }),
     ...(options.signal && { signal: options.signal }),
   });
-  child.stdin.end(options.input);
+  if (options.keepStdinOpen) child.stdin.write(options.input ?? '');
+  else child.stdin.end(options.input);
 
   let stderr = '';
   child.stderr.setEncoding('utf8');

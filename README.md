@@ -2,7 +2,7 @@
 
 > Stop operating your coding agent. Start managing it.
 
-Dazza is a harness around [Claude Code](https://docs.claude.com/en/docs/claude-code) and
+Dazza is a harness around [Claude Code](https://docs.claude.com/en/docs/claude-code) or
 [Codex](https://github.com/openai/codex) that moves you from the operator's seat to the manager's.
 You talk through what you want to build. Dazza scopes it into tasks with clear acceptance criteria and
 shows you the plan on a local board. Once you approve it, Dazza works through the tasks like a
@@ -27,7 +27,16 @@ you ──chat──▶ dazza ──scopes──▶ .dazza/ (scope + tasks) ─�
 
 ## Try it
 
-Dazza needs [Claude Code](https://docs.claude.com/en/docs/claude-code) installed and signed in.
+Dazza drives [Claude Code](https://docs.claude.com/en/docs/claude-code) or [Codex](https://github.com/openai/codex), whichever you use. Install at least one. The first run asks how to connect:
+
+| Connection | Agent | Pays through |
+|---|---|---|
+| Claude subscription | Claude Code | your Pro or Max plan |
+| Anthropic API key | Claude Code | pay as you go |
+| ChatGPT subscription | Codex | your Plus or Pro plan |
+| OpenAI API key | Codex | pay as you go |
+
+On a subscription, Dazza uses the agent CLI's own sign-in, and strips stray API keys from its environment so billing can't switch without you knowing.
 
 ```sh
 pnpm install && pnpm build && npm link
@@ -47,10 +56,10 @@ Just type to talk to Dazza. Type `/` for commands:
 | `/status` | Where the project is at |
 | `/approve` | Approve the drafted plan |
 | `/model [name or number]` | List the models your account can use, or switch |
-| `/usage` | Session and weekly limits on a subscription, or dollars spent on an API key |
+| `/usage` | Session and weekly limits on a subscription (live on Codex), or spend on an API key |
 | `/telegram` | See your Telegram link, or connect Telegram |
 | `/telegram-disconnect` | Unlink your bot and link a new one |
-| `/logout` | Sign out of Dazza; your Claude Code sign-in is untouched |
+| `/logout` | Sign out of Dazza; your Claude Code or Codex sign-in is untouched |
 | `/help`, `/exit` | |
 
 While Dazza runs, a project board is served at `http://localhost:4777`: a dashboard, the scope document, the task list, and a page for every task and subtask with a comment thread shared with Dazza. It opens when your first plan is ready and updates live. Tasks move through backlog → planned → building → in review (or blocked). Only you close or cancel them, so nothing is done until you say so. Run `dazza board` to open it without starting a chat.

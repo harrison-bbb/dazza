@@ -6,6 +6,13 @@ export interface AgentProvider {
   run(options: AgentRunOptions): AsyncIterable<AgentEvent>;
   /** Models this account can use, as the provider lists them. Must not spend tokens. */
   listModels(): Promise<ModelOption[]>;
+  /**
+   * Current subscription limits, read live without spending tokens, when the
+   * provider can (Codex can; Claude Code only reports them during a run).
+   */
+  readLimits?(): Promise<UsageWindow[] | undefined>;
+  /** Hand the terminal to the CLI's own sign-in. */
+  signIn(): Promise<void>;
 }
 
 export interface ModelOption {

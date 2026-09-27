@@ -119,6 +119,8 @@ export function toolLine(
         step('Edit', path()),
         ...diffPreview(field('old_string') ?? '', field('new_string') ?? ''),
       ].join('\n');
+    case 'Delete':
+      return step('Delete', path());
     case 'Write': {
       const lines = (field('content') ?? '').split('\n').length;
       return step('Write', `${path()} ${paint.dim(`(${lines} lines)`)}`);

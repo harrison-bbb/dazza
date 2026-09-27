@@ -5,8 +5,9 @@ import { Config, type Connection, type TelegramLink } from '../core/config.js';
 import { describeCodebase, inspectCodebase } from '../core/inspect.js';
 import { Manager } from '../core/manager.js';
 import { Store } from '../core/store.js';
-import { ClaudeProvider } from '../providers/claude.js';
-import { checkApiKey } from '../setup/anthropic.js';
+import { createProvider, PROVIDER_HELP, providerFor } from '../providers/index.js';
+import type { AgentProvider } from '../providers/types.js';
+import { checkApiKey } from '../setup/apiKeys.js';
 import { connect } from '../setup/connect.js';
 import { connectTelegram } from '../setup/telegram.js';
 import { notificationFor, TelegramBridge } from '../telegram/bridge.js';
@@ -36,14 +37,15 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
   const connection = (await config.readConnection()) ?? (await firstConnect(terminal, config));
   if (!connection) return;
 
-  const provider = new ClaudeProvider({ connection });
+  const provider = createProvider(connection);
   const status = await provider.detect();
   if (!status.installed || (connection.method === 'subscription' && !status.loggedIn)) {
+    const help = PROVIDER_HELP[provider.id];
     say(
       paint.red(
         status.installed
-          ? 'Your Claude Code sign-in has expired. Run `claude` to sign in, then start Dazza again.'
-          : 'Dazza needs Claude Code installed. Run `dazza doctor` for details.',
+          ? `Your ${provider.name} sign-in has expired. Run ${help.signIn} to sign in, then start Dazza again.`
+          : `Dazza needs ${provider.name} installed (${help.install}). Run \`dazza doctor\` for details.`,
       ),
     );
     process.exitCode = 1;
@@ -215,7 +217,7 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
 /** /build: check the model can work on its own, then build in the background. */
 async function startBuild(
   session: ChatSession,
-  provider: ClaudeProvider,
+  provider: AgentProvider,
   config: Config,
 ): Promise<void> {
   if (session.isBuilding) {
@@ -227,7 +229,7 @@ async function startBuild(
   const model = models.find((m) => m.id === chosen) ?? models[0];
   if (model && !model.autonomous) {
     say(
-      `${model.name} can’t build on its own: it doesn’t support Claude Code’s auto mode. ` +
+      `${model.name} can’t build on its own: it doesn’t support ${provider.name}’s auto mode. ` +
         'Switch to one that does, like Opus or Sonnet, with /model.',
     );
     return;
@@ -242,7 +244,6 @@ async function startBuild(
 
 /** First launch, or after /logout: pick how Dazza connects, and remember it. */
 async function firstConnect(terminal: Terminal, config: Config): Promise<Connection | undefined> {
-  const claude = new ClaudeProvider();
   const connection = await connect(
     {
       say,
@@ -250,9 +251,9 @@ async function firstConnect(terminal: Terminal, config: Config): Promise<Connect
       readLine: (options) => terminal.readLine(options),
     },
     {
-      detectClaude: () => claude.detect(),
-      signInToClaude: () => terminal.handOver(() => claude.signIn()),
-      checkApiKey,
+      detect: (id) => providerFor(id).detect(),
+      signIn: (id) => terminal.handOver(() => providerFor(id).signIn()),
+      checkApiKey: (id, key) => checkApiKey(id, key),
     },
   );
   if (connection) {

@@ -45,4 +45,6 @@ export class FakeProvider implements AgentProvider {
   async listModels() {
     return this.models;
   }
+
+  async signIn() {}
 }

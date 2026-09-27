@@ -151,7 +151,9 @@ export async function* build(options: BuilderOptions): AsyncGenerator<BuildEvent
         await pauseTask(store, task.id);
         if (error.kind === 'usage_limit') {
           const until =
-            error.resetsAt ?? (await limitResetTime(config)) ?? inFuture(timing.limitFallbackMs);
+            error.resetsAt ??
+            (await limitResetTime(options.provider, config)) ??
+            inFuture(timing.limitFallbackMs);
           yield { type: 'waiting', task, reason: 'usage_limit', until };
           await sleepUntil(Date.parse(until) + timing.resumeMarginMs, signal);
           break; // back to the top: the task is picked up again, resuming its session
@@ -164,7 +166,10 @@ export async function* build(options: BuilderOptions): AsyncGenerator<BuildEvent
           continue;
         }
         if (error.kind === 'credits' || error.kind === 'auth' || error.kind === 'overloaded') {
-          yield { type: 'stopped', reason: explainAgentError(error, task.id) };
+          yield {
+            type: 'stopped',
+            reason: explainAgentError(error, { taskId: task.id, provider: options.provider.id }),
+          };
           return;
         }
         // Anything else: the worker stopped with an error; surface it below.
@@ -263,10 +268,14 @@ async function* runWorker(
     : { kind: 'finished', finalText };
 }
 
-/** When the tightest usage window resets, from the latest reading. */
-async function limitResetTime(config: Config): Promise<string | undefined> {
-  const limits = await config.readLimits();
-  const full = limits?.windows.filter((w) => w.utilization >= 0.98) ?? [];
+/** When the full usage window resets: live from the provider if it can tell us, else the last reading. */
+async function limitResetTime(
+  provider: AgentProvider,
+  config: Config,
+): Promise<string | undefined> {
+  const windows =
+    (await provider.readLimits?.().catch(() => undefined)) ?? (await config.readLimits())?.windows;
+  const full = windows?.filter((w) => w.utilization >= 0.98) ?? [];
   return full
     .map((w) => w.resetsAt)
     .sort()

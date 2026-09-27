@@ -17,11 +17,15 @@ export const Settings = z.object({
 });
 export type Settings = z.infer<typeof Settings>;
 
-/** How Dazza reaches its coding agent. Holds a secret for API keys, so the file is 0600. */
-export const Connection = z.discriminatedUnion('method', [
-  z.object({ provider: z.literal('claude'), method: z.literal('subscription') }),
+/**
+ * How Dazza reaches its coding agent: Claude Code or Codex, through the user's
+ * own sign-in (subscription) or an API key. Holds a secret for API keys, so the
+ * file is 0600.
+ */
+export const Connection = z.union([
+  z.object({ provider: z.enum(['claude', 'codex']), method: z.literal('subscription') }),
   z.object({
-    provider: z.literal('claude'),
+    provider: z.enum(['claude', 'codex']),
     method: z.literal('api-key'),
     apiKey: z.string().min(1),
   }),

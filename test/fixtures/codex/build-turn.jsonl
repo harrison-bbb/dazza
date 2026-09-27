@@ -1,0 +1,12 @@
+{"type":"thread.started","thread_id":"0199a213-81c0-7800-8aa1-bbab2a035a53"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"reasoning","text":"Planning the change."}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"I'll add the greeting script."}}
+{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"ls -la","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"ls -la","aggregated_output":"total 0\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"file_change","changes":[{"path":"/project/greet.js","kind":"add"},{"path":"/project/README.md","kind":"update"}],"status":"completed"}}
+{"type":"item.started","item":{"id":"item_4","type":"mcp_tool_call","server":"dazza","tool":"update_subtask","arguments":{"id":"T1.1","status":"closed"},"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_4","type":"mcp_tool_call","server":"dazza","tool":"update_subtask","arguments":{"id":"T1.1","status":"closed"},"result":{"content":[{"type":"text","text":"T1.1 is closed."}]},"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_5","type":"todo_list","items":[{"text":"Write greet.js","completed":true}]}}
+{"type":"item.completed","item":{"id":"item_6","type":"agent_message","text":"Done."}}
+{"type":"turn.completed","usage":{"input_tokens":2400,"cached_input_tokens":1800,"output_tokens":350}}

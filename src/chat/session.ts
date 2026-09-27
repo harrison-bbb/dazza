@@ -161,7 +161,7 @@ export class ChatSession {
           output.say(
             paint.red(
               event.error
-                ? explainAgentError(event.error)
+                ? explainAgentError(event.error, { provider: this.options.provider.id })
                 : event.output || 'Something went wrong on my end.',
             ),
           );

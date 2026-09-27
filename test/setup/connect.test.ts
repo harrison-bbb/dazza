@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkApiKey } from '../../src/setup/anthropic.js';
+import { checkApiKey } from '../../src/setup/apiKeys.js';
 import { connect, type SetupDeps, type SetupUI } from '../../src/setup/connect.js';
 
 /** Scripted answers, in order: select() consumes choice labels, readLine() consumes text. */
@@ -19,9 +19,14 @@ function scriptedUI(answers: string[]) {
 }
 
 const deps = (overrides: Partial<SetupDeps> = {}): SetupDeps => ({
-  detectClaude: async () => ({ installed: true, version: '2', loggedIn: true, plan: 'Claude Max' }),
-  signInToClaude: async () => {},
-  checkApiKey: async (key) => (key === 'sk-good' ? 'valid' : 'invalid'),
+  detect: async (id) => ({
+    installed: true,
+    version: '2',
+    loggedIn: true,
+    plan: id === 'codex' ? 'ChatGPT Plus' : 'Claude Max',
+  }),
+  signIn: async () => {},
+  checkApiKey: async (_id, key) => (key === 'sk-good' ? 'valid' : 'invalid'),
   ...overrides,
 });
 
@@ -38,8 +43,8 @@ describe('connect', () => {
     const result = await connect(
       ui,
       deps({
-        detectClaude: async () => ({ installed: true, version: '2', loggedIn: signedIn }),
-        signInToClaude: async () => {
+        detect: async () => ({ installed: true, version: '2', loggedIn: signedIn }),
+        signIn: async () => {
           signedIn = true;
         },
       }),
@@ -49,9 +54,7 @@ describe('connect', () => {
 
   it('stops when Claude Code is missing', async () => {
     const { ui, said } = scriptedUI(['Claude subscription']);
-    expect(
-      await connect(ui, deps({ detectClaude: async () => ({ installed: false }) })),
-    ).toBeUndefined();
+    expect(await connect(ui, deps({ detect: async () => ({ installed: false }) }))).toBeUndefined();
     expect(said.at(-1)).toContain('isn’t installed');
   });
 
@@ -62,7 +65,7 @@ describe('connect', () => {
       method: 'api-key',
       apiKey: 'sk-good',
     });
-    expect(said.some((s) => s.includes('didn’t accept'))).toBe(true);
+    expect(said.some((s) => s.includes('wasn’t accepted'))).toBe(true);
   });
 
   it('gives up after repeated bad keys', async () => {
@@ -70,22 +73,52 @@ describe('connect', () => {
     expect(await connect(ui, deps())).toBeUndefined();
   });
 
-  it("doesn't let Codex be picked yet", async () => {
-    const { ui } = scriptedUI(['Codex']);
-    expect(await connect(ui, deps())).toBeUndefined();
+  it('connects Codex through a ChatGPT sign-in', async () => {
+    const { ui, said } = scriptedUI(['ChatGPT subscription']);
+    expect(await connect(ui, deps())).toEqual({ provider: 'codex', method: 'subscription' });
+    expect(said.at(-1)).toContain('ChatGPT Plus');
+  });
+
+  it('connects Codex with an OpenAI key, checked with OpenAI', async () => {
+    const checked: string[] = [];
+    const { ui } = scriptedUI(['OpenAI API key', 'sk-good']);
+    const result = await connect(
+      ui,
+      deps({
+        checkApiKey: async (id, key) => {
+          checked.push(id);
+          return key === 'sk-good' ? 'valid' : 'invalid';
+        },
+      }),
+    );
+    expect(result).toEqual({ provider: 'codex', method: 'api-key', apiKey: 'sk-good' });
+    expect(checked).toEqual(['codex']);
+  });
+
+  it('says how to install Codex when it is missing', async () => {
+    const { ui, said } = scriptedUI(['ChatGPT subscription']);
+    expect(await connect(ui, deps({ detect: async () => ({ installed: false }) }))).toBeUndefined();
+    expect(said.at(-1)).toContain('npm install -g @openai/codex');
   });
 });
 
 describe('checkApiKey', () => {
-  const respond = (status: number) => (async () => new Response('{}', { status })) as typeof fetch;
+  const respond = (status: number, seen?: string[]) =>
+    (async (url: string) => {
+      seen?.push(String(url));
+      return new Response('{}', { status });
+    }) as typeof fetch;
 
-  it('maps responses to a verdict', async () => {
-    expect(await checkApiKey('k', respond(200))).toBe('valid');
-    expect(await checkApiKey('k', respond(401))).toBe('invalid');
-    expect(await checkApiKey('k', respond(529))).toBe('unreachable');
+  it('maps responses to a verdict, asking the right provider', async () => {
+    const seen: string[] = [];
+    expect(await checkApiKey('claude', 'k', respond(200, seen))).toBe('valid');
+    expect(await checkApiKey('codex', 'k', respond(401, seen))).toBe('invalid');
+    expect(await checkApiKey('claude', 'k', respond(529))).toBe('unreachable');
+    expect(seen[0]).toContain('api.anthropic.com');
+    expect(seen[1]).toContain('api.openai.com');
     const offline = (async () => {
       throw new Error('offline');
     }) as typeof fetch;
-    expect(await checkApiKey('k', offline)).toBe('unreachable');
+    expect(await checkApiKey('codex', 'k', offline)).toBe('unreachable');
   });
 });

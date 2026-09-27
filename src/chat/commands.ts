@@ -1,7 +1,8 @@
 import { approvePlan } from '../core/actions.js';
 import type { Config, Connection, Limits } from '../core/config.js';
 import type { Store } from '../core/store.js';
-import type { AgentProvider, ModelOption } from '../providers/types.js';
+import { PROVIDER_HELP } from '../providers/index.js';
+import type { AgentProvider, ModelOption, ProviderId } from '../providers/types.js';
 import { openInBrowser } from '../util/open.js';
 import { BRAND } from './banner.js';
 import { greeting } from './describe.js';
@@ -100,18 +101,30 @@ export const COMMANDS: Command[] = [
   {
     name: 'usage',
     description: 'Plan limits, or API spend if you pay as you go',
-    async run({ provider, config, store, connection, session, say }) {
+    async run({ provider, config, store, connection, session, say, status }) {
       if (connection.method === 'api-key') {
-        say(spendReport(session, await store.readUsage()));
+        say(spendReport(provider.id, session, await store.readUsage()));
         return;
       }
-      const [status, limits] = await Promise.all([provider.detect(), config.readLimits()]);
-      say(limitsReport(status.installed ? status.plan : undefined, limits));
+      status('Checking your usage');
+      try {
+        // Codex can read limits live; Claude Code only reports them during a run.
+        const [detected, live] = await Promise.all([provider.detect(), provider.readLimits?.()]);
+        const limits = live
+          ? { checkedAt: new Date().toISOString(), windows: live }
+          : await config.readLimits();
+        const plan =
+          (detected.installed && detected.plan) ||
+          `${PROVIDER_HELP[provider.id].brand} subscription`;
+        say(limitsReport(plan, limits, { live: Boolean(live) }));
+      } finally {
+        status(undefined);
+      }
     },
   },
   {
     name: 'logout',
-    description: 'Sign out of Dazza (your Claude Code sign-in stays as it is)',
+    description: 'Sign out of Dazza (your Claude Code or Codex sign-in stays as it is)',
     async run({ config, say, exit }) {
       await config.clearConnection();
       say('Signed out of Dazza. Run `dazza` again to reconnect with a subscription or an API key.');
@@ -233,11 +246,11 @@ const BAR_WIDTH = 40;
 
 /** Subscription limits, laid out like Claude Code's own /usage. */
 export function limitsReport(
-  plan: string | undefined,
+  plan: string,
   limits: Limits | undefined,
-  now = new Date(),
+  { live = false, now = new Date() }: { live?: boolean; now?: Date } = {},
 ): string {
-  const lines = [paint.bold(plan ?? 'Claude subscription')];
+  const lines = [paint.bold(plan)];
   if (!limits || limits.windows.length === 0) {
     lines.push('', paint.dim('No reading yet. Limits update every time Dazza replies.'));
     return lines.join('\n');
@@ -253,24 +266,32 @@ export function limitsReport(
   }
   lines.push(
     '',
-    paint.dim(`Checked ${ago(limits.checkedAt, now)}, on your last message to Dazza.`),
+    paint.dim(
+      live ? 'Live.' : `Checked ${ago(limits.checkedAt, now)}, on your last message to Dazza.`,
+    ),
   );
   return lines.join('\n');
 }
 
 /** Pay-as-you-go spend. The API has no balance lookup for standard keys, so link to billing. */
-export function spendReport(session: Usage, project: Usage): string {
+export function spendReport(provider: ProviderId, session: Usage, project: Usage): string {
+  // Claude Code reports what each run costs; Codex doesn't, so show tokens there.
+  const priced = provider === 'claude';
   const row = (label: string, usage: Usage) =>
-    `${label.padEnd(16)}${`$${usage.costUsd.toFixed(2)}`.padStart(8)}   ${paint.dim(
+    `${label.padEnd(16)}${priced ? `$${usage.costUsd.toFixed(2)}`.padStart(8) : ''}   ${paint.dim(
       `${usage.runs} ${usage.runs === 1 ? 'message' : 'messages'} · ${compact(usage.tokens)} tokens`,
     )}`;
+  const billing =
+    provider === 'codex'
+      ? 'Spend, credit balance and limits: https://platform.openai.com/usage'
+      : `Credit balance and limits: ${PROVIDER_HELP.claude.billing}`;
   return [
-    paint.bold('Anthropic API · pay as you go'),
+    paint.bold(`${provider === 'codex' ? 'OpenAI' : 'Anthropic'} API · pay as you go`),
     '',
     row('This session', session),
     row('This project', project),
     '',
-    paint.dim('Credit balance and limits: https://console.anthropic.com/settings/billing'),
+    paint.dim(billing),
   ].join('\n');
 }
 

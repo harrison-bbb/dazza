@@ -1,8 +1,9 @@
 import { basename } from 'node:path';
 import { styleText } from 'node:util';
-import { Config } from '../core/config.js';
+import { Config, type Connection } from '../core/config.js';
 import { findBrowser } from '../preview/capture.js';
-import { ClaudeProvider } from '../providers/claude.js';
+import { createProvider, PROVIDER_HELP, providerFor } from '../providers/index.js';
+import type { ProviderId } from '../providers/types.js';
 import { execCommand } from '../util/process.js';
 
 interface Check {
@@ -15,11 +16,13 @@ const MIN_NODE_MAJOR = 20;
 
 /** `dazza doctor`: verify everything Dazza depends on. Exits non-zero if anything is missing. */
 export async function doctor(): Promise<void> {
+  const connection = await new Config().readConnection();
   const checks = await Promise.all([
     checkNode(),
     checkGit(),
-    checkClaude(),
-    checkConnection(),
+    checkAgent('claude', connection),
+    checkAgent('codex', connection),
+    checkConnection(connection),
     checkTelegram(),
     checkBrowser(),
   ]);
@@ -50,16 +53,19 @@ async function checkGit(): Promise<Check> {
   };
 }
 
-async function checkConnection(): Promise<Check> {
-  const connection = await new Config().readConnection();
+async function checkConnection(connection: Connection | undefined): Promise<Check> {
+  const how =
+    connection &&
+    {
+      'claude/subscription': 'your Claude subscription (Claude Code)',
+      'claude/api-key': 'an Anthropic API key (Claude Code)',
+      'codex/subscription': 'your ChatGPT subscription (Codex)',
+      'codex/api-key': 'an OpenAI API key (Codex)',
+    }[`${connection.provider}/${connection.method}` as const];
   return {
     label: 'Dazza',
     ok: connection !== undefined,
-    detail: !connection
-      ? 'not connected (run `dazza` to connect)'
-      : connection.method === 'api-key'
-        ? 'connected with an Anthropic API key'
-        : 'connected through your Claude subscription',
+    detail: how ? `connected through ${how}` : 'not connected (run `dazza` to connect)',
   };
 }
 
@@ -87,20 +93,24 @@ async function checkBrowser(): Promise<Check> {
   };
 }
 
-async function checkClaude(): Promise<Check> {
-  const status = await new ClaudeProvider().detect();
+/**
+ * An agent CLI's install and sign-in. It only has to be working if it's the
+ * one Dazza is connected to; the other is shown for information.
+ */
+async function checkAgent(id: ProviderId, connection: Connection | undefined): Promise<Check> {
+  const provider = connection?.provider === id ? createProvider(connection) : providerFor(id);
+  const help = PROVIDER_HELP[id];
+  const required = connection?.provider === id;
+  const status = await provider.detect();
   if (!status.installed) {
-    return {
-      label: 'Claude Code',
-      ok: false,
-      detail: 'not installed (https://claude.com/claude-code)',
-    };
+    return { label: provider.name, ok: !required, detail: `not installed (${help.install})` };
   }
+  const signedIn = status.loggedIn;
   return {
-    label: 'Claude Code',
-    ok: status.loggedIn,
-    detail: status.loggedIn
-      ? `v${status.version}, signed in${status.authMethod ? ` via ${status.authMethod}` : ''}`
-      : `v${status.version}, not signed in (run \`claude\` to log in)`,
+    label: provider.name,
+    ok: signedIn || !required,
+    detail: signedIn
+      ? `v${status.version}, signed in${status.authMethod ? ` via ${status.authMethod}` : ''}${status.plan ? ` · ${status.plan}` : ''}`
+      : `v${status.version}, not signed in (run ${help.signIn})`,
   };
 }

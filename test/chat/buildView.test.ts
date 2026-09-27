@@ -55,6 +55,9 @@ describe('toolLine', () => {
       '  ! Needs you: Which DB?',
     );
     expect(toolLine('TodoWrite', {}, plan, '/p')).toBeUndefined();
+    // Codex reports file changes without their text: just the file.
+    expect(toolLine('Edit', { file_path: '/p/a.ts' }, plan, '/p')).toBe('  ⏺ Edit a.ts');
+    expect(toolLine('Delete', { file_path: '/p/old.ts' }, plan, '/p')).toBe('  ⏺ Delete old.ts');
   });
 });
 

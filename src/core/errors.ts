@@ -1,25 +1,27 @@
-import type { AgentError } from '../providers/types.js';
+import { PROVIDER_HELP } from '../providers/index.js';
+import type { AgentError, ProviderId } from '../providers/types.js';
 
 /** A failure explained for the user, with what to do about it. */
-export function explainAgentError(error: AgentError, taskId?: string): string {
+export function explainAgentError(
+  error: AgentError,
+  { taskId, provider = 'claude' }: { taskId?: string; provider?: ProviderId } = {},
+): string {
+  const help = PROVIDER_HELP[provider];
   const paused = taskId ? `I’ve paused ${taskId}. ` : '';
   switch (error.kind) {
     case 'usage_limit':
       return error.resetsAt
-        ? `You’ve hit your Claude usage limit. ${paused}It resets at ${clock(error.resetsAt)}.`
-        : `You’ve hit your Claude usage limit. ${paused}`.trim();
+        ? `You’ve hit your ${help.brand} usage limit. ${paused}It resets at ${clock(error.resetsAt)}.`
+        : `You’ve hit your ${help.brand} usage limit. ${paused}`.trim();
     case 'credits':
-      return (
-        `Your Anthropic credit balance has run out. ${paused}Top up at ` +
-        'https://console.anthropic.com/settings/billing, then /build to carry on.'
-      );
+      return `Your API credit has run out. ${paused}Top up at ${help.billing}, then /build to carry on.`;
     case 'auth':
       return (
-        `Claude couldn’t sign in (${error.message}). ${paused}On an API key, /logout and connect ` +
-        'again with a working key; on a subscription, run `claude` to sign back in. Then /build.'
+        `${help.brand} couldn’t sign in (${error.message}). ${paused}On an API key, /logout and connect ` +
+        `again with a working key; on a subscription, run ${help.signIn} to sign back in. Then /build.`
       );
     case 'overloaded':
-      return `Anthropic is overloaded right now. ${paused}Try again in a few minutes.`;
+      return `${help.brand} is overloaded right now. ${paused}Try again in a few minutes.`;
     case 'failed':
       return error.message;
   }

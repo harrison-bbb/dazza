@@ -13,14 +13,18 @@ export function classifyError(
 ): AgentError {
   const text = message.trim() || 'The agent stopped with an error.';
   if (
-    /credit balance (is )?too low|usage credit limit|billing_error|spend limit reached/i.test(text)
+    /credit balance (is )?too low|usage credit limit|billing_error|spend limit reached|insufficient_quota|exceeded your current quota/i.test(
+      text,
+    )
   ) {
     return { kind: 'credits', message: text };
   }
   if (
     status === 401 ||
     status === 403 ||
-    /invalid api key|please run \/login|not logged in|authentication/i.test(text)
+    /invalid api key|please run \/login|not logged in|authentication|\b401\b|unauthorized/i.test(
+      text,
+    )
   ) {
     return { kind: 'auth', message: text };
   }

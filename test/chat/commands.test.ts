@@ -70,7 +70,7 @@ describe('usage reports', () => {
           { id: 'seven_day', utilization: 0.1, resetsAt: '2026-10-01T00:00:00Z' },
         ],
       },
-      now,
+      { now },
     );
     expect(report).toContain('Current session');
     expect(report).toContain('25% used');
@@ -81,11 +81,12 @@ describe('usage reports', () => {
   });
 
   it('says when there is no reading yet', () => {
-    expect(limitsReport('Claude Pro', undefined, now)).toContain('No reading yet');
+    expect(limitsReport('Claude Pro', undefined, { now })).toContain('No reading yet');
   });
 
   it('shows API spend in dollars with a billing link', () => {
     const report = spendReport(
+      'claude',
       { runs: 1, tokens: 12_000, costUsd: 0.42 },
       { runs: 12, tokens: 1_400_000, costUsd: 3.2 },
     );
