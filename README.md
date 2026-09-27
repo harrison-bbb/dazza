@@ -30,7 +30,7 @@ you ──chat──▶ dazza ──scopes──▶ .dazza/ (scope + tasks) ─�
 Dazza needs [Claude Code](https://docs.claude.com/en/docs/claude-code) installed and signed in.
 
 ```sh
-pnpm install && pnpm build && pnpm link --global
+pnpm install && pnpm build && npm link
 cd ~/some-project
 dazza doctor   # check everything's ready
 dazza          # start talking
