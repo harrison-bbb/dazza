@@ -1,0 +1,118 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+import { buildClaudeArgs, ClaudeProvider, parseClaudeLine } from '../../src/providers/claude.js';
+import type { AgentEvent } from '../../src/providers/types.js';
+import { CommandError } from '../../src/util/process.js';
+
+const fixture = (path: string) => fileURLToPath(new URL(`../fixtures/${path}`, import.meta.url));
+const fakeClaude = new ClaudeProvider(fixture('bin/fake-claude.mjs'));
+
+const expectedEvents: AgentEvent[] = [
+  {
+    type: 'started',
+    sessionId: 'a8d5b882-70c9-4d36-84a8-00382f526314',
+    model: 'claude-haiku-4-5-20251001',
+  },
+  { type: 'tool_use', tool: 'Read', input: { file_path: '/project/note.txt' } },
+  { type: 'text', text: 'DONE' },
+  {
+    type: 'finished',
+    ok: true,
+    output: 'DONE',
+    sessionId: 'a8d5b882-70c9-4d36-84a8-00382f526314',
+    durationMs: 4397,
+  },
+];
+
+describe('parseClaudeLine', () => {
+  it('translates a recorded session into Dazza events', () => {
+    const lines = readFileSync(fixture('claude/read-file.jsonl'), 'utf8').split('\n');
+    expect(lines.flatMap(parseClaudeLine)).toEqual(expectedEvents);
+  });
+
+  it('reports error results as not ok', () => {
+    const line = JSON.stringify({
+      type: 'result',
+      subtype: 'error_max_turns',
+      is_error: true,
+      session_id: 's1',
+      duration_ms: 10,
+    });
+    expect(parseClaudeLine(line)).toEqual([
+      { type: 'finished', ok: false, output: '', sessionId: 's1', durationMs: 10 },
+    ]);
+  });
+
+  it('ignores malformed and unknown lines', () => {
+    expect(parseClaudeLine('not json')).toEqual([]);
+    expect(parseClaudeLine('{"type":"rate_limit_event"}')).toEqual([]);
+    expect(parseClaudeLine('{"type":"system","subtype":"thinking_tokens"}')).toEqual([]);
+  });
+});
+
+describe('buildClaudeArgs', () => {
+  it('runs headless with streaming JSON output', () => {
+    expect(buildClaudeArgs({ prompt: 'hi', cwd: '/p' })).toEqual([
+      '-p',
+      'hi',
+      '--output-format',
+      'stream-json',
+      '--verbose',
+    ]);
+  });
+
+  it('passes optional settings through', () => {
+    const args = buildClaudeArgs({
+      prompt: 'hi',
+      cwd: '/p',
+      resumeSessionId: 's1',
+      systemPrompt: 'Be brief.',
+      model: 'haiku',
+    });
+    expect(args).toEqual(
+      expect.arrayContaining([
+        '--resume',
+        's1',
+        '--append-system-prompt',
+        'Be brief.',
+        '--model',
+        'haiku',
+      ]),
+    );
+  });
+});
+
+describe('ClaudeProvider', () => {
+  const collect = async (prompt: string) => {
+    const events: AgentEvent[] = [];
+    for await (const event of fakeClaude.run({ prompt, cwd: process.cwd() })) events.push(event);
+    return events;
+  };
+
+  it('streams events from the CLI', async () => {
+    expect(await collect('Read note.txt')).toEqual(expectedEvents);
+  });
+
+  it('surfaces a crashing CLI as a CommandError with stderr', async () => {
+    await expect(collect('CRASH')).rejects.toThrow(CommandError);
+    await expect(collect('CRASH')).rejects.toThrow('something went wrong');
+  });
+
+  it('fails if the CLI exits without a result', async () => {
+    await expect(collect('SILENT')).rejects.toThrow('without reporting a result');
+  });
+
+  it('detects version and login state', async () => {
+    expect(await fakeClaude.detect()).toEqual({
+      installed: true,
+      version: '2.1.283',
+      loggedIn: true,
+      authMethod: 'claude.ai',
+    });
+  });
+
+  it('detects a missing CLI', async () => {
+    expect(await new ClaudeProvider('dazza-no-such-binary').detect()).toEqual({ installed: false });
+  });
+});
