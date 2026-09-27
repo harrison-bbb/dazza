@@ -4,12 +4,19 @@ import type { Plan } from '../core/schema.js';
 import { McpTools } from '../mcp/server.js';
 import { paint } from './style.js';
 
+export interface GreetingContext {
+  /** There's an earlier conversation with Dazza in this project. */
+  hasConversation?: boolean;
+  /** The code already in the directory, described in a few words. */
+  codebase?: string;
+}
+
 /** What to tell the user when they open `dazza`, based on where the project is at. */
-export function greeting(plan: Plan | undefined, hasConversation = false): string {
+export function greeting(plan: Plan | undefined, context: GreetingContext = {}): string {
   if (!plan) {
-    return hasConversation
-      ? 'Picking up where we left off on the scope.'
-      : "New project. Tell me what we're building, whenever you're ready.";
+    if (context.hasConversation) return 'Picking up where we left off.';
+    if (context.codebase) return `This is ${context.codebase}. What do you want to work on?`;
+    return "New project. Tell me what we're building, whenever you're ready.";
   }
 
   const { closed, total } = progress(plan);

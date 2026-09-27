@@ -1,26 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { describeState, Manager } from '../../src/core/manager.js';
-import type { AgentEvent, AgentProvider, AgentRunOptions } from '../../src/providers/types.js';
+import type { AgentEvent } from '../../src/providers/types.js';
+import { FakeProvider } from '../fakes.js';
 import { makePlan, makeTask } from '../fixtures.js';
 import { useTempProject } from '../helpers.js';
-
-/** Records what it was asked to run and replays canned events. */
-class FakeProvider implements AgentProvider {
-  readonly id = 'claude';
-  readonly name = 'Fake';
-  readonly runs: AgentRunOptions[] = [];
-
-  async detect() {
-    return { installed: true as const, version: '1.0.0', loggedIn: true };
-  }
-
-  async *run(options: AgentRunOptions): AsyncGenerator<AgentEvent> {
-    this.runs.push(options);
-    yield { type: 'started', sessionId: 'session-1', model: 'fake' };
-    yield { type: 'text', text: 'What are we building?' };
-    yield { type: 'finished', ok: true, output: '', sessionId: 'session-1', durationMs: 1 };
-  }
-}
 
 describe('Manager', () => {
   const project = useTempProject();
@@ -29,6 +12,7 @@ describe('Manager', () => {
     const provider = new FakeProvider();
     const manager = new Manager({
       store: project.store,
+      config: project.config,
       provider,
       projectRoot: project.root,
       mcpServer: { command: 'node', args: ['dazza', 'mcp'] },
@@ -76,9 +60,54 @@ describe('Manager', () => {
   });
 });
 
+describe('Manager bookkeeping', () => {
+  const project = useTempProject();
+
+  it('uses the chosen model and records usage and limits', async () => {
+    const provider = new FakeProvider([
+      { type: 'started', sessionId: 's', model: 'sonnet' },
+      {
+        type: 'limits',
+        windows: [{ id: 'five_hour', utilization: 0.4, resetsAt: '2026-09-27T12:00:00.000Z' }],
+      },
+      {
+        type: 'finished',
+        ok: true,
+        output: '',
+        sessionId: 's',
+        durationMs: 1,
+        usage: { tokens: 1000, costUsd: 0.5 },
+      },
+    ]);
+    await project.config.updateSettings({ model: 'sonnet' });
+    const manager = new Manager({
+      store: project.store,
+      config: project.config,
+      provider,
+      projectRoot: project.root,
+      mcpServer: { command: 'node', args: [] },
+    });
+
+    for await (const _ of manager.send('hi')) {
+      // drain
+    }
+    for await (const _ of manager.send('again')) {
+      // drain
+    }
+
+    expect(provider.runs[0]?.model).toBe('sonnet');
+    expect(await project.store.readUsage()).toEqual({ runs: 2, tokens: 2000, costUsd: 1 });
+    expect((await project.config.readLimits())?.windows[0]?.utilization).toBe(0.4);
+  });
+});
+
 describe('describeState', () => {
   it('says when there is no plan', () => {
     expect(describeState(undefined)).toContain('No plan yet.');
+    expect(describeState(undefined)).toContain('empty, a new project');
+    expect(describeState(undefined, [], 'a Go project (3 files)')).toContain(
+      'Working directory: a Go project (3 files).',
+    );
   });
 
   it('includes recent board comments', () => {

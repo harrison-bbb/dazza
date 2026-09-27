@@ -36,7 +36,17 @@ dazza doctor   # check everything's ready
 dazza          # start talking
 ```
 
-Just type to talk to Dazza. `/status`, `/board`, `/approve` and `/help` are shortcuts.
+Just type to talk to Dazza. Slash commands (Tab completes them):
+
+| Command | What it does |
+|---|---|
+| `/dashboard` | Open the project board in your browser |
+| `/status` | Where the project is at |
+| `/approve` | Approve the drafted plan |
+| `/model [name or number]` | List the models your account can use, or switch |
+| `/usage` | Your plan's rate limits and what Dazza has used on this project |
+| `/logout` | Sign out of the coding agent's CLI (asks you to confirm) |
+| `/help`, `/exit` | |
 
 While Dazza runs, a project board is served at `http://localhost:4777`: a dashboard, the scope document, the task list, and a page for every task and subtask with a comment thread shared with Dazza. It opens when your first plan is ready and updates live. Tasks move through backlog → planned → building → in review (or blocked). Only you close or cancel them, so nothing is done until you say so. Run `dazza board` to open it without starting a chat.
 

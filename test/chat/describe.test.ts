@@ -11,7 +11,13 @@ describe('greeting', () => {
   });
 
   it('resumes an unfinished scoping conversation', () => {
-    expect(greeting(undefined, true)).toMatch(/where we left off/);
+    expect(greeting(undefined, { hasConversation: true })).toMatch(/where we left off/);
+  });
+
+  it('recognises an existing codebase', () => {
+    expect(greeting(undefined, { codebase: 'a Go project (12 files)' })).toBe(
+      'This is a Go project (12 files). What do you want to work on?',
+    );
   });
 
   it('asks for approval of a draft', () => {

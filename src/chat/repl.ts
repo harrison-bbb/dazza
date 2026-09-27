@@ -3,27 +3,20 @@ import { stdin, stdout } from 'node:process';
 import { createInterface } from 'node:readline';
 import pkg from '../../package.json' with { type: 'json' };
 import { startBoard } from '../board/server.js';
-import { approvePlan } from '../core/actions.js';
+import { Config } from '../core/config.js';
+import { describeCodebase, inspectCodebase } from '../core/inspect.js';
 import { Manager } from '../core/manager.js';
 import { Store } from '../core/store.js';
 import { McpTools } from '../mcp/server.js';
 import { ClaudeProvider } from '../providers/claude.js';
 import { openInBrowser } from '../util/open.js';
 import { BRAND, banner } from './banner.js';
+import { type CommandContext, complete, parseCommand, suggest } from './commands.js';
 import { describeTool, greeting, planCard } from './describe.js';
 import { Spinner } from './spinner.js';
 import { paint, renderInline } from './style.js';
 
 const PROMPT = `${paint.hex(BRAND, '›')} `;
-
-const HELP = `
-  ${paint.bold('Just type')} to talk to Dazza. Commands:
-  /status   Where the project is at
-  /board    Open the project board
-  /approve  Approve the drafted plan
-  /help     Show this
-  /exit     Leave (Ctrl-C works too)
-`;
 
 /** `dazza`: the conversation with your developer. */
 export async function startChat(projectRoot: string): Promise<void> {
@@ -38,39 +31,58 @@ export async function startChat(projectRoot: string): Promise<void> {
   }
 
   const store = new Store(projectRoot);
+  const config = new Config();
+  const found = await inspectCodebase(projectRoot);
+  const codebase = found && describeCodebase(found);
   const board = await startBoard(store, projectRoot);
   const manager = new Manager({
     store,
+    config,
     provider,
     projectRoot,
     mcpServer: { command: process.execPath, args: [cliPath(), 'mcp', '--root', projectRoot] },
+    ...(codebase && { codebase }),
   });
 
+  const { model } = await config.readSettings();
   console.log(
     `\n${banner({
       version: pkg.version,
-      agent: `${provider.name} v${status.version}${status.authMethod ? ` · ${status.authMethod}` : ''}`,
+      agent: [provider.name, status.plan, model && `model: ${model}`].filter(Boolean).join(' · '),
       cwd: projectRoot.replace(homedir(), '~'),
       board: board.url,
     })}\n`,
   );
-  say(greeting(await store.readPlan(), (await store.readManagerSession()) !== undefined));
+  const hasConversation = (await store.readManagerSession()) !== undefined;
+  say(greeting(await store.readPlan(), { hasConversation, ...(codebase && { codebase }) }));
 
-  const rl = createInterface({ input: stdin, output: stdout, prompt: PROMPT });
+  const rl = createInterface({ input: stdin, output: stdout, prompt: PROMPT, completer: complete });
   let running: AbortController | undefined;
+  let exiting = false;
   rl.on('SIGINT', () => (running ? running.abort() : rl.close()));
+
+  const context: CommandContext = {
+    store,
+    config,
+    provider,
+    boardUrl: board.url,
+    say,
+    exit: () => {
+      exiting = true;
+    },
+  };
 
   rl.prompt();
   for await (const raw of rl) {
     const line = raw.trim();
-    if (line === '/exit') break;
     if (line.startsWith('/')) {
-      await runCommand(line, store, board.url);
+      await runCommand(line, context);
     } else if (line) {
       running = new AbortController();
       await converse(manager, store, board.url, line, running.signal);
       running = undefined;
     }
+    if (exiting) break;
     rl.prompt();
   }
   rl.close();
@@ -119,23 +131,17 @@ async function converse(
   }
 }
 
-async function runCommand(command: string, store: Store, boardUrl: string): Promise<void> {
-  switch (command) {
-    case '/board':
-      openInBrowser(boardUrl);
-      return say(`Opened ${boardUrl}`);
-    case '/help':
-      console.log(HELP);
-      return;
-    case '/status':
-      say(greeting(await store.readPlan()));
-      return;
-    case '/approve': {
-      const result = await approvePlan(store);
-      return say(result.ok ? `${paint.green('✔')} ${result.message}` : result.message);
-    }
-    default:
-      say(paint.dim(`Unknown command ${command}. Try /help.`));
+async function runCommand(line: string, context: CommandContext): Promise<void> {
+  const { command, name, args } = parseCommand(line);
+  if (!command) {
+    const hint = suggest(name);
+    say(paint.dim(`No command /${name}.${hint ? ` Did you mean /${hint.name}?` : ''} Try /help.`));
+    return;
+  }
+  try {
+    await command.run(context, args);
+  } catch (error) {
+    say(paint.red(`/${command.name} failed: ${errorMessage(error)}`));
   }
 }
 

@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import { execCommand, spawnLines } from '../util/process.js';
-import type { AgentEvent, AgentProvider, AgentRunOptions, ProviderStatus } from './types.js';
+import type {
+  AgentEvent,
+  AgentProvider,
+  AgentRunOptions,
+  ModelOption,
+  ProviderStatus,
+  RunUsage,
+} from './types.js';
 
 /**
  * Drives the user's installed `claude` CLI in headless mode, so authentication
@@ -19,12 +26,47 @@ export class ClaudeProvider implements AgentProvider {
     const auth = AuthStatus.safeParse(
       parseJson((await execCommand(this.bin, ['auth', 'status']))?.stdout),
     );
+    const plan = auth.success ? auth.data.subscriptionType : undefined;
     return {
       installed: true,
       version: version.stdout.trim().split(' ')[0] ?? 'unknown',
       loggedIn: auth.success && auth.data.loggedIn,
       ...(auth.success && auth.data.authMethod && { authMethod: auth.data.authMethod }),
+      ...(plan && { plan: `Claude ${capitalize(plan)}` }),
     };
+  }
+
+  /**
+   * Ask the CLI which models this account can use. This is the control protocol
+   * the Claude Agent SDK uses for the same purpose; no prompt is sent, so it's free.
+   */
+  async listModels(): Promise<ModelOption[]> {
+    const request = {
+      type: 'control_request',
+      request_id: 'models',
+      request: { subtype: 'initialize' },
+    };
+    const lines = spawnLines(
+      this.bin,
+      ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'],
+      { cwd: process.cwd(), input: `${JSON.stringify(request)}\n` },
+    );
+    for await (const line of lines) {
+      const parsed = InitializeResponse.safeParse(parseJson(line));
+      if (parsed.success) {
+        return parsed.data.response.response.models.map((m) => ({
+          id: m.value,
+          name: m.displayName,
+          description: m.description,
+        }));
+      }
+    }
+    throw new Error('Claude Code did not report its models');
+  }
+
+  async logout(): Promise<void> {
+    const result = await execCommand(this.bin, ['auth', 'logout']);
+    if (result?.exitCode !== 0) throw new Error(result?.stderr.trim() || 'Sign-out failed');
   }
 
   async *run(options: AgentRunOptions): AsyncGenerator<AgentEvent> {
@@ -76,6 +118,17 @@ export function parseClaudeLine(line: string): AgentEvent[] {
       return [{ type: 'started', sessionId: message.session_id, model: message.model }];
     case 'assistant':
       return message.message.content.flatMap(toContentEvent);
+    case 'rate_limit_event':
+      return [
+        {
+          type: 'limits',
+          windows: Object.entries(message.rate_limit_info.unifiedWindows).map(([id, w]) => ({
+            id,
+            utilization: w.utilization,
+            resetsAt: new Date(w.resetsAt * 1000).toISOString(),
+          })),
+        },
+      ];
     case 'result':
       return [
         {
@@ -84,6 +137,7 @@ export function parseClaudeLine(line: string): AgentEvent[] {
           output: message.result ?? '',
           sessionId: message.session_id,
           durationMs: message.duration_ms,
+          ...(message.usage && { usage: toRunUsage(message.usage, message.total_cost_usd) }),
         },
       ];
   }
@@ -125,8 +179,30 @@ const StreamLine = z.discriminatedUnion('type', [
     result: z.string().optional(),
     session_id: z.string(),
     duration_ms: z.number(),
+    total_cost_usd: z.number().default(0),
+    usage: z.record(z.string(), z.unknown()).optional(),
+  }),
+  z.object({
+    type: z.literal('rate_limit_event'),
+    rate_limit_info: z.object({
+      unifiedWindows: z.record(
+        z.string(),
+        z.object({ utilization: z.number(), resetsAt: z.number() }),
+      ),
+    }),
   }),
 ]);
+
+const InitializeResponse = z.object({
+  type: z.literal('control_response'),
+  response: z.object({
+    response: z.object({
+      models: z.array(
+        z.object({ value: z.string(), displayName: z.string(), description: z.string() }),
+      ),
+    }),
+  }),
+});
 
 const ContentBlock = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string() }),
@@ -136,4 +212,22 @@ const ContentBlock = z.discriminatedUnion('type', [
 const AuthStatus = z.object({
   loggedIn: z.boolean(),
   authMethod: z.string().optional(),
+  subscriptionType: z.string().optional(),
 });
+
+/** Every token the run consumed, cache reads and writes included. */
+function toRunUsage(usage: Record<string, unknown>, costUsd: number): RunUsage {
+  const count = (key: string) => (typeof usage[key] === 'number' ? usage[key] : 0);
+  return {
+    tokens:
+      count('input_tokens') +
+      count('output_tokens') +
+      count('cache_read_input_tokens') +
+      count('cache_creation_input_tokens'),
+    costUsd,
+  };
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}

@@ -15,13 +15,28 @@ const expectedEvents: AgentEvent[] = [
     model: 'claude-haiku-4-5-20251001',
   },
   { type: 'tool_use', tool: 'Read', input: { file_path: '/project/note.txt' } },
+  {
+    type: 'limits',
+    windows: [
+      { id: 'five_hour', utilization: 0.04, resetsAt: '2026-09-27T07:40:00.000Z' },
+      { id: 'seven_day', utilization: 0.07, resetsAt: '2026-10-03T00:00:00.000Z' },
+    ],
+  },
   { type: 'text', text: 'DONE' },
+  {
+    type: 'limits',
+    windows: [
+      { id: 'five_hour', utilization: 0.04, resetsAt: '2026-09-27T07:40:00.000Z' },
+      { id: 'seven_day', utilization: 0.08, resetsAt: '2026-10-03T00:00:00.000Z' },
+    ],
+  },
   {
     type: 'finished',
     ok: true,
     output: 'DONE',
     sessionId: 'a8d5b882-70c9-4d36-84a8-00382f526314',
     durationMs: 4397,
+    usage: { tokens: 18 + 212 + 39263 + 13892, costUsd: 0.0327883 },
   },
 ];
 
@@ -108,13 +123,25 @@ describe('ClaudeProvider', () => {
     await expect(collect('SILENT')).rejects.toThrow('without reporting a result');
   });
 
-  it('detects version and login state', async () => {
+  it('detects version, login state and plan', async () => {
     expect(await fakeClaude.detect()).toEqual({
       installed: true,
       version: '2.1.283',
       loggedIn: true,
       authMethod: 'claude.ai',
+      plan: 'Claude Max',
     });
+  });
+
+  it('lists the models the account can use, without sending a prompt', async () => {
+    expect(await fakeClaude.listModels()).toEqual([
+      { id: 'default', name: 'Default (recommended)', description: 'Opus 5.5' },
+      { id: 'sonnet', name: 'Sonnet 5', description: 'Everyday tasks' },
+    ]);
+  });
+
+  it('signs out', async () => {
+    await expect(fakeClaude.logout()).resolves.toBeUndefined();
   });
 
   it('detects a missing CLI', async () => {

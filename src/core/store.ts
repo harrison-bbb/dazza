@@ -6,9 +6,18 @@ import { Event, type EventInput, Plan } from './schema.js';
 export const STATE_DIR = '.dazza';
 
 const MANAGER_SESSION_FILE = 'session.json';
-const LOCAL_FILES = [MANAGER_SESSION_FILE];
+const USAGE_FILE = 'usage.json';
+const LOCAL_FILES = [MANAGER_SESSION_FILE, USAGE_FILE];
 
 const ManagerSession = z.object({ sessionId: z.string() });
+
+/** Running totals of what Dazza has used on this project. */
+export const ProjectUsage = z.object({
+  runs: z.number().int().nonnegative(),
+  tokens: z.number().nonnegative(),
+  costUsd: z.number().nonnegative(),
+});
+export type ProjectUsage = z.infer<typeof ProjectUsage>;
 
 /**
  * File-backed project state. Everything lives in `<root>/.dazza/` as plain,
@@ -52,6 +61,23 @@ export class Store {
 
   async writeManagerSession(sessionId: string): Promise<void> {
     await this.writeAtomic(MANAGER_SESSION_FILE, `${JSON.stringify({ sessionId }, null, 2)}\n`);
+  }
+
+  async readUsage(): Promise<ProjectUsage> {
+    const raw = await this.readOptional(USAGE_FILE);
+    return raw === undefined
+      ? { runs: 0, tokens: 0, costUsd: 0 }
+      : ProjectUsage.parse(JSON.parse(raw));
+  }
+
+  async recordUsage(run: { tokens: number; costUsd: number }): Promise<void> {
+    const total = await this.readUsage();
+    const next = {
+      runs: total.runs + 1,
+      tokens: total.tokens + run.tokens,
+      costUsd: total.costUsd + run.costUsd,
+    };
+    await this.writeAtomic(USAGE_FILE, `${JSON.stringify(next, null, 2)}\n`);
   }
 
   async appendEvent(event: EventInput): Promise<void> {

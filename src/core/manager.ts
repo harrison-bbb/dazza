@@ -1,6 +1,7 @@
 import { MCP_SERVER_NAME, McpTools } from '../mcp/server.js';
 import managerPrompt from '../prompts/manager.md';
 import type { AgentEvent, AgentProvider, McpServerConfig } from '../providers/types.js';
+import type { Config } from './config.js';
 import { progress } from './plan.js';
 import type { Event, Plan } from './schema.js';
 import type { Store } from './store.js';
@@ -13,10 +14,13 @@ const MANAGER_TOOLS = ['Read', 'Glob', 'Grep', ...Object.values(McpTools)];
 
 export interface ManagerOptions {
   store: Store;
+  config: Config;
   provider: AgentProvider;
   projectRoot: string;
   /** How the agent CLI should launch Dazza's MCP server. */
   mcpServer: McpServerConfig;
+  /** The code already in the directory, in a few words, if any. */
+  codebase?: string;
 }
 
 /**
@@ -28,10 +32,15 @@ export class Manager {
   constructor(private readonly options: ManagerOptions) {}
 
   async *send(message: string, signal?: AbortSignal): AsyncGenerator<AgentEvent> {
-    const { store, provider, projectRoot, mcpServer } = this.options;
+    const { store, config, provider, projectRoot, mcpServer } = this.options;
     const sessionId = await store.readManagerSession();
+    const { model } = await config.readSettings();
 
-    const state = describeState(await store.readPlan(), await store.readEvents());
+    const state = describeState(
+      await store.readPlan(),
+      await store.readEvents(),
+      this.options.codebase,
+    );
     const events = provider.run({
       prompt: `<project-state>\n${state}\n</project-state>\n\n${message}`,
       cwd: projectRoot,
@@ -39,12 +48,17 @@ export class Manager {
       allowedTools: MANAGER_TOOLS,
       mcpServers: { [MCP_SERVER_NAME]: mcpServer },
       ...(sessionId && { resumeSessionId: sessionId }),
+      ...(model && { model }),
       ...(signal && { signal }),
     });
 
     for await (const event of events) {
       if (event.type === 'started' || event.type === 'finished') {
         await store.writeManagerSession(event.sessionId);
+      }
+      if (event.type === 'finished' && event.usage) await store.recordUsage(event.usage);
+      if (event.type === 'limits') {
+        await config.writeLimits({ checkedAt: new Date().toISOString(), windows: event.windows });
       }
       yield event;
     }
@@ -54,14 +68,22 @@ export class Manager {
 const RECENT_COMMENTS = 10;
 
 /** A compact snapshot of the plan, plus the latest comments from the board. */
-export function describeState(plan: Plan | undefined, events: Event[] = []): string {
-  if (!plan) return 'No plan yet.';
+export function describeState(
+  plan: Plan | undefined,
+  events: Event[] = [],
+  codebase?: string,
+): string {
+  const where = codebase
+    ? `Working directory: ${codebase}.`
+    : 'Working directory: empty, a new project.';
+  if (!plan) return `${where}\nNo plan yet.`;
 
   const { closed, total } = progress(plan);
   const status = plan.approvedAt
     ? `approved, ${closed}/${total} tasks closed`
     : 'draft, awaiting approval';
   const lines = [
+    where,
     `Plan (${status}):`,
     ...plan.tasks.map((t) => `- ${t.id} [${t.status}] ${t.title}`),
   ];
