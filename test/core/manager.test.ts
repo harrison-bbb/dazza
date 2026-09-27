@@ -76,6 +76,13 @@ describe('describeState', () => {
     expect(describeState(undefined)).toContain('No plan yet.');
   });
 
+  it('includes recent board comments', () => {
+    const state = describeState(makePlan([makeTask({ id: 'T1' })]), [
+      { at: '2026-09-27T10:00:00Z', type: 'comment', taskId: 'T1', message: 'Use Postgres' },
+    ]);
+    expect(state).toContain('T1 (2026-09-27T10:00:00Z): Use Postgres');
+  });
+
   it('summarises an approved plan with progress', () => {
     const plan = {
       ...makePlan([makeTask({ id: 'T1', status: 'done' }), makeTask({ id: 'T2' })]),

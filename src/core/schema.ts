@@ -67,6 +67,7 @@ export const EventType = z.enum([
   'task_approved',
   'task_rejected',
   'scope_change_proposed',
+  'comment',
 ]);
 
 export const Event = z.object({

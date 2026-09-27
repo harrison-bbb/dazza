@@ -14,7 +14,7 @@ export function greeting(plan: Plan | undefined, hasConversation = false): strin
 
   const { done, total } = progress(plan);
   if (!plan.approvedAt) {
-    return `Plan drafted: ${total} tasks, waiting on your approval. Review .dazza/scope.md, then /approve — or tell me what to change.`;
+    return `Plan drafted: ${total} tasks, waiting on your approval. Review it on the board (/board), then approve — or tell me what to change.`;
   }
   if (done === total) return `All ${total} tasks done. Nice.`;
 
@@ -23,13 +23,13 @@ export function greeting(plan: Plan | undefined, hasConversation = false): strin
 }
 
 /** The task list shown after the plan is saved, so the user can see what they're approving. */
-export function planCard(plan: Plan, wasApproved: boolean): string {
+export function planCard(plan: Plan, wasApproved: boolean, boardUrl: string): string {
   const title = wasApproved
     ? `Plan revised · ${plan.tasks.length} tasks · needs your re-approval`
     : `Plan saved · ${plan.tasks.length} tasks`;
   const width = Math.max(...plan.tasks.map((task) => task.id.length));
   const tasks = plan.tasks.map((task) => `  ${paint.dim(task.id.padEnd(width))}  ${task.title}`);
-  const footer = paint.dim('  Full scope in .dazza/scope.md · /approve when you’re happy');
+  const footer = paint.dim(`  Review it at ${boardUrl} · approve there or with /approve`);
   return [`${paint.green('✔')} ${paint.bold(title)}`, ...tasks, footer].join('\n');
 }
 

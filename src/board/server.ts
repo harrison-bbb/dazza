@@ -1,0 +1,130 @@
+import { unwatchFile, watchFile } from 'node:fs';
+import { basename, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { serve } from '@hono/node-server';
+import { serveStatic } from '@hono/node-server/serve-static';
+import { Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
+import { z } from 'zod';
+import { addComment, approvePlan } from '../core/actions.js';
+import type { Store } from '../core/store.js';
+import { CSRF_HEADER, type ProjectSnapshot } from './api.js';
+
+export const DEFAULT_PORT = 4777;
+const PORT_ATTEMPTS = 10;
+const POLL_INTERVAL_MS = 500;
+const DEBOUNCE_MS = 100;
+const WATCHED_FILES = ['tasks.json', 'scope.md', 'events.jsonl'];
+
+const CommentBody = z.object({ body: z.string() });
+
+export function createBoardApp(store: Store, projectRoot: string, webRoot: string): Hono {
+  const app = new Hono();
+
+  // The board is local-only. Reject requests that arrive under another hostname
+  // (DNS rebinding), and require a custom header on writes, which cross-site pages
+  // can't send without a CORS preflight we never grant.
+  app.use('/api/*', async (c, next) => {
+    const host = new URL(c.req.url).hostname;
+    if (host !== 'localhost' && host !== '127.0.0.1') return c.text('Forbidden', 403);
+    if (c.req.method !== 'GET' && c.req.header(CSRF_HEADER) !== '1')
+      return c.text('Forbidden', 403);
+    await next();
+  });
+
+  app.get('/api/project', async (c) =>
+    c.json<ProjectSnapshot>({
+      name: basename(projectRoot),
+      scope: (await store.readScope()) ?? null,
+      plan: (await store.readPlan()) ?? null,
+      events: await store.readEvents(),
+    }),
+  );
+
+  app.post('/api/approve', async (c) => {
+    const result = await approvePlan(store);
+    return c.json(result, result.ok ? 200 : 409);
+  });
+
+  app.post('/api/tasks/:id/comments', async (c) => {
+    const parsed = CommentBody.safeParse(await c.req.json().catch(() => undefined));
+    if (!parsed.success) return c.json({ ok: false, message: 'Expected { body }' }, 400);
+    const result = await addComment(store, c.req.param('id'), parsed.data.body);
+    return c.json(result, result.ok ? 201 : 400);
+  });
+
+  // Pushes a `change` event whenever project files change, from any process
+  // (the chat, the MCP server the agent runs, or someone editing by hand).
+  app.get('/api/stream', (c) =>
+    streamSSE(c, async (stream) => {
+      const onChange = debounce(
+        () => void stream.writeSSE({ event: 'change', data: '' }),
+        DEBOUNCE_MS,
+      );
+      const paths = WATCHED_FILES.map((file) => join(store.dir, file));
+      for (const path of paths) {
+        // Unref'd so an open browser tab never keeps the CLI alive.
+        watchFile(path, { interval: POLL_INTERVAL_MS }, onChange).unref();
+      }
+
+      await new Promise<void>((resolve) => stream.onAbort(resolve));
+      for (const path of paths) unwatchFile(path, onChange);
+    }),
+  );
+
+  app.use('/*', serveStatic({ root: webRoot }));
+  app.get('*', serveStatic({ root: webRoot, path: 'index.html' }));
+
+  return app;
+}
+
+export interface RunningBoard {
+  url: string;
+  close(): void;
+}
+
+/** Serve the board on the first free port from `DEFAULT_PORT`. */
+export async function startBoard(store: Store, projectRoot: string): Promise<RunningBoard> {
+  const app = createBoardApp(store, projectRoot, defaultWebRoot());
+
+  for (let port = DEFAULT_PORT; port < DEFAULT_PORT + PORT_ATTEMPTS; port++) {
+    try {
+      const server = await listen(app, port);
+      return {
+        url: `http://localhost:${port}`,
+        close: () => {
+          server.close();
+          // Open SSE streams would otherwise hold the server (and the CLI) open.
+          if ('closeAllConnections' in server) server.closeAllConnections();
+        },
+      };
+    } catch (error) {
+      if (!isAddressInUse(error)) throw error;
+    }
+  }
+  throw new Error(`No free port between ${DEFAULT_PORT} and ${DEFAULT_PORT + PORT_ATTEMPTS - 1}`);
+}
+
+/** The built web app ships next to the bundled CLI in `dist/web`. */
+function defaultWebRoot(): string {
+  return fileURLToPath(new URL('./web', import.meta.url));
+}
+
+function listen(app: Hono, port: number): Promise<ReturnType<typeof serve>> {
+  return new Promise((resolve, reject) => {
+    const server = serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, () => resolve(server));
+    server.once('error', reject);
+  });
+}
+
+function isAddressInUse(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'EADDRINUSE';
+}
+
+function debounce(fn: () => void, ms: number): () => void {
+  let timer: NodeJS.Timeout | undefined;
+  return () => {
+    clearTimeout(timer);
+    timer = setTimeout(fn, ms);
+  };
+}

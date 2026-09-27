@@ -2,10 +2,12 @@ import { homedir } from 'node:os';
 import { stdin, stdout } from 'node:process';
 import { createInterface } from 'node:readline';
 import pkg from '../../package.json' with { type: 'json' };
+import { startBoard } from '../board/server.js';
+import { approvePlan } from '../core/actions.js';
 import { Manager } from '../core/manager.js';
-import { approve } from '../core/plan.js';
 import { Store } from '../core/store.js';
 import { ClaudeProvider } from '../providers/claude.js';
+import { openInBrowser } from '../util/open.js';
 import { BRAND, banner } from './banner.js';
 import { describeTool, greeting, planCard } from './describe.js';
 import { Spinner } from './spinner.js';
@@ -16,6 +18,7 @@ const PROMPT = `${paint.hex(BRAND, '›')} `;
 const HELP = `
   ${paint.bold('Just type')} to talk to Dazza. Commands:
   /status   Where the project is at
+  /board    Open the project board
   /approve  Approve the drafted plan
   /help     Show this
   /exit     Leave (Ctrl-C works too)
@@ -34,6 +37,7 @@ export async function startChat(projectRoot: string): Promise<void> {
   }
 
   const store = new Store(projectRoot);
+  const board = await startBoard(store, projectRoot);
   const manager = new Manager({
     store,
     provider,
@@ -46,6 +50,7 @@ export async function startChat(projectRoot: string): Promise<void> {
       version: pkg.version,
       agent: `${provider.name} v${status.version}${status.authMethod ? ` · ${status.authMethod}` : ''}`,
       cwd: projectRoot.replace(homedir(), '~'),
+      board: board.url,
     })}\n`,
   );
   say(greeting(await store.readPlan(), (await store.readManagerSession()) !== undefined));
@@ -59,18 +64,25 @@ export async function startChat(projectRoot: string): Promise<void> {
     const line = raw.trim();
     if (line === '/exit') break;
     if (line.startsWith('/')) {
-      await runCommand(line, store);
+      await runCommand(line, store, board.url);
     } else if (line) {
       running = new AbortController();
-      await converse(manager, store, line, running.signal);
+      await converse(manager, store, board.url, line, running.signal);
       running = undefined;
     }
     rl.prompt();
   }
   rl.close();
+  board.close();
 }
 
-async function converse(manager: Manager, store: Store, message: string, signal: AbortSignal) {
+async function converse(
+  manager: Manager,
+  store: Store,
+  boardUrl: string,
+  message: string,
+  signal: AbortSignal,
+) {
   const before = await store.readPlan();
   const spinner = new Spinner();
   spinner.start('Thinking');
@@ -97,12 +109,17 @@ async function converse(manager: Manager, store: Store, message: string, signal:
 
   const after = await store.readPlan();
   if (after && JSON.stringify(after) !== JSON.stringify(before)) {
-    console.log(`${planCard(after, Boolean(before?.approvedAt))}\n`);
+    console.log(`${planCard(after, Boolean(before?.approvedAt), boardUrl)}\n`);
+    // The first plan is the moment to show the board; after that the tab is already open.
+    if (!before) openInBrowser(boardUrl);
   }
 }
 
-async function runCommand(command: string, store: Store): Promise<void> {
+async function runCommand(command: string, store: Store, boardUrl: string): Promise<void> {
   switch (command) {
+    case '/board':
+      openInBrowser(boardUrl);
+      return say(`Opened ${boardUrl}`);
     case '/help':
       console.log(HELP);
       return;
@@ -110,16 +127,8 @@ async function runCommand(command: string, store: Store): Promise<void> {
       say(greeting(await store.readPlan()));
       return;
     case '/approve': {
-      const plan = await store.readPlan();
-      if (!plan) return say('Nothing to approve yet. Tell me what we are building first.');
-      if (plan.approvedAt) return say('Already approved.');
-      await store.writePlan(approve(plan, new Date()));
-      await store.appendEvent({
-        at: new Date().toISOString(),
-        type: 'plan_approved',
-        message: 'Plan approved',
-      });
-      return say(`${paint.green('✔')} Approved. ${plan.tasks.length} tasks locked in.`);
+      const result = await approvePlan(store);
+      return say(result.ok ? `${paint.green('✔')} ${result.message}` : result.message);
     }
     default:
       say(paint.dim(`Unknown command ${command}. Try /help.`));

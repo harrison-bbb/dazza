@@ -1,8 +1,11 @@
 import { resolve } from 'node:path';
 import { Command } from 'commander';
 import pkg from '../../package.json' with { type: 'json' };
+import { startBoard } from '../board/server.js';
 import { startChat } from '../chat/repl.js';
+import { Store } from '../core/store.js';
 import { serveMcp } from '../mcp/server.js';
+import { openInBrowser } from '../util/open.js';
 import { doctor } from './doctor.js';
 
 const program = new Command()
@@ -12,6 +15,16 @@ const program = new Command()
   .action(() => startChat(process.cwd()));
 
 program.command('doctor').description('Check that Dazza is ready to run').action(doctor);
+
+program
+  .command('board')
+  .description('Open the project board without starting a chat')
+  .action(async () => {
+    const root = process.cwd();
+    const board = await startBoard(new Store(root), root);
+    console.log(`Board running at ${board.url} (Ctrl-C to stop)`);
+    openInBrowser(board.url);
+  });
 
 program
   .command('mcp', { hidden: true })

@@ -52,14 +52,18 @@ describe('planCard', () => {
     makeTask({ id: 'T10', title: 'Launch' }),
   ]);
 
+  it('links to the board', () => {
+    expect(planCard(plan, false, 'http://localhost:4777')).toContain('http://localhost:4777');
+  });
+
   it('lists tasks with aligned ids', () => {
-    const lines = planCard(plan, false).split('\n');
+    const lines = planCard(plan, false, 'http://localhost:4777').split('\n');
     expect(lines[0]).toContain('Plan saved · 2 tasks');
     expect(lines[1]).toBe('  T1   Setup');
     expect(lines[2]).toBe('  T10  Launch');
   });
 
   it('flags a revised approved plan for re-approval', () => {
-    expect(planCard(plan, true)).toContain('needs your re-approval');
+    expect(planCard(plan, true, 'http://localhost:4777')).toContain('needs your re-approval');
   });
 });

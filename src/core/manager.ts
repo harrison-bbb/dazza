@@ -2,7 +2,7 @@ import { MCP_SERVER_NAME, McpTools } from '../mcp/server.js';
 import managerPrompt from '../prompts/manager.md';
 import type { AgentEvent, AgentProvider, McpServerConfig } from '../providers/types.js';
 import { progress } from './plan.js';
-import type { Plan } from './schema.js';
+import type { Event, Plan } from './schema.js';
 import type { Store } from './store.js';
 
 /** Read-only tools let the manager inspect an existing codebase while scoping. */
@@ -28,7 +28,7 @@ export class Manager {
     const { store, provider, projectRoot, mcpServer } = this.options;
     const sessionId = await store.readManagerSession();
 
-    const state = describeState(await store.readPlan());
+    const state = describeState(await store.readPlan(), await store.readEvents());
     const events = provider.run({
       prompt: `<project-state>\n${state}\n</project-state>\n\n${message}`,
       cwd: projectRoot,
@@ -48,14 +48,25 @@ export class Manager {
   }
 }
 
-/** A compact snapshot of the plan for the agent's system prompt. */
-export function describeState(plan: Plan | undefined): string {
-  if (!plan) return '## Project state\n\nNo plan yet.';
+const RECENT_COMMENTS = 10;
+
+/** A compact snapshot of the plan, plus the user's latest comments from the board. */
+export function describeState(plan: Plan | undefined, events: Event[] = []): string {
+  if (!plan) return 'No plan yet.';
 
   const { done, total } = progress(plan);
   const status = plan.approvedAt
     ? `approved, ${done}/${total} tasks done`
     : 'draft, awaiting approval';
-  const tasks = plan.tasks.map((task) => `- ${task.id} [${task.status}] ${task.title}`);
-  return [`## Project state`, '', `Plan (${status}):`, ...tasks].join('\n');
+  const lines = [
+    `Plan (${status}):`,
+    ...plan.tasks.map((t) => `- ${t.id} [${t.status}] ${t.title}`),
+  ];
+
+  const comments = events.filter((e) => e.type === 'comment').slice(-RECENT_COMMENTS);
+  if (comments.length > 0) {
+    lines.push('', 'Recent comments from the user on the board:');
+    lines.push(...comments.map((c) => `- ${c.taskId ?? 'general'} (${c.at}): ${c.message}`));
+  }
+  return lines.join('\n');
 }

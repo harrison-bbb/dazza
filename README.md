@@ -36,7 +36,9 @@ dazza doctor   # check everything's ready
 dazza          # start talking
 ```
 
-Just type to talk to Dazza. `/status`, `/approve` and `/help` are shortcuts.
+Just type to talk to Dazza. `/status`, `/board`, `/approve` and `/help` are shortcuts.
+
+While Dazza runs, a project board is served at `http://localhost:4777`. It has an overview dashboard, the scope doc, and list and kanban views of every task. It opens automatically when your first plan is ready, updates live, and lets you approve the plan or leave notes on tasks. Run `dazza board` to open it without starting a chat.
 
 ## Development
 
@@ -47,6 +49,8 @@ pnpm install
 pnpm check   # lint + typecheck + test
 pnpm build && node dist/cli.js
 ```
+
+For board UI work with hot reload, run `dazza board` in a project with a plan, then `pnpm dev:web`.
 
 ## License
 
