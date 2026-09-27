@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import { relative } from 'node:path';
 import type { BuildEvent } from '../core/builder.js';
 import { clock } from '../core/errors.js';
@@ -181,6 +182,10 @@ function finished(
     '',
     `${marker()} ${paint.bold(`${event.task.id} is ready for your review`)}${details.length ? ` · ${details.join(' · ')}` : ''}`,
     ...(handoff ? [indent(renderInline(handoff.summary))] : []),
+    // Until it's approved, the work only exists in its worktree.
+    ...(handoff?.worktree
+      ? [indent(paint.dim(`Try it: cd ${handoff.worktree.replace(homedir(), '~')}`))]
+      : []),
   ].join('\n');
 }
 

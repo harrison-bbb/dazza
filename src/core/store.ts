@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import { access, appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, join } from 'node:path';
 import { z } from 'zod';
 import { withLock } from '../util/lock.js';
 import { Event, type EventInput, Plan } from './schema.js';
@@ -14,6 +16,8 @@ const LOCAL_FILES = [MANAGER_SESSION_FILE, USAGE_FILE, BUILD_FILE, '*.lock', 'me
 /** Machine-local bookkeeping for a task being built. */
 export const TaskBuild = z.object({
   branch: z.string(),
+  /** The worktree the task is built in. Missing for builds from before worktrees. */
+  dir: z.string().optional(),
   baseBranch: z.string(),
   /** The commit the task started from, to measure what changed. */
   startCommit: z.string(),
@@ -46,9 +50,24 @@ export class Store {
     this.dir = join(root, STATE_DIR);
   }
 
+  /**
+   * Where a task is built: its own worktree, outside the project so the
+   * project's tools (test runners, linters, watchers) never pick it up.
+   */
+  worktreeDir(taskId: string): string {
+    const project = `${basename(this.root)}-${createHash('sha256').update(this.root).digest('hex').slice(0, 8)}`;
+    return join(dataDir(), 'worktrees', project, taskId);
+  }
+
+  /** Held by whichever Dazza process is building this project. */
+  get builderLockFile(): string {
+    return this.path('builder.lock');
+  }
+
   async init(): Promise<void> {
     await mkdir(this.dir, { recursive: true });
-    // Machine-local state stays out of git; everything else is meant to be committed.
+    // Dazza keeps .dazza/ out of git (see prepareRepo). This covers the machine-local
+    // files too if someone commits the folder anyway.
     await writeFile(this.path('.gitignore'), `${LOCAL_FILES.join('\n')}\n`, 'utf8');
   }
 
@@ -183,4 +202,10 @@ export class Store {
 
 function isNotFound(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+}
+
+/** Per-user data that can be large, like worktrees. $DAZZA_DATA_DIR, or the XDG data dir. */
+function dataDir(): string {
+  if (process.env.DAZZA_DATA_DIR) return process.env.DAZZA_DATA_DIR;
+  return join(process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share'), 'dazza');
 }

@@ -3,8 +3,9 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { execCommand } from '../util/process.js';
 
 /**
- * The few git operations Dazza needs, run in the project directory. Each task
- * is built on its own branch; Dazza commits the work when it's submitted.
+ * The few git operations Dazza needs. Each task is built on its own branch, in
+ * its own worktree (a separate checkout), so the user's checkout is never
+ * switched or touched. Dazza commits the work when it's submitted.
  */
 export class Git {
   constructor(readonly root: string) {}
@@ -47,6 +48,15 @@ export class Git {
     return this.must(['rev-parse', 'HEAD']);
   }
 
+  /** Whether there's at least one commit (a fresh `git init` has none). */
+  async hasCommits(): Promise<boolean> {
+    return (await this.run(['rev-parse', '--verify', '--quiet', 'HEAD'])).ok;
+  }
+
+  async commitEmpty(message: string): Promise<void> {
+    await this.must(['commit', '-q', '--allow-empty', '-m', message]);
+  }
+
   /** True when there are no uncommitted changes (untracked files count). */
   async isClean(): Promise<boolean> {
     return (await this.must(['status', '--porcelain'])) === '';
@@ -56,13 +66,71 @@ export class Git {
     return (await this.run(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])).ok;
   }
 
-  /** Switch to a branch, creating it from the current commit if needed. */
-  async checkout(branch: string): Promise<void> {
+  /**
+   * Check a branch out in its own directory, creating the branch from `from`
+   * if it doesn't exist yet. Forgets worktrees whose directories were deleted
+   * first, so a directory can be recreated.
+   */
+  async addWorktree(dir: string, branch: string, from: string): Promise<void> {
+    await this.run(['worktree', 'prune']);
     await this.must(
       (await this.branchExists(branch))
-        ? ['checkout', '-q', branch]
-        : ['checkout', '-q', '-b', branch],
+        ? ['worktree', 'add', '-q', dir, branch]
+        : ['worktree', 'add', '-q', '-b', branch, dir, from],
     );
+  }
+
+  /** A throwaway checkout of a commit, on no branch. */
+  async addDetachedWorktree(dir: string, commit: string): Promise<void> {
+    await this.must(['worktree', 'add', '-q', '--detach', dir, commit]);
+  }
+
+  /** Delete a worktree's directory, keeping its branch. Uncommitted changes in it are lost. */
+  async removeWorktree(dir: string): Promise<void> {
+    await this.run(['worktree', 'remove', '--force', dir]);
+    await this.run(['worktree', 'prune']);
+  }
+
+  /** The directory a branch is checked out in, if it's checked out anywhere. */
+  async checkedOutAt(branch: string): Promise<string | undefined> {
+    const list = await this.must(['worktree', 'list', '--porcelain']);
+    for (const entry of list.split('\n\n')) {
+      const lines = entry.split('\n');
+      const dir = lines.find((line) => line.startsWith('worktree '))?.slice('worktree '.length);
+      if (dir && lines.includes(`branch refs/heads/${branch}`)) return dir;
+    }
+    return undefined;
+  }
+
+  async deleteBranch(branch: string): Promise<void> {
+    await this.run(['branch', '-D', branch]);
+  }
+
+  /** Point a branch at a commit. Only for branches that aren't checked out anywhere. */
+  async setBranch(branch: string, commit: string): Promise<void> {
+    await this.must(['branch', '-f', branch, commit]);
+  }
+
+  /**
+   * Merge a commit into the checked-out branch: a fast-forward when possible,
+   * otherwise a merge commit. On failure nothing changes, and the reason is
+   * returned.
+   */
+  async merge(
+    commit: string,
+    message: string,
+    { ffOnly = false } = {},
+  ): Promise<{ ok: true } | { ok: false; conflict: boolean; error: string }> {
+    const result = await this.run([
+      'merge',
+      '-q',
+      ...(ffOnly ? ['--ff-only'] : ['--no-edit', '-m', message]),
+      commit,
+    ]);
+    if (result.ok) return { ok: true };
+    const conflict = (await this.run(['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'])).ok;
+    if (conflict) await this.run(['merge', '--abort']);
+    return { ok: false, conflict, error: result.err || result.out };
   }
 
   /** Commit everything. Returns the new commit, or undefined if there was nothing to commit. */
@@ -82,18 +150,6 @@ export class Git {
   /** Whether `ancestor` is already part of `descendant`'s history. */
   async isAncestor(ancestor: string, descendant: string): Promise<boolean> {
     return (await this.run(['merge-base', '--is-ancestor', ancestor, descendant])).ok;
-  }
-
-  /**
-   * Move `branch` forward to `commit` if that's a pure fast-forward. Returns false
-   * when the histories have diverged, leaving everything as it was.
-   */
-  async fastForward(branch: string, commit: string): Promise<boolean> {
-    if (!(await this.run(['merge-base', '--is-ancestor', branch, commit])).ok) return false;
-    if ((await this.currentBranch()) === branch) {
-      return (await this.run(['merge', '--ff-only', '-q', commit])).ok;
-    }
-    return (await this.run(['branch', '-f', branch, commit])).ok;
   }
 
   private async run(args: string[]): Promise<{ ok: boolean; out: string; err: string }> {

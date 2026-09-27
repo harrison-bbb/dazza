@@ -16,14 +16,14 @@ done, and only interrupts you when it actually needs something.
 ```
 you ──chat──▶ dazza ──scopes──▶ .dazza/ (scope + tasks) ──▶ localhost board (approve)
                  │
-                 └─works──▶ claude / codex (headless, one git branch per task)
+                 └─works──▶ claude / codex (headless, one git worktree per task)
                               │
                               └─reports──▶ Slack / Telegram (handoffs, blockers, approvals)
 ```
 
 - **No new coding brain.** Dazza orchestrates the `claude` or `codex` CLI you already use, with your existing login.
 - **Plain-file state.** Everything lives in `.dazza/` in your repo. You can read it, diff it and commit it.
-- **Safe by default.** Each task gets its own branch. Nothing merges until you approve it.
+- **Safe by default.** Each task is built in its own worktree, on its own branch, so your checkout is never touched. Nothing merges until you approve it.
 
 ## Try it
 
@@ -68,7 +68,7 @@ While Dazza runs, a project board is served at `http://localhost:4777`: a dashbo
 
 ### Building
 
-`/build` works through the plan in dependency order. Each task is built on its own branch (`dazza/T3-…`) by Claude Code in [auto mode](https://docs.claude.com/en/docs/claude-code), which runs edits and commands without asking while its safety checks block risky actions. You see the narration, every edit (with a short diff) and every command as they happen. When a task is done Dazza commits it and moves it to **in review**. If Claude needs a decision or a credential, the task goes to **blocked** with the question, and Dazza moves on to the next task. Approving a task merges it into your branch, in order. Requesting changes sends it back, and the next `/build` picks it up with your note. Ctrl-C stops cleanly, and the task resumes next time.
+`/build` works through the plan in dependency order. Each task is built on its own branch (`dazza/T3-…`), in its own checkout (a git worktree) so yours is never touched, by Claude Code in [auto mode](https://docs.claude.com/en/docs/claude-code), which runs edits and commands without asking while its safety checks block risky actions. You see the narration, every edit (with a short diff) and every command as they happen. When a task is done Dazza commits it and moves it to **in review**. If Claude needs a decision or a credential, the task goes to **blocked** with the question, and Dazza moves on to the next task. Keep working while it builds, uncommitted changes and all. To try a task before approving it, `cd` into its worktree (the review shows where). Approving a task merges it into your branch, in dependency order; if it can't (it conflicts, or you have uncommitted changes on that branch), Dazza says so and tries again next build. Requesting changes sends it back, and the next `/build` picks it up with your note. Ctrl-C stops cleanly, and the task resumes next time.
 
 While it builds you can keep talking to Dazza in the terminal. Comments you leave on the board, or instructions you give in the chat, reach the build at its next check-in.
 
@@ -80,6 +80,7 @@ Builds are meant to run while you're away, so Dazza handles the usual failures i
 - **Out of API credit, or a rejected key:** Dazza stops straight away, instead of letting Claude Code retry for minutes, and tells you what to do.
 - **Anthropic overloaded:** Dazza backs off and retries.
 - **Claude Code crashes:** Dazza retries once. If it crashes again, the task is blocked with the error.
+- **Dazza itself is killed** (terminal closed, laptop died): next time, the task goes back in the queue and resumes in its worktree, where its work was left.
 - **A stuck worker** (20 minutes of complete silence): Dazza stops it, blocks the task with an explanation, and moves on.
 
 ### Screenshots

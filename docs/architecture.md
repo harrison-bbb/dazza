@@ -17,7 +17,7 @@ Dazza is a manager, not a coder. It runs the `claude` or `codex` CLI the user al
                     │                  │
                     ▼                  ▼
               claude / codex     claude / codex
-              read-only tools    auto mode, task branch
+              read-only tools    auto mode, task worktree
                     │                  │
                     └──── dazza mcp ───┘   stdio MCP server, spawned by the agent CLI
                              │
@@ -68,11 +68,11 @@ Everything the user sees (the terminal, the board, messaging) is a view over the
 | `events.jsonl` | Append-only activity log: comments, status changes, approvals. Feeds the board and the agents |
 | `media/` | Screenshots, e.g. `media/T3/login-desktop.png` |
 | `session.json` | The manager's agent session id, so the conversation resumes |
-| `build.json` | Per-task build bookkeeping: branch, base branch, start commit, worker session id |
+| `build.json` | Per-task build bookkeeping: branch, worktree, base branch, start commit, worker session id |
 | `usage.json` | Running token and cost totals for the project |
 | `*.lock` | Lock files for read-modify-write |
 
-The whole folder is kept out of the project's git history. Dazza adds `.dazza/` to `.git/info/exclude` (local to the machine, nothing committed), and refuses to build if the folder is tracked. The reason is that task branches are checked out in the working directory: if the plan were committed, switching branches would rewind it.
+The whole folder is kept out of the project's git history. Dazza adds `.dazza/` to `.git/info/exclude` (local to the machine, nothing committed), and refuses to build if the folder is tracked. The reason is that the plan belongs to the user's checkout, not to any branch: if it were committed, task branches would carry stale copies of it.
 
 ## Two agent sessions
 
@@ -105,13 +105,13 @@ Tool input is validated with zod. Invalid input comes back to the agent as a too
 
 `/build` runs `build()` in `src/core/builder.ts` in the background while the chat stays usable.
 
-1. **Prepare the repo.** Create one if there isn't one. Refuse to start with uncommitted changes, so the user's work and Dazza's stay separate.
-2. **Pick the next task** whose dependencies are met (`nextTask` in `src/core/plan.ts`).
-3. **Check out its branch**, `dazza/<id>-<slug>`, from the current commit. Tasks are stacked: each one starts where the previous one ended. There are no worktrees; the build happens in the project directory.
+1. **Prepare.** Take the project's builder lock (`.dazza/builder.lock`, one builder per project). Create a repo if there isn't one. Put back any task a crashed Dazza left marked building. Retry landing approved work that couldn't land before.
+2. **Pick the next task** whose dependencies are closed (`nextTask` in `src/core/plan.ts`).
+3. **Set up its worktree**: a separate checkout on its own branch, `dazza/<id>-<slug>`, under `~/.local/share/dazza/worktrees/<project>/<id>` (`$DAZZA_DATA_DIR` overrides). A new task starts from the user's current branch, plus any approved dependency that hasn't landed yet, merged in. A task seen before resumes in its existing worktree, uncommitted work and all. The user's own checkout is never switched or written to, so they can keep working, uncommitted changes included.
 4. **Run the worker** until it calls `submit` (task goes to review) or `block` (task goes to blocked, with the question). Blocked work doesn't stall the build. The loop moves to the next ready task.
 5. **Stop** when nothing is ready, the user has to act, or the user stops it. A stopped task is paused and resumes its agent session next time.
 
-**Landing.** Approving a task fast-forwards the base branch (the branch the user was on) to the task's commit. Because tasks are stacked, a task only lands once everything it was built on is there: approving T4 before T3 waits for T3, and approving T3 then lands both. If histories have diverged, nothing moves. Requesting changes sends the task back to planned with the user's note, and the next build picks it up on the same branch.
+**Landing** (`landApprovedWork` in `work.ts`). Approving a task brings its commit into its base branch: a fast-forward when possible, otherwise a merge commit. If the user has the base branch checked out, the merge happens there, but never over their uncommitted changes. If it isn't checked out, the merge happens in a throwaway worktree. A task lands only after the tasks it depends on, so approving T4 before T3 waits for T3. When something stops a task landing (uncommitted changes, a conflict, or a dependency still in review or cancelled), the user is told exactly that, and the next `/build` tries again. A landed task's worktree is removed; its branch stays. Requesting changes sends the task back to planned with the user's note, and the next build picks it up in the same worktree.
 
 ## Resilience
 
@@ -123,6 +123,7 @@ Builds are meant to run unattended, so the loop handles the common failures (`DE
 | Out of credit, or a rejected key | Stop immediately. The adapters kill the CLI rather than let it retry something retries can't fix |
 | Service overloaded | Back off (1, 2, 3 minutes) and retry, up to three times |
 | Agent CLI crashes | Retry once, resuming the session. A second crash blocks the task with the error |
+| Dazza itself killed mid-task | The task is left marked building. The next `dazza` or `/build` (holding the builder lock) puts it back in the queue, and it resumes in its worktree |
 | No output for 20 minutes | Stop the worker and block the task with an explanation |
 
 Errors are classified from the CLI's own messages and status codes in `src/providers/errors.ts`.
@@ -156,4 +157,4 @@ Messaging is the same conversation as the terminal, from a phone. Messages go to
 
 - **No database.** The state is small, and files let the user read, diff and fix it. The cost is locking, which `src/util/lock.ts` covers with a lock file and stale-lock recovery.
 - **Stream JSON, not a library SDK.** Driving the CLIs keeps auth and billing with the user's own install and plan. Each adapter translates its CLI's stream into one provider-neutral event type. Unknown lines are ignored, so a new CLI version doesn't break the parser.
-- **Branches, not worktrees.** One task builds at a time, so one working directory is enough, and the user can check out any task branch to try it. The price is that the tree has to be clean before a build starts.
+- **A worktree per task.** The user keeps working in their own checkout while Dazza builds, and a blocked task's half-done work stays in its own worktree instead of leaking into the next task. The price is that each worktree starts without git-ignored files, so the worker installs dependencies itself. Worktrees live outside the project so its test runner and linter never see them.

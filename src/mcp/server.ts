@@ -24,7 +24,6 @@ import {
   takeNewMessages,
   WorkReport,
 } from '../core/work.js';
-import { Git } from '../git/git.js';
 import { ScreenshotRequest, Screenshots } from '../preview/screenshots.js';
 
 export const MCP_SERVER_NAME = 'dazza';
@@ -132,7 +131,7 @@ export type McpRole = 'manager' | 'worker';
 export function createMcpServer(
   store: Store,
   role: McpRole,
-  screenshots: Pick<Screenshots, 'take'> = new Screenshots(store),
+  screenshots: Pick<Screenshots, 'take'> = new Screenshots(store, appRoot(store, role)),
 ): McpServer {
   const server = new McpServer({ name: MCP_SERVER_NAME, version: pkg.version });
   if (role === 'manager') registerManagerTools(server, store);
@@ -144,6 +143,18 @@ export function createMcpServer(
       : undefined;
   registerScreenshotTool(server, screenshots, defaultTask);
   return server;
+}
+
+/**
+ * Where the app to screenshot lives: for the builder, the worktree of the task
+ * it's building, so it sees its own work; otherwise the user's checkout.
+ */
+function appRoot(store: Store, role: McpRole): () => Promise<string> {
+  return async () => {
+    if (role !== 'worker') return store.root;
+    const building = (await store.readPlan())?.tasks.find((t) => t.status === 'building');
+    return (building && (await store.readTaskBuild(building.id))?.dir) ?? store.root;
+  };
 }
 
 /** Both roles can look at the app; what they do with the picture differs. */
@@ -336,8 +347,7 @@ function registerWorkerTools(server: McpServer, store: Store): void {
         'Only call this once the acceptance criteria are met and the checks pass.',
       inputSchema: { taskId: z.string(), ...WorkReport.shape },
     },
-    async ({ taskId, ...report }) =>
-      toResult(await submitTask(store, new Git(store.root), taskId, report)),
+    async ({ taskId, ...report }) => toResult(await submitTask(store, taskId, report)),
   );
 }
 

@@ -38,13 +38,13 @@ Be clear about what that means. During `/build`, the agent runs shell commands o
 
 Both sessions get only Dazza's MCP server (`--strict-mcp-config` on Claude Code). Your personal MCP servers aren't exposed to them.
 
-## Why each task gets its own branch
+## Why each task gets its own branch and worktree
 
-Every task is built on its own branch, `dazza/<id>-<slug>`, and committed there when it's submitted. Nothing reaches your branch until you approve the task. Approval fast-forwards your branch to the task's commit, and nothing is ever force-merged. If histories have diverged, nothing moves.
+Every task is built on its own branch, `dazza/<id>-<slug>`, in its own worktree: a separate checkout under `~/.local/share/dazza/worktrees/`. The agent runs there, not in your project directory, and its work is committed there when it's submitted. Your checkout is never switched or written to while it builds, so your uncommitted work stays out of the agent's commits, and the agent's changes stay out of yours.
 
-Before building, Dazza checks that your working tree is clean. That keeps your uncommitted work out of the agent's commits, and the agent's changes out of yours. `.dazza/` is kept out of git (through `.git/info/exclude`) so switching branches can't rewrite the plan.
+Nothing reaches your branch until you approve the task. Approval merges it in (a fast-forward when possible), never over your uncommitted changes, and nothing is ever force-pushed or rewritten. If the merge would conflict, nothing moves and Dazza tells you.
 
-Tasks are built on branches in your project directory, not in separate worktrees. The branch keeps the agent's changes separate in git, but the agent runs in your real checkout.
+A worktree limits where the agent works, not what it can reach. The agent runs as you, with your permissions, so it could still read or write files outside its worktree. Treat it as a separation of work, not a sandbox.
 
 ## The board is local only
 

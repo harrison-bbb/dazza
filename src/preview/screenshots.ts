@@ -35,16 +35,20 @@ export type ScreenshotRequest = z.input<typeof ScreenshotRequest>;
  */
 export class Screenshots {
   private readonly camera = new Camera();
-  private readonly app: AppServer;
+  private app: Promise<AppServer> | undefined;
 
-  constructor(private readonly store: Store) {
-    this.app = new AppServer(store.root);
-  }
+  constructor(
+    private readonly store: Store,
+    /** The directory the app runs from; decided at the first screenshot. */
+    private readonly root: () => Promise<string> = async () => store.root,
+  ) {}
 
   /** Take a screenshot; resolves to its media path, e.g. "T3/login-page-desktop.png". */
   async take(input: ScreenshotRequest): Promise<{ path: string; width: number; height: number }> {
     const request = ScreenshotRequest.parse(input);
-    const url = request.url ?? new URL(request.path ?? '/', `${await this.app.url()}/`).toString();
+    this.app ??= this.root().then((root) => new AppServer(root));
+    const url =
+      request.url ?? new URL(request.path ?? '/', `${await (await this.app).url()}/`).toString();
     const scope = request.taskId?.split('.')[0] ?? 'project';
     // The device is added to the name, so drop it if the caller already included it.
     const name = slug(request.name).replace(/-(desktop|mobile)$/, '');
@@ -62,7 +66,7 @@ export class Screenshots {
   }
 
   async close(): Promise<void> {
-    await Promise.all([this.camera.close(), this.app.stop()]);
+    await Promise.all([this.camera.close(), this.app?.then((app) => app.stop())]);
   }
 
   /** A path that doesn't overwrite an earlier screenshot: name.png, name-2.png, … */

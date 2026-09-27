@@ -1,5 +1,9 @@
+import { existsSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { z } from 'zod';
-import { type Git, taskBranch } from '../git/git.js';
+import { Git, taskBranch } from '../git/git.js';
 import type { ActionResult } from './actions.js';
 import { findItem, withStatus } from './plan.js';
 import {
@@ -39,8 +43,9 @@ export const WorkReport = z.object({
 export type WorkReport = z.input<typeof WorkReport>;
 
 /**
- * Get the repository ready to build in. Returns a message for the user when it
- * isn't safe to start, e.g. uncommitted changes that aren't Dazza's.
+ * Get the repository ready to build in: a git repo with at least one commit,
+ * and Dazza's state kept out of it. The user's checkout can have uncommitted
+ * changes: tasks are built in worktrees of their own, which never touch it.
  */
 export async function prepareRepo(
   git: Git,
@@ -59,17 +64,22 @@ export async function prepareRepo(
     };
   }
   await git.excludeLocally('.dazza/');
-  if (!(await git.isClean())) {
-    return {
-      ok: false,
-      message:
-        'You have uncommitted changes. Commit or stash them first, so Dazza’s work stays separate from yours.',
-    };
-  }
+  // Branches need a commit to start from.
+  if (!(await git.hasCommits())) await git.commitEmpty('Initial commit (before Dazza)');
   return { ok: true, created };
 }
 
-/** Put the task on its branch and mark it building. Resumes an earlier attempt's branch. */
+/** Why a task couldn't be set up to build, in words for the user. */
+export class WorkError extends Error {
+  override name = 'WorkError';
+}
+
+/**
+ * Set a task up in its worktree and mark it building. A new task starts from
+ * the user's branch, plus any approved work it depends on that hasn't landed
+ * yet. A task built before resumes where it was, uncommitted work and all.
+ * Throws a WorkError when it can't be set up.
+ */
 export async function startTask(
   store: Store,
   git: Git,
@@ -80,20 +90,62 @@ export async function startTask(
   // The task brief carries everything said so far, so only later comments are news.
   const seenEvents = (await store.readEvents()).length;
   const build: TaskBuild = {
-    ...(existing ?? {
-      branch: taskBranch(task.id, task.title),
-      baseBranch: await projectBranch(store, git),
-      startCommit: await git.head(),
-    }),
+    ...(existing
+      ? await reopenWorktree(store, git, task, existing)
+      : await openWorktree(store, git, task)),
     seenEvents,
   };
-  await git.checkout(build.branch);
   await store.writeTaskBuild(task.id, build);
   await setStatus(store, task.id, 'building', now, {
     type: 'task_started',
     message: existing ? 'Picked the task back up' : 'Started building',
   });
   return build;
+}
+
+async function openWorktree(store: Store, git: Git, task: Task): Promise<TaskBuild> {
+  const dir = store.worktreeDir(task.id);
+  const branch = taskBranch(task.id, task.title);
+  const baseBranch = await projectBranch(store, git);
+  await git.addWorktree(dir, branch, baseBranch);
+
+  // Approved work this task builds on, if it hasn't landed on the base branch yet.
+  const tree = new Git(dir);
+  const plan = await store.readPlan();
+  for (const dep of plan?.tasks.filter((t) => task.dependsOn.includes(t.id)) ?? []) {
+    const commit = dep.handoff?.commit;
+    if (!commit || (await git.isAncestor(commit, baseBranch))) continue;
+    const merged = await tree.merge(commit, `Bring in ${dep.id}: ${dep.title}`);
+    if (!merged.ok) {
+      await git.removeWorktree(dir);
+      await git.deleteBranch(branch);
+      throw new WorkError(
+        `${task.id} builds on ${dep.id}, which hasn’t landed on ${baseBranch} yet, and its work ` +
+          `doesn’t merge cleanly. Land ${dep.id} first (see its task), then /build again.`,
+      );
+    }
+  }
+  return { branch, baseBranch, dir, startCommit: await tree.head(), seenEvents: 0 };
+}
+
+/** Pick up where an earlier attempt left off, recreating its worktree if it's gone. */
+async function reopenWorktree(
+  store: Store,
+  git: Git,
+  task: Task,
+  build: TaskBuild,
+): Promise<TaskBuild> {
+  const dir = build.dir ?? store.worktreeDir(task.id);
+  if (existsSync(join(dir, '.git'))) return { ...build, dir };
+  const holder = await git.checkedOutAt(build.branch);
+  if (holder) {
+    throw new WorkError(
+      `${build.branch} is checked out in ${holder}. Switch that checkout to another branch ` +
+        `(e.g. git checkout ${build.baseBranch}) so I can build ${task.id} in a worktree of its own.`,
+    );
+  }
+  await git.addWorktree(dir, build.branch, build.baseBranch);
+  return { ...build, dir };
 }
 
 export async function setSubtaskStatus(
@@ -130,10 +182,9 @@ export async function blockTask(
   return result;
 }
 
-/** Commit the work and hand it over for review. */
+/** Commit the work in the task's worktree and hand it over for review. */
 export async function submitTask(
   store: Store,
-  git: Git,
   taskId: string,
   report: WorkReport,
   now = new Date(),
@@ -144,34 +195,39 @@ export async function submitTask(
     if (!(await store.mediaExists(image))) return { ok: false, message: `No screenshot ${image}.` };
   }
   const build = await store.readTaskBuild(taskId);
-  const branch = await store.updatePlan(
-    async (plan): Promise<[Plan | undefined, string | undefined]> => {
-      const task = plan && findItem(plan, taskId);
-      if (!plan || !task || task.subtask || !build || task.task.status !== 'building') {
-        return [undefined, undefined];
-      }
-      const commit = (await git.commitAll(`${taskId}: ${task.task.title}`)) ?? (await git.head());
-      const handoff: Handoff = {
-        ...parsed.data,
-        branch: build.branch,
-        baseBranch: build.baseBranch,
-        commit,
-        filesChanged: await git.filesChanged(build.startCommit, commit),
-        // The report's screenshots, which were checked to exist above.
-        submittedAt: now.toISOString(),
-      };
-      const next = withStatus(plan, taskId, 'review');
-      return [
-        { ...next, tasks: next.tasks.map((t) => (t.id === taskId ? { ...t, handoff } : t)) },
-        build.branch,
-      ];
-    },
-  );
-  if (!branch) {
-    return { ok: false, message: `${taskId} isn't being built, so there's nothing to hand over.` };
-  }
+  const plan = await store.readPlan();
+  const current = plan && findItem(plan, taskId);
+  const notBuilding = {
+    ok: false,
+    message: `${taskId} isn't being built, so there's nothing to hand over.`,
+  } as const;
+  if (!build || !current || current.subtask || current.task.status !== 'building')
+    return notBuilding;
+
+  // Commit outside the plan lock: hooks can be slow, and nothing else writes to this worktree.
+  const tree = new Git(build.dir ?? store.root);
+  const commit = (await tree.commitAll(`${taskId}: ${current.task.title}`)) ?? (await tree.head());
+  const handoff: Handoff = {
+    ...parsed.data,
+    branch: build.branch,
+    ...(build.dir && { worktree: build.dir }),
+    baseBranch: build.baseBranch,
+    commit,
+    filesChanged: await tree.filesChanged(build.startCommit, commit),
+    submittedAt: now.toISOString(),
+  };
+  const handedOver = await store.updatePlan((plan): [Plan | undefined, boolean] => {
+    const task = plan?.tasks.find((t) => t.id === taskId);
+    if (!plan || task?.status !== 'building') return [undefined, false];
+    const next = withStatus(plan, taskId, 'review');
+    return [
+      { ...next, tasks: next.tasks.map((t) => (t.id === taskId ? { ...t, handoff } : t)) },
+      true,
+    ];
+  });
+  if (!handedOver) return notBuilding;
   await log(store, now, 'task_submitted', taskId, 'Ready for your review');
-  return { ok: true, message: `${taskId} committed on ${branch} and sent for review.` };
+  return { ok: true, message: `${taskId} committed on ${build.branch} and sent for review.` };
 }
 
 /**
@@ -207,11 +263,17 @@ export async function pauseTask(store: Store, taskId: string, now = new Date()):
 }
 
 /**
- * The user's own branch that work lands on. When we're sitting on an earlier
- * task's branch (tasks stack), that's the branch the earlier task came from.
+ * The user's own branch, which work starts from and lands on: whatever their
+ * checkout is on. If that's one of Dazza's task branches (someone checked it
+ * out to try it), it's the branch that task came from.
  */
 async function projectBranch(store: Store, git: Git): Promise<string> {
   const current = await git.currentBranch();
+  if (current === 'HEAD') {
+    throw new WorkError(
+      'Your project isn’t on a branch (detached HEAD). Check out the branch you want the work to land on, then /build.',
+    );
+  }
   const builds = Object.values(await store.readTaskBuilds());
   return builds.find((b) => b.branch === current)?.baseBranch ?? current;
 }
@@ -254,32 +316,152 @@ function log(
   });
 }
 
-/**
- * Move approved work onto the base branch. Tasks are built stacked, so a task
- * only lands once everything it was built on top of is already there: approving
- * T4 before T3 waits for T3, and approving T3 then lands both.
- * Returns the ids of tasks that landed.
- */
-export async function landApprovedWork(store: Store, git: Git): Promise<string[]> {
-  const plan = await store.readPlan();
-  if (!plan || !(await git.isRepo())) return [];
-  const landed: string[] = [];
+/** What happened when Dazza tried to land approved work. */
+export interface Landing {
+  landed: string[];
+  /** Approved tasks that couldn't land yet, with why, in words for the user. */
+  held: Record<string, string>;
+}
 
-  let progress = true;
-  while (progress) {
+/**
+ * Move approved work onto the branch it was built from: a fast-forward when
+ * possible, otherwise a merge. A task lands only once the tasks it depends on
+ * have, so approving T4 before T3 waits for T3, and approving T3 lands both.
+ * Landed tasks' worktrees are removed; their branches stay.
+ */
+export async function landApprovedWork(store: Store, git: Git): Promise<Landing> {
+  const result: Landing = { landed: [], held: {} };
+  const plan = await store.readPlan();
+  if (!plan || !(await git.isRepo())) return result;
+  const byId = new Map(plan.tasks.map((t) => [t.id, t]));
+
+  for (let progress = true; progress; ) {
     progress = false;
     for (const task of plan.tasks) {
-      const { commit, baseBranch } = task.handoff ?? {};
-      const build = await store.readTaskBuild(task.id);
-      if (task.status !== 'closed' || !commit || !baseBranch || !build || landed.includes(task.id))
-        continue;
+      const { commit, baseBranch, branch } = task.handoff ?? {};
+      if (task.status !== 'closed' || !commit || !baseBranch) continue;
+      if (result.landed.includes(task.id) || task.id in result.held) continue;
       if (await git.isAncestor(commit, baseBranch)) continue; // already there
-      if (!(await git.isAncestor(build.startCommit, baseBranch))) continue; // waits for earlier work
-      if (await git.fastForward(baseBranch, commit)) {
-        landed.push(task.id);
-        progress = true;
+
+      const waiting = await waitingOn(git, task, byId, baseBranch);
+      if (waiting === 'later') continue; // an approved dependency lands first
+      if (waiting) {
+        result.held[task.id] = waiting;
+        continue;
       }
+      const problem = await land(git, baseBranch, commit, `Merge ${task.id}: ${task.title}`);
+      if (problem) {
+        result.held[task.id] =
+          problem === 'conflict'
+            ? `It conflicts with changes on ${baseBranch}. Merge it yourself with git merge ${branch}.`
+            : problem;
+        continue;
+      }
+      result.landed.push(task.id);
+      progress = true;
+      const build = await store.readTaskBuild(task.id);
+      if (build?.dir) await git.removeWorktree(build.dir);
     }
   }
-  return landed;
+  return result;
+}
+
+/**
+ * What stops a task landing because of the tasks it depends on: 'later' when
+ * an approved one just needs to land first, a reason when the user has to act,
+ * or undefined when nothing does.
+ */
+async function waitingOn(
+  git: Git,
+  task: Task,
+  tasks: Map<string, Task>,
+  base: string,
+): Promise<string | 'later' | undefined> {
+  for (const id of task.dependsOn) {
+    const dep = tasks.get(id);
+    const commit = dep?.handoff?.commit;
+    if (!dep || !commit || (await git.isAncestor(commit, base))) continue;
+    if (dep.status === 'closed') return 'later';
+    if (dep.status === 'cancelled') {
+      return `It was built on ${id}, which you cancelled, so landing it would bring ${id}’s work too. Send it back to rebuild without it, or merge it yourself.`;
+    }
+    return `It lands once ${id} is approved, since it was built on ${id}’s work.`;
+  }
+  return undefined;
+}
+
+/**
+ * Bring `commit` into `base`. Where the user has `base` checked out, the merge
+ * happens there, but never over their uncommitted changes. Otherwise it happens
+ * in a throwaway worktree. Returns 'conflict', a reason, or undefined on success.
+ */
+async function land(
+  git: Git,
+  base: string,
+  commit: string,
+  message: string,
+): Promise<string | undefined> {
+  const fastForward = await git.isAncestor(base, commit);
+  const checkout = await git.checkedOutAt(base);
+
+  if (checkout) {
+    const there = new Git(checkout);
+    const clean = await there.isClean();
+    if (!fastForward && !clean) {
+      return `You have uncommitted changes on ${base}. Commit or stash them, and I’ll land it at the next /build.`;
+    }
+    const merged = await there.merge(commit, message, { ffOnly: fastForward && !clean });
+    if (merged.ok) return undefined;
+    if (merged.conflict) return 'conflict';
+    return clean
+      ? `Git couldn’t merge it: ${merged.error}`
+      : `Your uncommitted changes on ${base} touch the same files. Commit or stash them, and I’ll land it at the next /build.`;
+  }
+
+  if (fastForward) {
+    await git.setBranch(base, commit);
+    return undefined;
+  }
+  const scratch = await mkdtemp(join(tmpdir(), 'dazza-land-'));
+  try {
+    await git.addDetachedWorktree(scratch, base);
+    const there = new Git(scratch);
+    const merged = await there.merge(commit, message);
+    if (!merged.ok) return merged.conflict ? 'conflict' : `Git couldn’t merge it: ${merged.error}`;
+    await git.setBranch(base, await there.head());
+    return undefined;
+  } finally {
+    await git.removeWorktree(scratch);
+    await rm(scratch, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Put tasks a crashed or killed Dazza left mid-build back in the queue. Only
+ * call this while holding the builder lock, so no live build is disturbed.
+ * Their worktrees are kept, so the next build resumes the work.
+ */
+export async function recoverInterruptedWork(store: Store, now = new Date()): Promise<string[]> {
+  const stuck = ((await store.readPlan())?.tasks ?? []).filter((t) => t.status === 'building');
+  for (const task of stuck) {
+    await setStatus(
+      store,
+      task.id,
+      'planned',
+      now,
+      { type: 'task_moved', message: 'Dazza stopped mid-build; picks up here next build' },
+      'building',
+    );
+  }
+  return stuck.map((t) => t.id);
+}
+
+/** Remove worktrees of cancelled tasks. Landed tasks' are removed as they land. */
+export async function tidyWorktrees(store: Store, git: Git): Promise<void> {
+  const plan = await store.readPlan();
+  const builds = await store.readTaskBuilds();
+  for (const task of plan?.tasks ?? []) {
+    const dir = builds[task.id]?.dir;
+    if (task.status === 'cancelled' && dir && existsSync(dir)) await git.removeWorktree(dir);
+  }
 }

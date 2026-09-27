@@ -1,5 +1,5 @@
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { realpath, writeFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { Git, taskBranch } from '../../src/git/git.js';
 import { useTempProject } from '../helpers.js';
@@ -23,37 +23,50 @@ describe('Git', () => {
     expect(await git.isClean()).toBe(true);
   });
 
-  it('builds on a task branch and commits the work', async () => {
+  it('builds a branch in its own worktree and commits the work there', async () => {
     await git.init();
     const base = await git.currentBranch();
     const start = await git.head();
+    const dir = join(project.root, '..', `${basename(project.root)}-wt`);
 
-    await git.checkout('dazza/T1-setup');
-    await write('app.js', 'console.log(1)');
-    await write('util.js', 'export {}');
-    expect(await git.isClean()).toBe(false);
+    await git.addWorktree(dir, 'dazza/T1-setup', base);
+    const tree = new Git(dir);
+    expect(await tree.currentBranch()).toBe('dazza/T1-setup');
+    expect(await git.checkedOutAt('dazza/T1-setup')).toBe(await realpath(dir));
+    expect(await git.checkedOutAt(base)).toBe(await realpath(project.root));
 
-    const commit = await git.commitAll('T1: Setup');
+    await writeFile(join(dir, 'app.js'), 'console.log(1)');
+    await writeFile(join(dir, 'util.js'), 'export {}');
+    const commit = await tree.commitAll('T1: Setup');
     expect(commit).toBeDefined();
-    expect(await git.filesChanged(start, commit as string)).toBe(2);
-    expect(await git.commitAll('nothing')).toBeUndefined();
+    expect(await tree.filesChanged(start, commit as string)).toBe(2);
+    expect(await tree.commitAll('nothing')).toBeUndefined();
+    expect(await git.head()).toBe(start); // the main checkout didn't move
 
-    // Approving fast-forwards the base branch to the task's commit.
-    expect(await git.fastForward(base, commit as string)).toBe(true);
-    await git.checkout(base);
-    expect(await git.head()).toBe(commit);
+    await git.removeWorktree(dir);
+    expect(await git.checkedOutAt('dazza/T1-setup')).toBeUndefined();
+    expect(await git.branchExists('dazza/T1-setup')).toBe(true);
   });
 
-  it("won't fast-forward diverged history", async () => {
+  it('merges, fast-forwarding when it can, and backs out of conflicts', async () => {
     await git.init();
     const base = await git.currentBranch();
-    await git.checkout('dazza/T1');
-    await write('a.js', '1');
-    const task = (await git.commitAll('T1')) as string;
-    await git.checkout(base);
-    await write('b.js', '2');
-    await git.commitAll('someone else');
-    expect(await git.fastForward(base, task)).toBe(false);
+    const dir = join(project.root, '..', `${basename(project.root)}-wt2`);
+    await git.addWorktree(dir, 'dazza/T1', base);
+    const tree = new Git(dir);
+    await writeFile(join(dir, 'a.js'), 'task');
+    const task = (await tree.commitAll('T1')) as string;
+
+    expect(await git.merge(task, 'Merge T1', { ffOnly: true })).toEqual({ ok: true });
+    expect(await git.head()).toBe(task);
+
+    await writeFile(join(dir, 'a.js'), 'task again');
+    const second = (await tree.commitAll('T1 again')) as string;
+    await write('a.js', 'mine');
+    await git.commitAll('mine');
+    expect(await git.merge(second, 'Merge T1')).toMatchObject({ ok: false, conflict: true });
+    expect(await git.isClean()).toBe(true);
+    await git.removeWorktree(dir);
   });
 });
 

@@ -1,12 +1,15 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { closeTask } from '../../src/core/actions.js';
+import { cancelTask, closeTask } from '../../src/core/actions.js';
+import type { Task } from '../../src/core/schema.js';
 import {
   blockTask,
   landApprovedWork,
   pauseTask,
   prepareRepo,
+  recoverInterruptedWork,
   setSubtaskStatus,
   startTask,
   submitTask,
@@ -15,16 +18,26 @@ import { Git } from '../../src/git/git.js';
 import { makePlan, makeTask } from '../fixtures.js';
 import { useTempProject } from '../helpers.js';
 
+const report = {
+  summary: 'Did it',
+  howToVerify: ['Run it'],
+  checks: [{ name: 'Tests', passed: true }],
+};
+
 describe('building tasks', () => {
   const project = useTempProject();
   let git: Git;
   const write = (file: string, text = 'x') => writeFile(join(project.root, file), text);
   const task = async (id: string) =>
-    (await project.store.readPlan())?.tasks.find((t) => t.id === id);
-  const report = {
-    summary: 'Did it',
-    howToVerify: ['Run it'],
-    checks: [{ name: 'Tests', passed: true }],
+    (await project.store.readPlan())?.tasks.find((t) => t.id === id) as Task;
+  /** Build a task in its worktree: write files there, then hand it over. */
+  const buildTask = async (id: string, files: Record<string, string> = { [`${id}.js`]: id }) => {
+    const build = await startTask(project.store, git, await task(id));
+    for (const [file, text] of Object.entries(files)) {
+      await writeFile(join(build.dir as string, file), text);
+    }
+    expect(await submitTask(project.store, id, report)).toMatchObject({ ok: true });
+    return build;
   };
 
   beforeEach(async () => {
@@ -38,7 +51,8 @@ describe('building tasks', () => {
           title: 'Setup',
           subtasks: [{ id: 'T1.1', title: 'Init', description: '', status: 'planned' }],
         }),
-        makeTask({ id: 'T2', title: 'Feature' }),
+        makeTask({ id: 'T2', title: 'Feature', dependsOn: ['T1'] }),
+        makeTask({ id: 'T3', title: 'Other' }),
       ]),
       approvedAt: '2026-09-27T10:00:00Z',
     });
@@ -51,40 +65,68 @@ describe('building tasks', () => {
     expect(await git.tracks('readme.md')).toBe(true);
   });
 
-  it('refuses to start over uncommitted changes', async () => {
+  it('builds over the user’s uncommitted changes, and gives an empty repo a first commit', async () => {
     await git.init();
     await write('mine.txt');
-    expect(await prepareRepo(git)).toMatchObject({
-      ok: false,
-      message: expect.stringContaining('uncommitted'),
+    expect(await prepareRepo(git)).toEqual({ ok: true, created: false });
+
+    const empty = new Git(join(project.root, 'empty'));
+    await mkdir(empty.root);
+    await new Git(empty.root).init(); // init commits; make a truly empty one instead
+    await import('node:child_process').then(({ execFileSync }) => {
+      execFileSync('git', ['-C', empty.root, 'update-ref', '-d', 'HEAD']);
     });
+    expect(await empty.hasCommits()).toBe(false);
+    expect(await prepareRepo(empty)).toMatchObject({ ok: true });
+    expect(await empty.hasCommits()).toBe(true);
   });
 
-  it('builds a task on its branch, commits it and hands it over', async () => {
+  it('builds a task in its own worktree, leaving the user’s checkout alone', async () => {
     await git.init();
     const base = await git.currentBranch();
-    const t1 = await task('T1');
-    if (!t1) throw new Error('missing');
+    await write('mine.txt', 'my draft');
 
-    const build = await startTask(project.store, git, t1);
-    expect(build.branch).toBe('dazza/T1-setup');
-    expect(await git.currentBranch()).toBe('dazza/T1-setup');
-    expect((await task('T1'))?.status).toBe('building');
+    const build = await startTask(project.store, git, await task('T1'));
+    expect(build).toMatchObject({
+      branch: 'dazza/T1-setup',
+      baseBranch: base,
+      dir: project.store.worktreeDir('T1'),
+    });
+    expect(await new Git(build.dir as string).currentBranch()).toBe('dazza/T1-setup');
+    expect(await git.currentBranch()).toBe(base);
+    expect((await task('T1')).status).toBe('building');
 
     await setSubtaskStatus(project.store, 'T1.1', 'closed');
-    await write('app.js');
-    expect(await submitTask(project.store, git, 'T1', report)).toMatchObject({ ok: true });
+    await writeFile(join(build.dir as string, 'app.js'), 'x');
+    expect(await submitTask(project.store, 'T1', report)).toMatchObject({ ok: true });
 
     const submitted = await task('T1');
-    expect(submitted?.status).toBe('review');
-    expect(submitted?.subtasks[0]?.status).toBe('closed');
-    expect(submitted?.handoff).toMatchObject({
+    expect(submitted.status).toBe('review');
+    expect(submitted.subtasks[0]?.status).toBe('closed');
+    expect(submitted.handoff).toMatchObject({
       summary: 'Did it',
       branch: 'dazza/T1-setup',
       baseBranch: base,
       filesChanged: 1,
     });
-    expect(await git.isClean()).toBe(true);
+    // The user's draft is still theirs, uncommitted, and the task's file isn't in their checkout.
+    expect(await readFile(join(project.root, 'mine.txt'), 'utf8')).toBe('my draft');
+    expect(existsSync(join(project.root, 'app.js'))).toBe(false);
+  });
+
+  it('resumes where it left off, and recreates a worktree that was deleted', async () => {
+    await git.init();
+    const first = await startTask(project.store, git, await task('T1'));
+    await writeFile(join(first.dir as string, 'wip.js'), 'half');
+    await blockTask(project.store, 'T1', 'Which colour?');
+
+    const again = await startTask(project.store, git, await task('T1'));
+    expect(again.dir).toBe(first.dir);
+    expect(existsSync(join(again.dir as string, 'wip.js'))).toBe(true);
+
+    await git.removeWorktree(again.dir as string); // say the user cleared it out
+    const recreated = await startTask(project.store, git, await task('T1'));
+    expect(await new Git(recreated.dir as string).currentBranch()).toBe('dazza/T1-setup');
   });
 
   it('attaches screenshots to a question and to the handoff', async () => {
@@ -92,9 +134,7 @@ describe('building tasks', () => {
     const shot = 'T1/home-desktop.png';
     await mkdir(join(project.store.dir, 'media', 'T1'), { recursive: true });
     await writeFile(project.store.mediaFile(shot), 'png');
-    const t1 = await task('T1');
-    if (!t1) throw new Error('missing');
-    await startTask(project.store, git, t1);
+    await startTask(project.store, git, await task('T1'));
 
     await blockTask(project.store, 'T1', 'Blue or green?', { images: [shot] });
     expect((await project.store.readEvents()).at(-1)).toMatchObject({
@@ -102,59 +142,116 @@ describe('building tasks', () => {
       images: [shot],
     });
 
-    await startTask(project.store, git, t1);
-    await write('ui.html');
-    await submitTask(project.store, git, 'T1', { ...report, screenshots: [shot] });
-    expect((await task('T1'))?.handoff?.screenshots).toEqual([shot]);
+    await startTask(project.store, git, await task('T1'));
     expect(
-      await submitTask(project.store, git, 'T1', { ...report, screenshots: ['T1/nope.png'] }),
-    ).toMatchObject({
-      ok: false,
-    });
+      await submitTask(project.store, 'T1', { ...report, screenshots: ['T1/nope.png'] }),
+    ).toMatchObject({ ok: false });
+    await submitTask(project.store, 'T1', { ...report, screenshots: [shot] });
+    expect((await task('T1')).handoff?.screenshots).toEqual([shot]);
   });
 
-  it('blocks with a question and pauses interrupted work', async () => {
+  it('puts work a crashed Dazza left mid-build back in the queue', async () => {
     await git.init();
-    const t1 = await task('T1');
-    if (!t1) throw new Error('missing');
-    await startTask(project.store, git, t1);
-    await blockTask(project.store, 'T1', 'Which colour?');
-    expect((await task('T1'))?.status).toBe('blocked');
-    expect((await project.store.readEvents()).at(-1)).toMatchObject({
-      actor: 'dazza',
-      message: 'Which colour?',
-    });
-
-    const t2 = await task('T2');
-    if (!t2) throw new Error('missing');
-    await startTask(project.store, git, t2);
-    await pauseTask(project.store, 'T2');
-    expect((await task('T2'))?.status).toBe('planned');
+    await startTask(project.store, git, await task('T1'));
+    expect(await recoverInterruptedWork(project.store)).toEqual(['T1']);
+    expect((await task('T1')).status).toBe('planned');
+    expect(await recoverInterruptedWork(project.store)).toEqual([]);
   });
 
-  it('lands approved work in order, even when approved out of order', async () => {
+  it('lands approved work on the user’s branch, and removes its worktree', async () => {
     await git.init();
     const base = await git.currentBranch();
-    for (const id of ['T1', 'T2']) {
-      const t = await task(id);
-      if (!t) throw new Error('missing');
-      await startTask(project.store, git, t);
-      await write(`${id}.js`);
-      await submitTask(project.store, git, id, report);
-    }
-    const t1Commit = (await task('T1'))?.handoff?.commit as string;
-    const t2Commit = (await task('T2'))?.handoff?.commit as string;
+    const build = await buildTask('T1');
 
-    // T2 was built on top of T1, so approving it first mustn't land T1's unreviewed work.
-    expect((await closeTask(project.store, 'T2')).message).toContain(
-      'once the work before it is approved',
-    );
-    expect(await git.isAncestor(t1Commit, base)).toBe(false);
+    const closed = await closeTask(project.store, 'T1');
+    expect(closed.message).toContain(`Merged into ${base}`);
+    expect(existsSync(join(project.root, 'T1.js'))).toBe(true);
+    expect(existsSync(build.dir as string)).toBe(false);
+    expect(await git.branchExists(build.branch)).toBe(true);
+  });
 
-    // Approving T1 lands both.
+  it('merges when the user’s branch has moved on', async () => {
+    await git.init();
+    await buildTask('T1');
+    await write('theirs.js');
+    await git.commitAll('Their own work');
+
+    expect((await closeTask(project.store, 'T1')).message).toContain('Merged into');
+    expect(existsSync(join(project.root, 'T1.js'))).toBe(true);
+    expect(existsSync(join(project.root, 'theirs.js'))).toBe(true);
+  });
+
+  it('lands on a branch the user doesn’t have checked out, merging off to the side', async () => {
+    await git.init();
+    const base = await git.currentBranch();
+    await buildTask('T1');
+    await write('theirs.js');
+    await git.commitAll('Their own work'); // base has moved on: a merge, not a fast-forward
+    const { execFileSync } = await import('node:child_process');
+    execFileSync('git', ['-C', project.root, 'checkout', '-q', '-b', 'elsewhere']);
+    await write('draft.txt'); // uncommitted, on a different branch: irrelevant to landing
+
     expect((await closeTask(project.store, 'T1')).message).toContain(`Merged into ${base}`);
-    expect(await git.isAncestor(t2Commit, base)).toBe(true);
-    expect(await landApprovedWork(project.store, git)).toEqual([]);
+    const landed = execFileSync('git', ['-C', project.root, 'ls-tree', '--name-only', base]);
+    expect(String(landed)).toContain('T1.js');
+    expect(await git.currentBranch()).toBe('elsewhere');
+    expect(existsSync(join(project.root, 'draft.txt'))).toBe(true);
+  });
+
+  it('won’t merge over uncommitted changes, and says so; the next landing picks it up', async () => {
+    await git.init();
+    await buildTask('T1');
+    await write('theirs.js');
+    await git.commitAll('Their own work');
+    await write('draft.txt');
+
+    expect((await closeTask(project.store, 'T1')).message).toContain(
+      'You have uncommitted changes',
+    );
+    expect(existsSync(join(project.root, 'T1.js'))).toBe(false);
+
+    await git.commitAll('Their draft');
+    expect((await landApprovedWork(project.store, git)).landed).toEqual(['T1']);
+  });
+
+  it('holds work that conflicts with the user’s, and says how to land it', async () => {
+    await git.init();
+    await buildTask('T1', { 'shared.txt': 'from Dazza' });
+    await write('shared.txt', 'from the user');
+    await git.commitAll('Their version');
+
+    const closed = await closeTask(project.store, 'T1');
+    expect(closed.message).toContain('conflicts with changes on');
+    expect(closed.message).toContain('git merge dazza/T1-setup');
+    expect(await git.isClean()).toBe(true); // the failed merge was rolled back
+  });
+
+  it('builds on approved work that hasn’t landed, and lands the two in order', async () => {
+    await git.init();
+    await buildTask('T1');
+    await write('theirs.js');
+    await git.commitAll('Their own work'); // T1 now needs a merge…
+    await write('draft.txt'); // …which uncommitted changes rule out
+    expect((await closeTask(project.store, 'T1')).message).toContain('hasn’t landed yet');
+
+    // T2 depends on T1, so it starts with T1's work merged in.
+    const t2 = await buildTask('T2');
+    expect(existsSync(join(t2.dir as string, 'T1.js'))).toBe(true);
+
+    await git.commitAll('Their draft');
+    expect((await closeTask(project.store, 'T2')).message).toContain('along with T1');
+    expect(existsSync(join(project.root, 'T2.js'))).toBe(true);
+  });
+
+  it('won’t land work built on a task that was then cancelled', async () => {
+    await git.init();
+    await buildTask('T1'); // in review, not landed
+    await buildTask('T2'); // built with T1's work merged in
+    await cancelTask(project.store, 'T1');
+
+    const closed = await closeTask(project.store, 'T2');
+    expect(closed.message).toContain('which you cancelled');
+    expect(existsSync(join(project.root, 'T2.js'))).toBe(false);
   });
 });
 
@@ -173,9 +270,9 @@ describe('submitting twice', () => {
     const t1 = (await project.store.readPlan())?.tasks[0];
     if (!t1) throw new Error('missing');
     await startTask(project.store, git, t1);
-    const report = { summary: 'x', howToVerify: ['y'] };
-    expect(await submitTask(project.store, git, 'T1', report)).toMatchObject({ ok: true });
-    expect(await submitTask(project.store, git, 'T1', report)).toMatchObject({ ok: false });
+    const summary = { summary: 'x', howToVerify: ['y'] };
+    expect(await submitTask(project.store, 'T1', summary)).toMatchObject({ ok: true });
+    expect(await submitTask(project.store, 'T1', summary)).toMatchObject({ ok: false });
     const submitted = (await project.store.readEvents()).filter((e) => e.type === 'task_submitted');
     expect(submitted).toHaveLength(1);
   });

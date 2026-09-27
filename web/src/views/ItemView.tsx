@@ -279,6 +279,12 @@ function HandoffSection({ handoff }: { handoff: Handoff }) {
         {handoff.howToVerify.length > 0 && (
           <div className="border-t border-line px-4 py-3">
             <div className="mb-1.5 text-[12px] text-muted">How to check it</div>
+            {handoff.worktree && (
+              // Until it's approved, the work only exists in its own checkout.
+              <p className="mb-2 text-[13px] leading-6 text-ink-2">
+                In its checkout: <InlineText>{`\`cd ${handoff.worktree}\``}</InlineText>
+              </p>
+            )}
             <ol className="list-decimal space-y-1 pl-5 text-[13px] leading-6 text-ink-2 marker:text-faint">
               {handoff.howToVerify.map((step) => (
                 <li key={step}>

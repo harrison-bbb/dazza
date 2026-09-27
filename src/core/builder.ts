@@ -3,13 +3,23 @@ import { Git } from '../git/git.js';
 import { MCP_SERVER_NAME, WORKER_TOOLS } from '../mcp/server.js';
 import workerPrompt from '../prompts/worker.md';
 import type { AgentError, AgentEvent, AgentProvider, McpServerConfig } from '../providers/types.js';
+import { claim } from '../util/lock.js';
 import type { Config } from './config.js';
 import { explainAgentError } from './errors.js';
 import { nextTask } from './plan.js';
 import type { Event, Plan, Task } from './schema.js';
 import type { Store, TaskBuild } from './store.js';
 import { trackUsage } from './usage.js';
-import { blockTask, pauseTask, prepareRepo, startTask } from './work.js';
+import {
+  blockTask,
+  landApprovedWork,
+  pauseTask,
+  prepareRepo,
+  recoverInterruptedWork,
+  startTask,
+  tidyWorktrees,
+  WorkError,
+} from './work.js';
 
 export interface BuilderOptions {
   store: Store;
@@ -74,6 +84,34 @@ type Attempt =
  * user has to act, or it's aborted.
  */
 export async function* build(options: BuilderOptions): AsyncGenerator<BuildEvent> {
+  // One builder per project: two would pick the same task.
+  const release = await claim(options.store.builderLockFile);
+  if (!release) {
+    yield { type: 'stopped', reason: 'Another Dazza window is already building this project.' };
+    return;
+  }
+  try {
+    yield* buildTasks(options);
+  } finally {
+    await release();
+  }
+}
+
+/**
+ * Put back any task a Dazza that died mid-build left marked as building, unless
+ * another window is building right now. Returns the ids put back.
+ */
+export async function recoverAbandonedBuild(store: Store): Promise<string[]> {
+  const release = await claim(store.builderLockFile);
+  if (!release) return [];
+  try {
+    return await recoverInterruptedWork(store);
+  } finally {
+    await release();
+  }
+}
+
+async function* buildTasks(options: BuilderOptions): AsyncGenerator<BuildEvent> {
   const { store, config, signal } = options;
   const timing = { ...DEFAULT_TIMING, ...options.timing };
   const git = new Git(store.root);
@@ -84,6 +122,11 @@ export async function* build(options: BuilderOptions): AsyncGenerator<BuildEvent
     return;
   }
   if (repo.created) yield { type: 'repo_created' };
+  // Holding the lock, so a task still marked building was left by a Dazza that died.
+  await recoverInterruptedWork(store);
+  // Approved work that couldn't land before (say, the user had uncommitted changes).
+  await landApprovedWork(store, git);
+  await tidyWorktrees(store, git);
 
   while (!signal?.aborted) {
     const plan = await store.readPlan();
@@ -105,7 +148,15 @@ export async function* build(options: BuilderOptions): AsyncGenerator<BuildEvent
     let announced = false;
     for (;;) {
       const resumed = (await store.readTaskBuild(task.id)) !== undefined;
-      const build = await startTask(store, git, task);
+      let build: TaskBuild;
+      try {
+        build = await startTask(store, git, task);
+      } catch (error) {
+        if (!(error instanceof WorkError)) throw error;
+        await blockTask(store, task.id, error.message);
+        yield { type: 'task_finished', task, outcome: 'blocked' };
+        break;
+      }
       if (!announced) yield { type: 'task_started', task, branch: build.branch, resumed };
       announced = true;
 
@@ -232,7 +283,7 @@ async function* runWorker(
     feedWatchdog();
     const events = provider.run({
       prompt: taskBrief(plan, task, await store.readScope(), await store.readEvents(), resumed),
-      cwd: store.root,
+      cwd: build.dir ?? store.root,
       systemPrompt: workerPrompt,
       autonomous: true,
       allowedTools: WORKER_TOOLS,

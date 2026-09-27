@@ -76,7 +76,7 @@ describe('a resilient build', () => {
   });
 
   const submit = () =>
-    submitTask(project.store, new Git(project.root), 'T1', {
+    submitTask(project.store, 'T1', {
       summary: 'Done',
       howToVerify: ['x'],
     }).then(() => {});

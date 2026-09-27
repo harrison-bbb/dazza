@@ -76,16 +76,23 @@ export async function closeTask(
   });
   if (!result.ok) return result;
 
-  // Approved work lands on the base branch, in order.
-  const landed = await landApprovedWork(store, new Git(store.root));
+  // Approved work lands on the branch it was built from, in dependency order.
+  const landing = await landApprovedWork(store, new Git(store.root));
   const plan = await store.readPlan();
   const base = plan && findItem(plan, taskId)?.task.handoff?.baseBranch;
-  if (landed.includes(taskId))
-    return { ok: true, message: `${result.message}. Merged into ${base}.` };
+  if (landing.landed.includes(taskId)) {
+    const others = landing.landed.filter((id) => id !== taskId);
+    return {
+      ok: true,
+      message: `${result.message}. Merged into ${base}${others.length ? `, along with ${others.join(', ')}` : ''}.`,
+    };
+  }
+  const held = landing.held[taskId];
+  if (held) return { ok: true, message: `${result.message}. It hasn’t landed yet: ${held}` };
   if (base) {
     return {
       ok: true,
-      message: `${result.message}. It lands on ${base} once the work before it is approved.`,
+      message: `${result.message}. It lands on ${base} once the work it builds on does.`,
     };
   }
   return result;

@@ -1,9 +1,11 @@
-import { writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { type BuildEvent, build, taskBrief } from '../../src/core/builder.js';
 import { blockTask, submitTask } from '../../src/core/work.js';
 import { Git } from '../../src/git/git.js';
+import { claim } from '../../src/util/lock.js';
 import { FakeProvider } from '../fakes.js';
 import { makePlan, makeTask } from '../fixtures.js';
 import { useTempProject } from '../helpers.js';
@@ -47,8 +49,8 @@ describe('build loop', () => {
     const provider = new FakeProvider();
     provider.onRun = async (options) => {
       const id = currentTask(options);
-      await writeFile(join(project.root, `${id}.js`), id);
-      await submitTask(project.store, new Git(project.root), id, report);
+      await writeFile(join(options.cwd, `${id}.js`), id);
+      await submitTask(project.store, id, report);
     };
     const events = await run(provider);
 
@@ -63,7 +65,10 @@ describe('build loop', () => {
       type: 'stopped',
       reason: expect.stringContaining('2 waiting for your review'),
     });
-    expect(provider.runs[0]).toMatchObject({ autonomous: true, cwd: project.root });
+    expect(provider.runs[0]).toMatchObject({
+      autonomous: true,
+      cwd: project.store.worktreeDir('T1'),
+    });
     expect(provider.runs[0]?.allowedTools).toContain('mcp__dazza__submit');
     expect(provider.runs[0]?.allowedTools).not.toContain('mcp__dazza__save_plan');
   });
@@ -73,10 +78,69 @@ describe('build loop', () => {
     provider.onRun = async (options) => {
       const id = currentTask(options);
       if (id === 'T1') await blockTask(project.store, 'T1', 'Which database?');
-      else await submitTask(project.store, new Git(project.root), id, report);
+      else await submitTask(project.store, id, report);
     };
     await run(provider);
     expect(await statuses()).toEqual(['T1:blocked', 'T2:planned', 'T3:review']);
+  });
+
+  it('keeps a blocked task’s half-done work out of the next task, and out of the user’s checkout', async () => {
+    const provider = new FakeProvider();
+    provider.onRun = async (options) => {
+      const id = currentTask(options);
+      if (id === 'T1') {
+        await writeFile(join(options.cwd, 'stripe.js'), 'half done');
+        await blockTask(project.store, 'T1', 'Stripe key?');
+      } else {
+        await writeFile(join(options.cwd, `${id}.js`), id);
+        await submitTask(project.store, id, report);
+      }
+    };
+    await run(provider);
+    const git = new Git(project.root);
+    const t3 = (await project.store.readPlan())?.tasks.find((t) => t.id === 'T3');
+    expect(t3?.handoff?.filesChanged).toBe(1);
+    expect(await git.isClean()).toBe(true);
+    // T1's work waits in its own worktree for the answer.
+    expect(existsSync(join(project.store.worktreeDir('T1'), 'stripe.js'))).toBe(true);
+  });
+
+  it('builds while the user has uncommitted changes, without touching them', async () => {
+    const git = new Git(project.root);
+    await git.init();
+    await writeFile(join(project.root, 'mine.txt'), 'draft');
+    const provider = new FakeProvider();
+    provider.onRun = async (options) => {
+      const id = currentTask(options);
+      await writeFile(join(options.cwd, `${id}.js`), id);
+      await submitTask(project.store, id, report);
+    };
+    await run(provider);
+    expect(await statuses()).toEqual(['T1:review', 'T2:planned', 'T3:review']);
+    expect(await readFile(join(project.root, 'mine.txt'), 'utf8')).toBe('draft');
+    expect(existsSync(join(project.root, 'T1.js'))).toBe(false);
+  });
+
+  it('picks up a task a crashed Dazza left mid-build', async () => {
+    await project.store.writePlan({
+      ...makePlan([makeTask({ id: 'T1', title: 'One', status: 'building' })]),
+      approvedAt: '2026-09-27T10:00:00Z',
+    });
+    const provider = new FakeProvider();
+    provider.onRun = async () => {
+      await submitTask(project.store, 'T1', report);
+    };
+    await run(provider);
+    expect(await statuses()).toEqual(['T1:review']);
+  });
+
+  it('lets only one window build a project at a time', async () => {
+    const release = await claim(project.store.builderLockFile);
+    const events = await run(new FakeProvider());
+    await release?.();
+    expect(events).toEqual([
+      { type: 'stopped', reason: 'Another Dazza window is already building this project.' },
+    ]);
   });
 
   it('blocks a task the worker walked away from, with its last note', async () => {

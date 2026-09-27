@@ -3,6 +3,7 @@ import { basename } from 'node:path';
 import pkg from '../../package.json' with { type: 'json' };
 import { startBoard } from '../board/server.js';
 import { type ActionResult, approvePlan, closeTask, requestChanges } from '../core/actions.js';
+import { recoverAbandonedBuild } from '../core/builder.js';
 import { Config, type Connection } from '../core/config.js';
 import { describeCodebase, inspectCodebase } from '../core/inspect.js';
 import { Manager } from '../core/manager.js';
@@ -65,6 +66,8 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
   }
 
   const store = new Store(projectRoot);
+  // So the greeting doesn't claim a build is running when the Dazza running it died.
+  await recoverAbandonedBuild(store);
   const found = await inspectCodebase(projectRoot);
   const codebase = found && describeCodebase(found);
   const board = await startBoard(store, projectRoot);

@@ -60,7 +60,7 @@ describe('ChatSession', () => {
     provider.onRun = async (options: AgentRunOptions) => {
       if (!options.autonomous) return;
       await buildHeld; // the "worker" is busy until we let it finish
-      await submitTask(project.store, new Git(project.root), 'T1', {
+      await submitTask(project.store, 'T1', {
         summary: 'Done',
         howToVerify: ['x'],
       });
