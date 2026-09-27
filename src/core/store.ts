@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { withLock } from '../util/lock.js';
 import { Event, type EventInput, Plan } from './schema.js';
 
 export const STATE_DIR = '.dazza';
@@ -8,7 +9,7 @@ export const STATE_DIR = '.dazza';
 const MANAGER_SESSION_FILE = 'session.json';
 const USAGE_FILE = 'usage.json';
 const BUILD_FILE = 'build.json';
-const LOCAL_FILES = [MANAGER_SESSION_FILE, USAGE_FILE, BUILD_FILE];
+const LOCAL_FILES = [MANAGER_SESSION_FILE, USAGE_FILE, BUILD_FILE, '*.lock'];
 
 /** Machine-local bookkeeping for a task being built. */
 export const TaskBuild = z.object({
@@ -18,6 +19,8 @@ export const TaskBuild = z.object({
   startCommit: z.string(),
   /** The worker's agent session, resumed when work continues. */
   sessionId: z.string().optional(),
+  /** How much of the event log the worker has seen, so new comments reach it once. */
+  seenEvents: z.number().int().nonnegative().default(0),
 });
 export type TaskBuild = z.infer<typeof TaskBuild>;
 const BuildState = z.record(z.string(), TaskBuild);
@@ -52,6 +55,22 @@ export class Store {
   async readPlan(): Promise<Plan | undefined> {
     const raw = await this.readOptional('tasks.json');
     return raw === undefined ? undefined : Plan.parse(JSON.parse(raw));
+  }
+
+  /**
+   * Read, change and write the plan under a lock, so concurrent writers (chat,
+   * builder, agents) can't lose each other's updates. `change` returns the new
+   * plan (or undefined to leave it) and a result to hand back.
+   */
+  async updatePlan<T>(
+    change: (plan: Plan | undefined) => Promise<[Plan | undefined, T]> | [Plan | undefined, T],
+  ): Promise<T> {
+    await this.init();
+    return withLock(this.path('tasks.lock'), async () => {
+      const [next, result] = await change(await this.readPlan());
+      if (next) await this.writePlan(next);
+      return result;
+    });
   }
 
   async writePlan(plan: Plan): Promise<void> {
@@ -103,9 +122,14 @@ export class Store {
   }
 
   async writeTaskBuild(taskId: string, build: TaskBuild): Promise<void> {
-    const raw = await this.readOptional(BUILD_FILE);
-    const all = raw === undefined ? {} : BuildState.parse(JSON.parse(raw));
-    await this.writeAtomic(BUILD_FILE, `${JSON.stringify({ ...all, [taskId]: build }, null, 2)}\n`);
+    await this.init();
+    await withLock(this.path('build.lock'), async () => {
+      const all = await this.readTaskBuilds();
+      await this.writeAtomic(
+        BUILD_FILE,
+        `${JSON.stringify({ ...all, [taskId]: build }, null, 2)}\n`,
+      );
+    });
   }
 
   async appendEvent(event: EventInput): Promise<void> {

@@ -30,6 +30,9 @@ program
   .command('mcp', { hidden: true })
   .description("Serve Dazza's tools to a coding agent over stdio")
   .requiredOption('--root <path>', 'project root')
-  .action(({ root }: { root: string }) => serveMcp(resolve(root)));
+  .option('--role <role>', 'manager or worker', 'manager')
+  .action(({ root, role }: { root: string; role: string }) =>
+    serveMcp(resolve(root), role === 'worker' ? 'worker' : 'manager'),
+  );
 
 await program.parseAsync();

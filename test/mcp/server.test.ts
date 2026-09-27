@@ -1,7 +1,8 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it } from 'vitest';
-import { createMcpServer, savePlan } from '../../src/mcp/server.js';
+import { addComment } from '../../src/core/actions.js';
+import { createMcpServer, type McpRole, savePlan } from '../../src/mcp/server.js';
 import { makePlan, makeTask } from '../fixtures.js';
 import { useTempProject } from '../helpers.js';
 
@@ -66,28 +67,84 @@ describe('savePlan', () => {
 describe('MCP tools, called through a real client', () => {
   const project = useTempProject();
 
-  const connect = async () => {
+  const connect = async (role: McpRole = 'manager') => {
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-    await createMcpServer(project.store).connect(serverSide);
+    await createMcpServer(project.store, role).connect(serverSide);
     const client = new Client({ name: 'test', version: '1.0.0' });
     await client.connect(clientSide);
     return client;
   };
   const text = (result: Awaited<ReturnType<Client['callTool']>>) => JSON.stringify(result.content);
 
-  it('exposes the planning and project tools', async () => {
-    const { tools } = await (await connect()).listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual([
+  it('gives each role only its own tools', async () => {
+    const names = async (role: McpRole) =>
+      (await (await connect(role)).listTools()).tools.map((t) => t.name).sort();
+    expect(await names('manager')).toEqual([
       'add_subtask',
       'add_task',
-      'block',
       'comment',
       'save_plan',
       'set_status',
-      'submit',
       'update_item',
+    ]);
+    expect(await names('worker')).toEqual([
+      'block',
+      'check_messages',
+      'comment',
+      'submit',
       'update_subtask',
     ]);
+  });
+
+  it('lets the manager relay an instruction as the user', async () => {
+    await project.store.writePlan(makePlan([makeTask({ id: 'T1' })]));
+    await (await connect()).callTool({
+      name: 'comment',
+      arguments: { id: 'T1', body: 'Use tabs', as: 'user' },
+    });
+    expect((await project.store.readEvents()).at(-1)).toMatchObject({
+      actor: 'user',
+      message: 'Use tabs',
+    });
+  });
+
+  it("hands the worker the user's new comments on its next tool call, once", async () => {
+    await project.store.writePlan({
+      ...makePlan([
+        makeTask({
+          id: 'T1',
+          status: 'building',
+          subtasks: [{ id: 'T1.1', title: 'a', description: '', status: 'planned' }],
+        }),
+        makeTask({ id: 'T2' }),
+      ]),
+      approvedAt: '2026-09-27T10:00:00Z',
+    });
+    await project.store.writeTaskBuild('T1', {
+      branch: 'b',
+      baseBranch: 'main',
+      startCommit: 'x',
+      seenEvents: 0,
+    });
+    await addComment(project.store, 'T1.1', 'Make it blue');
+    await addComment(project.store, 'T2', 'Not for this task');
+    await addComment(project.store, 'T1', 'Dazza talking to itself', 'dazza');
+
+    const worker = await connect('worker');
+    const first = text(
+      await worker.callTool({
+        name: 'update_subtask',
+        arguments: { id: 'T1.1', status: 'closed' },
+      }),
+    );
+    expect(first).toContain('On T1.1: Make it blue');
+    expect(first).not.toContain('Not for this task');
+    expect(first).not.toContain('talking to itself');
+
+    const second = text(
+      await worker.callTool({ name: 'check_messages', arguments: { taskId: 'T1' } }),
+    );
+    expect(second).not.toContain('Make it blue');
   });
 
   it('edits, adds, moves and comments on work', async () => {

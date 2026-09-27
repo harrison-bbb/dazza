@@ -12,6 +12,8 @@ import {
 import { paint } from './style.js';
 
 const MAX_MENU_ITEMS = 8;
+const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const STATUS_INTERVAL_MS = 100;
 
 export interface ReadOptions {
   prompt: string;
@@ -41,6 +43,11 @@ export class Terminal {
   private lines: AsyncIterator<string> | undefined;
   private rl: Interface | undefined;
   private drawnCursorRow = 0;
+  /** Redraws the input being read, so output and status updates can go around it. */
+  private redrawInput: (() => void) | undefined;
+  private readonly statuses = new Map<string, { text: string; since: number }>();
+  private statusTimer: NodeJS.Timeout | undefined;
+  private frame = 0;
 
   constructor() {
     if (this.interactive) {
@@ -55,6 +62,55 @@ export class Terminal {
     this.onInterrupt = handler;
   }
 
+  /**
+   * Write output above the input line. Whatever the user is typing is redrawn
+   * underneath, so Dazza can report work while they keep typing.
+   */
+  print(text: string): void {
+    if (!this.interactive || !this.redrawInput) {
+      stdout.write(`${text}\n`);
+      return;
+    }
+    this.erase();
+    stdout.write(`${text}\n`);
+    this.redrawInput();
+  }
+
+  /** Show (or clear) an activity in the status line above the input, e.g. "Building T3". */
+  setStatus(key: string, text: string | undefined): void {
+    if (text === undefined) this.statuses.delete(key);
+    else this.statuses.set(key, { text, since: this.statuses.get(key)?.since ?? Date.now() });
+
+    if (this.statuses.size > 0 && !this.statusTimer && this.interactive) {
+      this.statusTimer = setInterval(() => {
+        this.frame++;
+        this.redrawInput?.();
+      }, STATUS_INTERVAL_MS);
+    } else if (this.statuses.size === 0 && this.statusTimer) {
+      clearInterval(this.statusTimer);
+      this.statusTimer = undefined;
+    }
+    this.redrawInput?.();
+  }
+
+  /** The status line as it should look right now, or undefined when idle. */
+  private statusLine(): string | undefined {
+    if (this.statuses.size === 0) return undefined;
+    const now = Date.now();
+    const parts = [...this.statuses.values()].map(({ text, since }) => {
+      const seconds = Math.floor((now - since) / 1000);
+      const elapsed =
+        seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
+      return `${text} ${paint.dim(`· ${elapsed}`)}`;
+    });
+    return `${paint.hex(BRAND, FRAMES[this.frame % FRAMES.length] ?? '')} ${parts.join(paint.dim('  ·  '))}`;
+  }
+
+  private erase(): void {
+    stdout.write(`${this.drawnCursorRow > 0 ? `\x1b[${this.drawnCursorRow}A` : ''}\r\x1b[J`);
+    this.drawnCursorRow = 0;
+  }
+
   /** Read one line. Resolves undefined when the user cancels (Ctrl-C / Ctrl-D on empty). */
   async readLine(options: ReadOptions): Promise<string | undefined> {
     if (!this.interactive) return this.nextLine(options.prompt);
@@ -62,7 +118,17 @@ export class Terminal {
     let state = initialState(options.history);
     const menuFor: MenuSource = options.menu ?? (() => []);
     const redraw = (showMenu = true) =>
-      this.draw(layout(options.prompt, state, showMenu ? menuFor(state.text) : [], options.mask));
+      this.draw(
+        layout(
+          options.prompt,
+          state,
+          showMenu ? menuFor(state.text) : [],
+          options.mask,
+          undefined,
+          this.statusLine(),
+        ),
+      );
+    this.redrawInput = redraw;
     redraw();
 
     return new Promise((resolve) => {
@@ -75,9 +141,12 @@ export class Terminal {
           redraw();
           return;
         }
-        // Show what actually ran, e.g. "/usage" when "/u" was picked from the menu.
+        // Leave the submitted line in the scrollback (showing what actually ran, e.g.
+        // "/usage" when "/u" was picked), without the menu or status line.
         if (outcome.type === 'submit') state = { ...state, text: outcome.value };
-        redraw(false);
+        this.redrawInput = undefined;
+        this.erase();
+        this.draw(layout(options.prompt, state, [], options.mask));
         stdout.write('\n');
         this.drawnCursorRow = 0;
         this.onKey = undefined;
@@ -158,6 +227,7 @@ export class Terminal {
   }
 
   close(): void {
+    if (this.statusTimer) clearInterval(this.statusTimer);
     if (this.interactive) {
       stdin.off('keypress', this.handleKey);
       stdin.setRawMode(false);
@@ -208,6 +278,8 @@ export function layout(
   menu: MenuItem[],
   mask = false,
   columns = stdout.columns || 80,
+  /** An activity line drawn above the input. */
+  status?: string,
 ): Layout {
   // One column spare so the terminal never auto-wraps behind our back.
   const width = Math.max(10, columns - 1);
@@ -235,7 +307,9 @@ export function layout(
   }
 
   if (menu.length > 0) lines.push(...menuLines(menu, state.menuIndex, width));
-  return { lines, cursorRow, cursorCol };
+  return status === undefined
+    ? { lines, cursorRow, cursorCol }
+    : { lines: [status, ...lines], cursorRow: cursorRow + 1, cursorCol };
 }
 
 function menuLines(menu: MenuItem[], selectedIndex: number, width: number): string[] {

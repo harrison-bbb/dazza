@@ -111,6 +111,7 @@ describe('running commands', () => {
       session: { runs: 0, tokens: 0, costUsd: 0 },
       boardUrl: 'http://localhost:4777',
       startBuild: async () => {},
+      status: () => {},
       say: (text) => said.push(text),
       exit: () => {
         exited = true;

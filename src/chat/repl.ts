@@ -1,22 +1,18 @@
 import { homedir } from 'node:os';
 import pkg from '../../package.json' with { type: 'json' };
 import { startBoard } from '../board/server.js';
-import { build } from '../core/builder.js';
 import { Config, type Connection } from '../core/config.js';
 import { describeCodebase, inspectCodebase } from '../core/inspect.js';
 import { Manager } from '../core/manager.js';
 import { Store } from '../core/store.js';
-import { McpTools } from '../mcp/server.js';
 import { ClaudeProvider } from '../providers/claude.js';
 import { checkApiKey } from '../setup/anthropic.js';
 import { connect } from '../setup/connect.js';
-import { openInBrowser } from '../util/open.js';
 import { BRAND, logo, sessionInfo } from './banner.js';
-import { createBuildRenderer } from './buildView.js';
-import { type CommandContext, commandMenu, parseCommand, suggest, type Usage } from './commands.js';
-import { describeTool, greeting, planCard } from './describe.js';
-import { Spinner } from './spinner.js';
-import { paint, renderInline } from './style.js';
+import { type CommandContext, commandMenu, parseCommand, suggest } from './commands.js';
+import { greeting } from './describe.js';
+import { ChatSession } from './session.js';
+import { paint } from './style.js';
 import { Terminal } from './terminal.js';
 
 const PROMPT = `${paint.hex(BRAND, '›')} `;
@@ -32,6 +28,7 @@ export async function startChat(projectRoot: string): Promise<void> {
 }
 
 async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
+  write = (text) => terminal.print(text);
   console.log(`\n${logo()}\n`);
   const config = new Config();
   const connection = (await config.readConnection()) ?? (await firstConnect(terminal, config));
@@ -77,17 +74,33 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
   const hasConversation = (await store.readManagerSession()) !== undefined;
   say(greeting(await store.readPlan(), { hasConversation, ...(codebase && { codebase }) }));
 
+  const session = new ChatSession({
+    store,
+    config,
+    provider,
+    manager,
+    workerMcp: {
+      command: process.execPath,
+      args: [cliPath(), 'mcp', '--root', projectRoot, '--role', 'worker'],
+    },
+    boardUrl: board.url,
+    output: {
+      say,
+      print: (text) => terminal.print(text),
+      status: (key, text) => terminal.setStatus(key, text),
+    },
+  });
+
   let exiting = false;
-  const session: Usage = { runs: 0, tokens: 0, costUsd: 0 };
-  const mcpServer = { command: process.execPath, args: [cliPath(), 'mcp', '--root', projectRoot] };
   const context: CommandContext = {
     store,
     config,
     provider,
     connection,
-    session,
+    session: session.usage,
     boardUrl: board.url,
-    startBuild: () => runBuild({ store, config, provider, mcpServer, terminal, session }),
+    startBuild: () => startBuild(session, provider, config),
+    status: (text) => terminal.setStatus('chat', text),
     say,
     exit: () => {
       exiting = true;
@@ -97,40 +110,41 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
   const history: string[] = [];
   while (!exiting) {
     const input = await terminal.readLine({ prompt: PROMPT, menu: commandMenu, history });
-    if (input === undefined) break;
+    if (input === undefined) {
+      // Piped input ran out: let queued work finish. In a terminal, Ctrl-C stops
+      // whatever is running first, and only exits once nothing is.
+      if (!terminal.interactive) await session.idle();
+      else if (session.isBuilding) {
+        await session.stopBuild();
+        continue;
+      } else if (session.isChatting) {
+        await session.stopChat();
+        continue;
+      }
+      break;
+    }
     const line = input.trim();
     if (line && line !== history.at(-1)) history.push(line);
 
-    if (line.startsWith('/')) {
-      await runCommand(line, context);
-    } else if (line) {
-      const running = new AbortController();
-      terminal.interrupt(() => running.abort());
-      await converse(manager, store, board.url, line, running.signal, session);
-      terminal.interrupt(undefined);
-    }
+    if (line.startsWith('/')) await runCommand(line, context);
+    else if (line) session.send(line);
   }
+
+  await session.stopBuild();
+  await session.stopChat();
   board.close();
 }
 
-interface BuildContext {
-  store: Store;
-  config: Config;
-  provider: ClaudeProvider;
-  mcpServer: { command: string; args: string[] };
-  terminal: Terminal;
-  session: Usage;
-}
-
-/** /build: work through the plan, streaming what Dazza does. Ctrl-C stops it cleanly. */
-async function runBuild({
-  store,
-  config,
-  provider,
-  mcpServer,
-  terminal,
-  session,
-}: BuildContext): Promise<void> {
+/** /build: check the model can work on its own, then build in the background. */
+async function startBuild(
+  session: ChatSession,
+  provider: ClaudeProvider,
+  config: Config,
+): Promise<void> {
+  if (session.isBuilding) {
+    say('Already building. Keep talking to me, or Ctrl-C to stop the build.');
+    return;
+  }
   const models = await provider.listModels();
   const chosen = (await config.readSettings()).model;
   const model = models.find((m) => m.id === chosen) ?? models[0];
@@ -141,37 +155,12 @@ async function runBuild({
     );
     return;
   }
-
-  const controller = new AbortController();
-  terminal.interrupt(() => controller.abort());
-  const spinner = new Spinner();
-  const render = createBuildRenderer(store.root);
-  try {
-    for await (const event of build({
-      store,
-      config,
-      provider,
-      mcpServer,
-      signal: controller.signal,
-    })) {
-      spinner.stop();
-      const output = render(event, await store.readPlan());
-      if (output) console.log(output);
-      if (event.type === 'agent' && event.event.type === 'finished' && event.event.usage) {
-        session.runs++;
-        session.tokens += event.event.usage.tokens;
-        session.costUsd += event.event.usage.costUsd;
-      }
-      if (event.type === 'task_started' || event.type === 'agent') spinner.start('Working');
-    }
-  } catch (error) {
-    spinner.stop();
-    say(paint.red(`Build stopped: ${errorMessage(error)}`));
-  } finally {
-    spinner.stop();
-    terminal.interrupt(undefined);
-    console.log('');
-  }
+  session.startBuild();
+  say(
+    paint.dim(
+      'Building in the background. Keep talking to me while I work; Ctrl-C stops the build.',
+    ),
+  );
 }
 
 /** First launch, or after /logout: pick how Dazza connects, and remember it. */
@@ -193,56 +182,6 @@ async function firstConnect(terminal: Terminal, config: Config): Promise<Connect
   return connection;
 }
 
-async function converse(
-  manager: Manager,
-  store: Store,
-  boardUrl: string,
-  message: string,
-  signal: AbortSignal,
-  session: Usage,
-) {
-  const before = await store.readPlan();
-  const spinner = new Spinner();
-  let rewrotePlan = false;
-  spinner.start('Thinking');
-
-  try {
-    for await (const event of manager.send(message, signal)) {
-      if (event.type === 'text') {
-        spinner.stop();
-        say(renderInline(event.text));
-        spinner.start('Thinking');
-      } else if (event.type === 'tool_use') {
-        rewrotePlan ||= event.tool === McpTools.savePlan;
-        spinner.update(describeTool(event.tool, event.input));
-      } else if (event.type === 'finished') {
-        if (event.usage) {
-          session.runs++;
-          session.tokens += event.usage.tokens;
-          session.costUsd += event.usage.costUsd;
-        }
-        if (!event.ok) {
-          spinner.stop();
-          say(paint.red(event.output || 'Something went wrong on my end.'));
-        }
-      }
-    }
-  } catch (error) {
-    spinner.stop();
-    say(signal.aborted ? paint.dim('Stopped.') : paint.red(`Error: ${errorMessage(error)}`));
-  } finally {
-    spinner.stop();
-  }
-
-  // Small edits are confirmed in Dazza's own reply; a rewritten plan gets the full card.
-  const after = await store.readPlan();
-  if (rewrotePlan && after && JSON.stringify(after) !== JSON.stringify(before)) {
-    console.log(`${planCard(after, Boolean(before?.approvedAt), boardUrl)}\n`);
-    // The first plan is the moment to show the board; after that the tab is already open.
-    if (!before) openInBrowser(boardUrl);
-  }
-}
-
 async function runCommand(line: string, context: CommandContext): Promise<void> {
   const { command, name, args } = parseCommand(line);
   if (!command) {
@@ -257,11 +196,14 @@ async function runCommand(line: string, context: CommandContext): Promise<void> 
   }
 }
 
+/** Where Dazza's words go: the terminal once the chat starts, so they print around the input. */
+let write: (text: string) => void = (text) => console.log(text);
+
 /** Print Dazza's words with a little breathing room, indented under a marker. */
 function say(text: string): void {
   const [first = '', ...rest] = text.trim().split('\n');
   const body = rest.map((line) => (line.trim() ? `\n  ${line}` : '\n')).join('');
-  console.log(`\n${paint.hex(BRAND, '●')} ${first}${body}\n`);
+  write(`\n${paint.hex(BRAND, '●')} ${first}${body}\n`);
 }
 
 /** Path of the running CLI, so the agent can launch our MCP server with the same build. */

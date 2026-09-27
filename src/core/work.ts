@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { type Git, taskBranch } from '../git/git.js';
 import type { ActionResult } from './actions.js';
 import { findItem, withStatus } from './plan.js';
-import type { EventType, Handoff, Task, TaskStatus } from './schema.js';
+import type { EventType, Handoff, Plan, Task, TaskStatus } from './schema.js';
 import type { Store, TaskBuild } from './store.js';
 
 /**
@@ -66,10 +66,15 @@ export async function startTask(
   now = new Date(),
 ): Promise<TaskBuild> {
   const existing = await store.readTaskBuild(task.id);
-  const build: TaskBuild = existing ?? {
-    branch: taskBranch(task.id, task.title),
-    baseBranch: await projectBranch(store, git),
-    startCommit: await git.head(),
+  // The task brief carries everything said so far, so only later comments are news.
+  const seenEvents = (await store.readEvents()).length;
+  const build: TaskBuild = {
+    ...(existing ?? {
+      branch: taskBranch(task.id, task.title),
+      baseBranch: await projectBranch(store, git),
+      startCommit: await git.head(),
+    }),
+    seenEvents,
   };
   await git.checkout(build.branch);
   await store.writeTaskBuild(task.id, build);
@@ -86,13 +91,13 @@ export async function setSubtaskStatus(
   status: 'building' | 'closed',
   now = new Date(),
 ): Promise<ActionResult> {
-  const plan = await store.readPlan();
-  const found = plan && findItem(plan, subtaskId);
-  if (!plan || !found?.subtask) return { ok: false, message: `No subtask ${subtaskId}.` };
-  await store.writePlan(withStatus(plan, subtaskId, status));
-  if (status === 'closed') {
-    await log(store, now, 'task_progress', subtaskId, `Finished ${found.subtask.title}`);
-  }
+  const title = await store.updatePlan((plan): [Plan | undefined, string | undefined] => {
+    const found = plan && findItem(plan, subtaskId);
+    if (!plan || !found?.subtask) return [undefined, undefined];
+    return [withStatus(plan, subtaskId, status), found.subtask.title];
+  });
+  if (title === undefined) return { ok: false, message: `No subtask ${subtaskId}.` };
+  if (status === 'closed') await log(store, now, 'task_progress', subtaskId, `Finished ${title}`);
   return { ok: true, message: `${subtaskId} is ${status}.` };
 }
 
@@ -121,41 +126,67 @@ export async function submitTask(
 ): Promise<ActionResult> {
   const parsed = WorkReport.safeParse(report);
   if (!parsed.success) return { ok: false, message: z.prettifyError(parsed.error) };
-  const plan = await store.readPlan();
-  const task = plan && findItem(plan, taskId);
   const build = await store.readTaskBuild(taskId);
-  if (!plan || !task || task.subtask || !build || task.task.status !== 'building') {
+  const branch = await store.updatePlan(
+    async (plan): Promise<[Plan | undefined, string | undefined]> => {
+      const task = plan && findItem(plan, taskId);
+      if (!plan || !task || task.subtask || !build || task.task.status !== 'building') {
+        return [undefined, undefined];
+      }
+      const commit = (await git.commitAll(`${taskId}: ${task.task.title}`)) ?? (await git.head());
+      const handoff: Handoff = {
+        ...parsed.data,
+        branch: build.branch,
+        baseBranch: build.baseBranch,
+        commit,
+        filesChanged: await git.filesChanged(build.startCommit, commit),
+        screenshots: [],
+        submittedAt: now.toISOString(),
+      };
+      const next = withStatus(plan, taskId, 'review');
+      return [
+        { ...next, tasks: next.tasks.map((t) => (t.id === taskId ? { ...t, handoff } : t)) },
+        build.branch,
+      ];
+    },
+  );
+  if (!branch) {
     return { ok: false, message: `${taskId} isn't being built, so there's nothing to hand over.` };
   }
-
-  const commit = (await git.commitAll(`${taskId}: ${task.task.title}`)) ?? (await git.head());
-  const handoff: Handoff = {
-    ...parsed.data,
-    branch: build.branch,
-    baseBranch: build.baseBranch,
-    commit,
-    filesChanged: await git.filesChanged(build.startCommit, commit),
-    screenshots: [],
-    submittedAt: now.toISOString(),
-  };
-  const next = withStatus(plan, taskId, 'review');
-  await store.writePlan({
-    ...next,
-    tasks: next.tasks.map((t) => (t.id === taskId ? { ...t, handoff } : t)),
-  });
   await log(store, now, 'task_submitted', taskId, 'Ready for your review');
-  return { ok: true, message: `${taskId} committed on ${build.branch} and sent for review.` };
+  return { ok: true, message: `${taskId} committed on ${branch} and sent for review.` };
+}
+
+/**
+ * Comments from the user about a task (or the project as a whole) that the
+ * worker hasn't seen yet. Each one is handed over once.
+ */
+export async function takeNewMessages(store: Store, taskId: string): Promise<string[]> {
+  const build = await store.readTaskBuild(taskId);
+  const plan = await store.readPlan();
+  const task = plan && findItem(plan, taskId)?.task;
+  if (!build || !task) return [];
+
+  const events = await store.readEvents();
+  const ids = new Set([task.id, ...task.subtasks.map((s) => s.id)]);
+  const news = events
+    .slice(build.seenEvents)
+    .filter((e) => e.type === 'comment' && e.actor === 'user' && (!e.taskId || ids.has(e.taskId)))
+    .map((e) => `- On ${e.taskId ?? 'the project'}: ${e.message}`);
+  await store.writeTaskBuild(taskId, { ...build, seenEvents: events.length });
+  return news;
 }
 
 /** Put an interrupted task back in the queue; its branch and session are kept. */
 export async function pauseTask(store: Store, taskId: string, now = new Date()): Promise<void> {
-  const plan = await store.readPlan();
-  if (plan && findItem(plan, taskId)?.task.status === 'building') {
-    await setStatus(store, taskId, 'planned', now, {
-      type: 'task_moved',
-      message: 'Paused; picks up here next build',
-    });
-  }
+  await setStatus(
+    store,
+    taskId,
+    'planned',
+    now,
+    { type: 'task_moved', message: 'Paused; picks up here next build' },
+    'building',
+  );
 }
 
 /**
@@ -174,10 +205,16 @@ async function setStatus(
   status: TaskStatus,
   now: Date,
   event: { type: EventType; message: string },
+  /** Only change the status if it's currently this. */
+  onlyFrom?: TaskStatus,
 ): Promise<ActionResult> {
-  const plan = await store.readPlan();
-  if (!plan || !findItem(plan, taskId)) return { ok: false, message: `No task ${taskId}.` };
-  await store.writePlan(withStatus(plan, taskId, status));
+  const changed = await store.updatePlan((plan): [Plan | undefined, boolean] => {
+    const found = plan && findItem(plan, taskId);
+    if (!plan || !found) return [undefined, false];
+    if (onlyFrom && found.task.status !== onlyFrom) return [undefined, false];
+    return [withStatus(plan, taskId, status), true];
+  });
+  if (!changed) return { ok: false, message: `${taskId} couldn't move to ${status}.` };
   await log(store, now, event.type, taskId, event.message);
   return { ok: true, message: `${taskId} is ${status}.` };
 }

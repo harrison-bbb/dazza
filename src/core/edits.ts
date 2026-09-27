@@ -135,18 +135,20 @@ async function update(
   now: Date,
   apply: (plan: Plan) => Promise<Update | string>,
 ): Promise<ActionResult> {
-  const plan = await store.readPlan();
-  if (!plan) return { ok: false, message: 'There is no plan yet.' };
+  const outcome = await store.updatePlan(
+    async (plan): Promise<[Plan | undefined, Update | string]> => {
+      if (!plan) return [undefined, 'There is no plan yet.'];
+      const result = await apply(plan);
+      if (typeof result === 'string') return [undefined, result];
+      const valid = Plan.safeParse(result.plan);
+      if (!valid.success) return [undefined, z.prettifyError(valid.error)];
+      return [valid.data, result];
+    },
+  );
+  if (typeof outcome === 'string') return { ok: false, message: outcome };
 
-  const result = await apply(plan);
-  if (typeof result === 'string') return { ok: false, message: result };
-
-  const valid = Plan.safeParse(result.plan);
-  if (!valid.success) return { ok: false, message: z.prettifyError(valid.error) };
-
-  await store.writePlan(valid.data);
-  await store.appendEvent({ at: now.toISOString(), actor: 'user', ...result.event });
-  return { ok: true, message: `${result.event.taskId}: ${result.event.message}` };
+  await store.appendEvent({ at: now.toISOString(), actor: 'user', ...outcome.event });
+  return { ok: true, message: `${outcome.event.taskId}: ${outcome.event.message}` };
 }
 
 function replaceTask(plan: Plan, task: Task): Plan {

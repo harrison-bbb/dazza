@@ -16,7 +16,13 @@ import {
 import { carryOverProgress } from '../core/plan.js';
 import { Plan, SCHEMA_VERSION, Task } from '../core/schema.js';
 import { Store } from '../core/store.js';
-import { blockTask, setSubtaskStatus, submitTask, WorkReport } from '../core/work.js';
+import {
+  blockTask,
+  setSubtaskStatus,
+  submitTask,
+  takeNewMessages,
+  WorkReport,
+} from '../core/work.js';
 import { Git } from '../git/git.js';
 
 export const MCP_SERVER_NAME = 'dazza';
@@ -32,6 +38,7 @@ export const McpTools = {
   updateSubtask: tool('update_subtask'),
   block: tool('block'),
   submit: tool('submit'),
+  checkMessages: tool('check_messages'),
 } as const;
 
 /** Tools for the conversation: planning, and changing the project when the user asks. */
@@ -48,6 +55,7 @@ export const MANAGER_TOOLS = [
 export const WORKER_TOOLS = [
   McpTools.updateSubtask,
   McpTools.comment,
+  McpTools.checkMessages,
   McpTools.block,
   McpTools.submit,
 ];
@@ -72,40 +80,50 @@ export type SavePlanInput = z.infer<typeof SavePlanInput>;
  * as tool errors so it can correct the plan and try again.
  */
 export async function savePlan(store: Store, input: SavePlanInput): Promise<CallToolResult> {
-  const current = await store.readPlan();
-  const tasks = carryOverProgress(current, input.tasks);
-  if (typeof tasks === 'string') return failure(tasks);
+  const outcome = await store.updatePlan(
+    (current): [Plan | undefined, { error: string } | { count: number; rescoped: boolean }] => {
+      const tasks = carryOverProgress(current, input.tasks);
+      if (typeof tasks === 'string') return [undefined, { error: tasks }];
+      const result = Plan.safeParse({ version: SCHEMA_VERSION, approvedAt: null, tasks });
+      if (!result.success) {
+        return [undefined, { error: `The plan is invalid:\n${z.prettifyError(result.error)}` }];
+      }
+      return [result.data, { count: tasks.length, rescoped: Boolean(current?.approvedAt) }];
+    },
+  );
+  if ('error' in outcome) return failure(outcome.error);
 
-  const result = Plan.safeParse({ version: SCHEMA_VERSION, approvedAt: null, tasks });
-  if (!result.success) return failure(`The plan is invalid:\n${z.prettifyError(result.error)}`);
-
-  const rescoped = Boolean(current?.approvedAt);
+  const tasks = `${outcome.count} tasks`;
   await store.writeScope(input.scope);
-  await store.writePlan(result.data);
   await store.appendEvent({
     at: new Date().toISOString(),
-    type: rescoped ? 'scope_change_proposed' : 'plan_created',
+    type: outcome.rescoped ? 'scope_change_proposed' : 'plan_created',
     message:
       input.summary ??
-      `${rescoped ? 'Revised the approved plan' : 'Drafted a plan'}: ${tasks.length} tasks`,
+      `${outcome.rescoped ? 'Revised the approved plan' : 'Drafted a plan'}: ${tasks}`,
   });
 
-  const count = `${tasks.length} tasks`;
-  return {
-    content: [
-      {
-        type: 'text',
-        text: rescoped
-          ? `Saved ${count}. The plan needs the user's approval again.`
-          : `Saved ${count}.`,
-      },
-    ],
-  };
+  const text = outcome.rescoped
+    ? `Saved ${tasks}. The plan needs the user's approval again.`
+    : `Saved ${tasks}.`;
+  return { content: [{ type: 'text', text }] };
 }
 
-export function createMcpServer(store: Store): McpServer {
-  const server = new McpServer({ name: MCP_SERVER_NAME, version: pkg.version });
+export type McpRole = 'manager' | 'worker';
 
+/**
+ * Dazza's tools for an agent. The conversation (manager) plans and edits the
+ * project; the builder (worker) reports progress and hands work over. Each
+ * gets only its own tools.
+ */
+export function createMcpServer(store: Store, role: McpRole): McpServer {
+  const server = new McpServer({ name: MCP_SERVER_NAME, version: pkg.version });
+  if (role === 'manager') registerManagerTools(server, store);
+  else registerWorkerTools(server, store);
+  return server;
+}
+
+function registerManagerTools(server: McpServer, store: Store): void {
   server.registerTool(
     'save_plan',
     {
@@ -179,20 +197,56 @@ export function createMcpServer(store: Store): McpServer {
   server.registerTool(
     'comment',
     {
-      description: "Post a comment from Dazza on a task or subtask's thread on the board.",
-      inputSchema: { id: z.string(), body: z.string().min(1) },
+      description:
+        "Post on a task or subtask's thread on the board. Use as: 'user' to pass on something " +
+        'the user told you, e.g. an instruction for the task being built; the build picks it up ' +
+        'at its next check-in. Otherwise it posts as Dazza.',
+      inputSchema: {
+        id: z.string(),
+        body: z.string().min(1),
+        as: z.enum(['dazza', 'user']).default('dazza'),
+      },
     },
-    async ({ id, body }) => toResult(await addComment(store, id, body, 'dazza')),
+    async ({ id, body, as }) => toResult(await addComment(store, id, body, as)),
+  );
+}
+
+function registerWorkerTools(server: McpServer, store: Store): void {
+  // Every reply carries anything the user has said about the task since the
+  // worker last checked, so comments reach it mid-build.
+  const withNews = async (taskOrSubtaskId: string, result: ActionResult) => {
+    const news = await takeNewMessages(store, taskOrSubtaskId.split('.')[0] ?? taskOrSubtaskId);
+    return toResult(result, news);
+  };
+
+  server.registerTool(
+    'check_messages',
+    {
+      description:
+        'See if the user has said anything about your task since you last checked. Use it ' +
+        'between steps when you have been working for a while without other Dazza tool calls.',
+      inputSchema: { taskId: z.string() },
+    },
+    async ({ taskId }) => withNews(taskId, { ok: true, message: 'Checked.' }),
   );
 
-  // While building a task.
+  server.registerTool(
+    'comment',
+    {
+      description:
+        "Post a note on a task or subtask's thread, e.g. a decision the user would want to know.",
+      inputSchema: { id: z.string(), body: z.string().min(1) },
+    },
+    async ({ id, body }) => withNews(id, await addComment(store, id, body, 'dazza')),
+  );
+
   server.registerTool(
     'update_subtask',
     {
       description: 'Mark a subtask of the task you are building as started or finished.',
       inputSchema: { id: z.string(), status: z.enum(['building', 'closed']) },
     },
-    async ({ id, status }) => toResult(await setSubtaskStatus(store, id, status)),
+    async ({ id, status }) => withNews(id, await setSubtaskStatus(store, id, status)),
   );
 
   server.registerTool(
@@ -203,7 +257,7 @@ export function createMcpServer(store: Store): McpServer {
         'a credential, access, or permission. Ask one clear question. Then stop working.',
       inputSchema: { taskId: z.string(), question: z.string().min(1) },
     },
-    async ({ taskId, question }) => toResult(await blockTask(store, taskId, question)),
+    async ({ taskId, question }) => withNews(taskId, await blockTask(store, taskId, question)),
   );
 
   server.registerTool(
@@ -217,19 +271,18 @@ export function createMcpServer(store: Store): McpServer {
     async ({ taskId, ...report }) =>
       toResult(await submitTask(store, new Git(store.root), taskId, report)),
   );
-
-  return server;
 }
 
 /** Entry point for `dazza mcp`, spawned by the agent CLI over stdio. */
-export async function serveMcp(projectRoot: string): Promise<void> {
-  await createMcpServer(new Store(projectRoot)).connect(new StdioServerTransport());
+export async function serveMcp(projectRoot: string, role: McpRole): Promise<void> {
+  await createMcpServer(new Store(projectRoot), role).connect(new StdioServerTransport());
 }
 
-function toResult(result: ActionResult): CallToolResult {
-  return result.ok
-    ? { content: [{ type: 'text', text: result.message }] }
-    : failure(result.message);
+function toResult(result: ActionResult, news: string[] = []): CallToolResult {
+  const text = news.length
+    ? `${result.message}\n\nNew from the user since you last checked. Follow it:\n${news.join('\n')}`
+    : result.message;
+  return result.ok ? { content: [{ type: 'text', text }] } : failure(text);
 }
 
 function pickSubtaskChanges(changes: TaskChanges): SubtaskChanges {

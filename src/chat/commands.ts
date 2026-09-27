@@ -6,7 +6,6 @@ import { openInBrowser } from '../util/open.js';
 import { BRAND } from './banner.js';
 import { greeting } from './describe.js';
 import type { MenuItem } from './editor.js';
-import { Spinner } from './spinner.js';
 import { paint } from './style.js';
 
 /** What a command can reach. Kept small so commands are easy to test. */
@@ -18,8 +17,10 @@ export interface CommandContext {
   /** What this chat session has used so far. */
   session: Usage;
   boardUrl: string;
-  /** Build the approved plan, showing the work live. */
+  /** Build the approved plan in the background, showing the work live. */
   startBuild(): Promise<void>;
+  /** Show (or clear) an activity in the status line while a command works. */
+  status(text: string | undefined): void;
   /** Print Dazza's reply. */
   say(text: string): void;
   /** End the chat after this command. */
@@ -72,8 +73,9 @@ export const COMMANDS: Command[] = [
     name: 'model',
     args: '[name or number]',
     description: 'Show the models you can use, or switch model',
-    async run({ provider, config, say }, args) {
-      const models = await withSpinner('Checking your models', () => provider.listModels());
+    async run({ provider, config, say, status }, args) {
+      status('Checking your models');
+      const models = await provider.listModels().finally(() => status(undefined));
       const current = (await config.readSettings()).model ?? models[0]?.id;
 
       if (!args) {
@@ -268,14 +270,4 @@ function ago(iso: string, now: Date): string {
 
 function compact(n: number): string {
   return new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
-}
-
-async function withSpinner<T>(text: string, work: () => Promise<T>): Promise<T> {
-  const spinner = new Spinner();
-  spinner.start(text);
-  try {
-    return await work();
-  } finally {
-    spinner.stop();
-  }
 }

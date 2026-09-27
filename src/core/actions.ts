@@ -12,13 +12,16 @@ import { landApprovedWork } from './work.js';
 export type ActionResult = { ok: true; message: string } | { ok: false; message: string };
 
 export async function approvePlan(store: Store, now = new Date()): Promise<ActionResult> {
-  const plan = await store.readPlan();
-  if (!plan) return fail('Nothing to approve yet.');
-  if (plan.approvedAt) return fail('Already approved.');
-
-  await store.writePlan(approve(plan, now));
-  await log(store, now, { type: 'plan_approved', message: 'Approved the plan' });
-  return { ok: true, message: `Approved. ${plan.tasks.length} tasks locked in.` };
+  const result = await store.updatePlan((plan): [Plan | undefined, ActionResult] => {
+    if (!plan) return [undefined, fail('Nothing to approve yet.')];
+    if (plan.approvedAt) return [undefined, fail('Already approved.')];
+    return [
+      approve(plan, now),
+      { ok: true, message: `Approved. ${plan.tasks.length} tasks locked in.` },
+    ];
+  });
+  if (result.ok) await log(store, now, { type: 'plan_approved', message: 'Approved the plan' });
+  return result;
 }
 
 /** Comment on a task or subtask. Dazza comments through the same path. */
@@ -159,16 +162,16 @@ async function transition(
   now: Date,
   apply: (plan: Plan, task: Plan['tasks'][number]) => Transition,
 ): Promise<ActionResult> {
-  const plan = await store.readPlan();
-  const found = plan && findItem(plan, taskId);
-  if (!plan || !found || found.subtask) return fail(`No task ${taskId}.`);
+  const outcome = await store.updatePlan((plan): [Plan | undefined, Transition] => {
+    const found = plan && findItem(plan, taskId);
+    if (!plan || !found || found.subtask) return [undefined, fail(`No task ${taskId}.`)];
+    const result = apply(plan, found.task);
+    return 'ok' in result ? [undefined, result] : [result.plan, result];
+  });
+  if ('ok' in outcome) return outcome;
 
-  const result = apply(plan, found.task);
-  if ('ok' in result) return result;
-
-  await store.writePlan(result.plan);
-  await log(store, now, { ...result.event, taskId });
-  return { ok: true, message: result.event.message };
+  await log(store, now, { ...outcome.event, taskId });
+  return { ok: true, message: outcome.event.message };
 }
 
 function log(
