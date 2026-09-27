@@ -1,12 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildClaudeArgs, ClaudeProvider, parseClaudeLine } from '../../src/providers/claude.js';
 import type { AgentEvent } from '../../src/providers/types.js';
 import { CommandError } from '../../src/util/process.js';
 
 const fixture = (path: string) => fileURLToPath(new URL(`../fixtures/${path}`, import.meta.url));
-const fakeClaude = new ClaudeProvider(fixture('bin/fake-claude.mjs'));
+const fakeClaude = new ClaudeProvider({ bin: fixture('bin/fake-claude.mjs') });
 
 const expectedEvents: AgentEvent[] = [
   {
@@ -140,11 +140,41 @@ describe('ClaudeProvider', () => {
     ]);
   });
 
-  it('signs out', async () => {
-    await expect(fakeClaude.logout()).resolves.toBeUndefined();
+  describe('billing mode', () => {
+    const keyUsed = async (provider: ClaudeProvider) => {
+      for await (const event of provider.run({ prompt: 'ENV', cwd: process.cwd() })) {
+        if (event.type === 'finished') return event.output;
+      }
+    };
+    const original = process.env.ANTHROPIC_API_KEY;
+    beforeEach(() => {
+      process.env.ANTHROPIC_API_KEY = 'stray-key-from-shell';
+    });
+    afterEach(() => {
+      if (original === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = original;
+    });
+
+    it('never passes a stray shell API key on a subscription', async () => {
+      const provider = new ClaudeProvider({
+        bin: fixture('bin/fake-claude.mjs'),
+        connection: { provider: 'claude', method: 'subscription' },
+      });
+      expect(await keyUsed(provider)).toBe('none');
+    });
+
+    it('passes the connected API key', async () => {
+      const provider = new ClaudeProvider({
+        bin: fixture('bin/fake-claude.mjs'),
+        connection: { provider: 'claude', method: 'api-key', apiKey: 'sk-dazza' },
+      });
+      expect(await keyUsed(provider)).toBe('sk-dazza');
+    });
   });
 
   it('detects a missing CLI', async () => {
-    expect(await new ClaudeProvider('dazza-no-such-binary').detect()).toEqual({ installed: false });
+    expect(await new ClaudeProvider({ bin: 'dazza-no-such-binary' }).detect()).toEqual({
+      installed: false,
+    });
   });
 });

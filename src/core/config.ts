@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -14,6 +14,17 @@ export const Settings = z.object({
   model: z.string().optional(),
 });
 export type Settings = z.infer<typeof Settings>;
+
+/** How Dazza reaches its coding agent. Holds a secret for API keys, so the file is 0600. */
+export const Connection = z.discriminatedUnion('method', [
+  z.object({ provider: z.literal('claude'), method: z.literal('subscription') }),
+  z.object({
+    provider: z.literal('claude'),
+    method: z.literal('api-key'),
+    apiKey: z.string().min(1),
+  }),
+]);
+export type Connection = z.infer<typeof Connection>;
 
 export const Limits = z.object({
   checkedAt: z.iso.datetime(),
@@ -34,6 +45,19 @@ export class Config {
     const next = { ...(await this.readSettings()), ...changes };
     await this.write('settings.json', next);
     return next;
+  }
+
+  readConnection(): Promise<Connection | undefined> {
+    return this.read('connection.json', Connection);
+  }
+
+  writeConnection(connection: Connection): Promise<void> {
+    return this.write('connection.json', connection);
+  }
+
+  /** Sign out of Dazza. Leaves the agent CLI's own sign-in alone. */
+  async clearConnection(): Promise<void> {
+    await rm(join(this.dir, 'connection.json'), { force: true });
   }
 
   readLimits(): Promise<Limits | undefined> {

@@ -36,7 +36,9 @@ dazza doctor   # check everything's ready
 dazza          # start talking
 ```
 
-Just type to talk to Dazza. Slash commands (Tab completes them):
+The first time you run it, Dazza asks how to connect: your Claude subscription (through your Claude Code sign-in) or an Anthropic API key.
+
+Just type to talk to Dazza. Type `/` for commands:
 
 | Command | What it does |
 |---|---|
@@ -44,8 +46,8 @@ Just type to talk to Dazza. Slash commands (Tab completes them):
 | `/status` | Where the project is at |
 | `/approve` | Approve the drafted plan |
 | `/model [name or number]` | List the models your account can use, or switch |
-| `/usage` | Your plan's rate limits and what Dazza has used on this project |
-| `/logout` | Sign out of the coding agent's CLI (asks you to confirm) |
+| `/usage` | Session and weekly limits on a subscription, or dollars spent on an API key |
+| `/logout` | Sign out of Dazza; your Claude Code sign-in is untouched |
 | `/help`, `/exit` | |
 
 While Dazza runs, a project board is served at `http://localhost:4777`: a dashboard, the scope document, the task list, and a page for every task and subtask with a comment thread shared with Dazza. It opens when your first plan is ready and updates live. Tasks move through backlog → planned → building → in review (or blocked). Only you close or cancel them, so nothing is done until you say so. Run `dazza board` to open it without starting a chat.

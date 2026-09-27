@@ -28,9 +28,10 @@ export interface CommandResult {
 export async function execCommand(
   command: string,
   args: readonly string[],
+  env?: NodeJS.ProcessEnv,
 ): Promise<CommandResult | undefined> {
   try {
-    const { stdout, stderr } = await execFileAsync(command, args);
+    const { stdout, stderr } = await execFileAsync(command, args, env ? { env } : {});
     return { exitCode: 0, stdout, stderr };
   } catch (error) {
     if (isErrnoException(error) && error.code === 'ENOENT') return undefined;
@@ -45,6 +46,8 @@ export interface SpawnLinesOptions {
   cwd: string;
   /** Written to the process's stdin, which is then closed. */
   input?: string;
+  /** The child's whole environment; defaults to this process's. */
+  env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
 }
 
@@ -60,6 +63,7 @@ export async function* spawnLines(
   const child = spawn(command, args, {
     cwd: options.cwd,
     stdio: 'pipe',
+    ...(options.env && { env: options.env }),
     ...(options.signal && { signal: options.signal }),
   });
   child.stdin.end(options.input);
@@ -74,6 +78,9 @@ export async function* spawnLines(
     child.once('error', reject);
     child.once('close', resolve);
   });
+  // An abort can reject this while we're still reading output; it's awaited (and
+  // rethrown) below, so don't let Node treat it as an unhandled rejection meanwhile.
+  exited.catch(() => {});
 
   try {
     for await (const line of createInterface({ input: child.stdout, crlfDelay: Infinity })) {
@@ -84,6 +91,15 @@ export async function* spawnLines(
   } finally {
     if (child.exitCode === null) child.kill();
   }
+}
+
+/** Run a command attached to this terminal, for interactive steps like signing in. */
+export function runInteractive(command: string, args: readonly string[]): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: 'inherit' });
+    child.once('error', reject);
+    child.once('close', resolve);
+  });
 }
 
 function isErrnoException(error: unknown): error is NodeJS.ErrnoException {

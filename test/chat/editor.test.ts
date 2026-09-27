@@ -1,0 +1,118 @@
+import { describe, expect, it } from 'vitest';
+import {
+  type EditorState,
+  initialState,
+  type Key,
+  type MenuSource,
+  reduce,
+} from '../../src/chat/editor.js';
+import { layout } from '../../src/chat/terminal.js';
+
+const commands = ['/dashboard', '/help', '/model', '/usage'];
+const menu: MenuSource = (text) =>
+  text.startsWith('/') && !text.includes(' ')
+    ? commands.filter((c) => c.startsWith(text)).map((value) => ({ value, hint: `${value} hint` }))
+    : [];
+
+/** Feed keys (strings are typed character by character) and return the final outcome. */
+function press(keys: (string | Key)[], start: EditorState = initialState()) {
+  let state = start;
+  for (const key of keys) {
+    const presses: Key[] = typeof key === 'string' ? [...key].map((c) => ({ sequence: c })) : [key];
+    for (const k of presses) {
+      const outcome = reduce(state, k, menu);
+      if (outcome.type !== 'edit') return outcome;
+      state = outcome.state;
+    }
+  }
+  return { type: 'edit' as const, state };
+}
+
+const key = (name: string, extra: Partial<Key> = {}): Key => ({ name, ...extra });
+
+describe('editor', () => {
+  it('types, moves and deletes', () => {
+    const result = press(['helo', key('left'), 'l', key('end'), '!', key('backspace')]);
+    expect(result).toMatchObject({ state: { text: 'hello', cursor: 5 } });
+  });
+
+  it('submits the typed text', () => {
+    expect(press(['hi there', key('return')])).toEqual({ type: 'submit', value: 'hi there' });
+  });
+
+  it('opens the menu on "/" and runs the highlighted command on Enter', () => {
+    expect(press(['/', key('down'), key('down'), key('return')])).toEqual({
+      type: 'submit',
+      value: '/model',
+    });
+  });
+
+  it('filters as you type and wraps the selection', () => {
+    expect(press(['/u', key('return')])).toEqual({ type: 'submit', value: '/usage' });
+    expect(press(['/', key('up'), key('return')])).toEqual({ type: 'submit', value: '/usage' });
+  });
+
+  it('completes with Tab so arguments can follow', () => {
+    expect(press(['/mo', key('tab'), '3', key('return')])).toEqual({
+      type: 'submit',
+      value: '/model 3',
+    });
+  });
+
+  it('submits unknown commands as typed', () => {
+    expect(press(['/nope', key('return')])).toEqual({ type: 'submit', value: '/nope' });
+  });
+
+  it('browses history and restores the draft', () => {
+    const start = initialState(['first', 'second']);
+    expect(press(['dr', key('up')], start)).toMatchObject({ state: { text: 'second' } });
+    expect(press(['dr', key('up'), key('up'), key('down'), key('down')], start)).toMatchObject({
+      state: { text: 'dr' },
+    });
+  });
+
+  it('clears on Ctrl-C, then cancels on an empty line', () => {
+    expect(press(['abc', key('c', { ctrl: true })])).toMatchObject({ state: { text: '' } });
+    expect(press([key('c', { ctrl: true })])).toEqual({ type: 'cancel' });
+  });
+
+  it('deletes words and lines', () => {
+    expect(press(['one two', key('w', { ctrl: true })])).toMatchObject({ state: { text: 'one ' } });
+    expect(press(['one two', key('u', { ctrl: true })])).toMatchObject({ state: { text: '' } });
+  });
+
+  it('ignores control characters and flattens pasted newlines', () => {
+    expect(press([{ sequence: '\x1b[Z' }, { sequence: 'a\nb' }])).toMatchObject({
+      state: { text: 'a b' },
+    });
+  });
+});
+
+describe('layout', () => {
+  const state = (text: string, cursor = text.length) => ({ ...initialState(), text, cursor });
+
+  it('puts the cursor after the prompt', () => {
+    expect(layout('› ', state('hi'), [], false, 40)).toEqual({
+      lines: ['› hi'],
+      cursorRow: 0,
+      cursorCol: 4,
+    });
+  });
+
+  it('wraps long input by hand and tracks the cursor row', () => {
+    const { lines, cursorRow, cursorCol } = layout('› ', state('x'.repeat(30)), [], false, 21);
+    expect(lines).toEqual([`› ${'x'.repeat(18)}`, 'x'.repeat(12)]);
+    expect([cursorRow, cursorCol]).toEqual([1, 12]);
+  });
+
+  it('adds menu lines under the input, cursor staying on the input', () => {
+    const result = layout('› ', state('/'), menu('/'), false, 60);
+    expect(result.lines).toHaveLength(1 + commands.length);
+    expect(result.lines[1]).toContain('/dashboard');
+    expect(result.cursorRow).toBe(0);
+  });
+
+  it('masks secrets', () => {
+    expect(layout('Key: ', state('sk-123'), [], true, 40).lines[0]).toBe('Key: ••••••');
+  });
+});

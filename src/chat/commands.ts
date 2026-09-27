@@ -1,10 +1,11 @@
 import { approvePlan } from '../core/actions.js';
-import type { Config, Limits } from '../core/config.js';
+import type { Config, Connection, Limits } from '../core/config.js';
 import type { Store } from '../core/store.js';
 import type { AgentProvider, ModelOption } from '../providers/types.js';
 import { openInBrowser } from '../util/open.js';
 import { BRAND } from './banner.js';
 import { greeting } from './describe.js';
+import type { MenuItem } from './editor.js';
 import { Spinner } from './spinner.js';
 import { paint } from './style.js';
 
@@ -13,6 +14,9 @@ export interface CommandContext {
   store: Store;
   config: Config;
   provider: AgentProvider;
+  connection: Connection;
+  /** What this chat session has used so far. */
+  session: Usage;
   boardUrl: string;
   /** Print Dazza's reply. */
   say(text: string): void;
@@ -80,33 +84,22 @@ export const COMMANDS: Command[] = [
   },
   {
     name: 'usage',
-    description: 'Your plan limits and what Dazza has used on this project',
-    async run({ provider, config, store, say }) {
-      const [status, limits, usage] = await Promise.all([
-        provider.detect(),
-        config.readLimits(),
-        store.readUsage(),
-      ]);
-      const plan = status.installed ? status.plan : undefined;
-      say(usageReport(plan ?? provider.name, limits, usage));
+    description: 'Plan limits, or API spend if you pay as you go',
+    async run({ provider, config, store, connection, session, say }) {
+      if (connection.method === 'api-key') {
+        say(spendReport(session, await store.readUsage()));
+        return;
+      }
+      const [status, limits] = await Promise.all([provider.detect(), config.readLimits()]);
+      say(limitsReport(status.installed ? status.plan : undefined, limits));
     },
   },
   {
     name: 'logout',
-    args: '[confirm]',
-    description: `Sign out of the coding agent's CLI`,
-    async run({ provider, say, exit }, args) {
-      if (args !== 'confirm') {
-        say(
-          `Dazza uses your ${provider.name} sign-in, so this signs you out of ${provider.name} ` +
-            `on this machine, not just Dazza.\n${paint.dim('Type /logout confirm to go ahead.')}`,
-        );
-        return;
-      }
-      await provider.logout();
-      say(
-        `Signed out of ${provider.name}. Sign back in by running \`claude\`, then start Dazza again.`,
-      );
+    description: 'Sign out of Dazza (your Claude Code sign-in stays as it is)',
+    async run({ config, say, exit }) {
+      await config.clearConnection();
+      say('Signed out of Dazza. Run `dazza` again to reconnect with a subscription or an API key.');
       exit();
     },
   },
@@ -144,11 +137,13 @@ export function suggest(name: string): Command | undefined {
   return COMMANDS.find((c) => c.name.startsWith(name.slice(0, 2)));
 }
 
-/** Tab completion for readline. */
-export function complete(line: string): [string[], string] {
-  if (!line.startsWith('/') || line.includes(' ')) return [[], line];
-  const hits = COMMANDS.map((c) => `/${c.name}`).filter((c) => c.startsWith(line));
-  return [hits, line];
+/** The live menu under the input: commands matching what's typed after "/". */
+export function commandMenu(text: string): MenuItem[] {
+  if (!text.startsWith('/') || text.includes(' ')) return [];
+  const typed = text.slice(1).toLowerCase();
+  return COMMANDS.filter((c) =>
+    [c.name, ...(c.aliases ?? [])].some((n) => n.startsWith(typed)),
+  ).map((c) => ({ value: `/${c.name}`, hint: c.description }));
 }
 
 export function helpText(): string {
@@ -179,44 +174,71 @@ export function pickModel(models: ModelOption[], input: string): ModelOption | u
   );
 }
 
+export interface Usage {
+  runs: number;
+  tokens: number;
+  costUsd: number;
+}
+
 const WINDOW_NAMES: Record<string, string> = {
-  five_hour: '5-hour limit',
-  seven_day: 'Weekly limit',
-  seven_day_opus: 'Weekly (Opus)',
-  seven_day_sonnet: 'Weekly (Sonnet)',
+  five_hour: 'Current session',
+  seven_day: 'Current week',
+  seven_day_opus: 'Current week (Opus)',
+  seven_day_sonnet: 'Current week (Sonnet)',
 };
 
-export function usageReport(
-  plan: string,
+const BAR_WIDTH = 40;
+
+/** Subscription limits, laid out like Claude Code's own /usage. */
+export function limitsReport(
+  plan: string | undefined,
   limits: Limits | undefined,
-  usage: { runs: number; tokens: number; costUsd: number },
   now = new Date(),
 ): string {
-  const lines = [paint.bold(plan)];
-  if (limits && limits.windows.length > 0) {
-    for (const window of limits.windows) {
-      const name = (WINDOW_NAMES[window.id] ?? window.id).padEnd(16);
-      const percent = `${Math.round(window.utilization * 100)}%`.padStart(4);
-      lines.push(
-        `${name}${bar(window.utilization)} ${percent}  ${paint.dim(`resets ${when(window.resetsAt, now)}`)}`,
-      );
-    }
-    lines.push(paint.dim(`As of your last message to Dazza, ${ago(limits.checkedAt, now)}.`));
-  } else {
-    lines.push(paint.dim('No limit reading yet. It updates every time Dazza replies.'));
+  const lines = [paint.bold(plan ?? 'Claude subscription')];
+  if (!limits || limits.windows.length === 0) {
+    lines.push('', paint.dim('No reading yet. Limits update every time Dazza replies.'));
+    return lines.join('\n');
+  }
+  for (const window of limits.windows) {
+    const percent = Math.round(window.utilization * 100);
+    lines.push(
+      '',
+      WINDOW_NAMES[window.id] ?? window.id,
+      `${bar(window.utilization)}  ${percent}% used`,
+      paint.dim(`Resets ${when(window.resetsAt, now)}`),
+    );
   }
   lines.push(
     '',
-    `${'This project'.padEnd(16)}${usage.runs} ${usage.runs === 1 ? 'message' : 'messages'} · ` +
-      `${compact(usage.tokens)} tokens · ` +
-      `$${usage.costUsd.toFixed(2)} at API prices`,
+    paint.dim(`Checked ${ago(limits.checkedAt, now)}, on your last message to Dazza.`),
   );
   return lines.join('\n');
 }
 
-function bar(fraction: number, width = 20): string {
-  const filled = Math.round(Math.min(1, Math.max(0, fraction)) * width);
-  return paint.hex(BRAND, '█'.repeat(filled)) + paint.dim('░'.repeat(width - filled));
+/** Pay-as-you-go spend. The API has no balance lookup for standard keys, so link to billing. */
+export function spendReport(session: Usage, project: Usage): string {
+  const row = (label: string, usage: Usage) =>
+    `${label.padEnd(16)}${`$${usage.costUsd.toFixed(2)}`.padStart(8)}   ${paint.dim(
+      `${usage.runs} ${usage.runs === 1 ? 'message' : 'messages'} · ${compact(usage.tokens)} tokens`,
+    )}`;
+  return [
+    paint.bold('Anthropic API · pay as you go'),
+    '',
+    row('This session', session),
+    row('This project', project),
+    '',
+    paint.dim('Credit balance and limits: https://console.anthropic.com/settings/billing'),
+  ].join('\n');
+}
+
+/** A bar with eighth-block precision, so small percentages still show. */
+function bar(fraction: number, width = BAR_WIDTH): string {
+  const eighths = Math.round(Math.min(1, Math.max(0, fraction)) * width * 8);
+  const full = Math.floor(eighths / 8);
+  const partial = eighths % 8 ? (' ▏▎▍▌▋▊▉'[eighths % 8] ?? '') : '';
+  const filled = '█'.repeat(full) + partial;
+  return paint.hex(BRAND, filled) + paint.dim('░'.repeat(width - filled.length));
 }
 
 function when(iso: string, now: Date): string {

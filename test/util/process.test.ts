@@ -51,3 +51,16 @@ describe('spawnLines', () => {
     expect(lines).toEqual(['from stdin']);
   });
 });
+
+describe('spawnLines abort', () => {
+  it('rejects cleanly when aborted mid-stream, without an unhandled rejection', async () => {
+    const controller = new AbortController();
+    const script = 'console.log("start"); setInterval(() => {}, 1000)';
+    const run = async () => {
+      for await (const _ of spawnLines(node, ['-e', script], { cwd, signal: controller.signal })) {
+        controller.abort();
+      }
+    };
+    await expect(run()).rejects.toThrow(/abort/i);
+  });
+});

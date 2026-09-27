@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { execCommand, spawnLines } from '../util/process.js';
+import type { Connection } from '../core/config.js';
+import { execCommand, runInteractive, spawnLines } from '../util/process.js';
 import type {
   AgentEvent,
   AgentProvider,
@@ -17,14 +18,37 @@ export class ClaudeProvider implements AgentProvider {
   readonly id = 'claude';
   readonly name = 'Claude Code';
 
-  constructor(private readonly bin = 'claude') {}
+  private readonly bin: string;
+  private readonly connection: Connection | undefined;
+
+  constructor(options: { bin?: string; connection?: Connection } = {}) {
+    this.bin = options.bin ?? 'claude';
+    this.connection = options.connection;
+  }
+
+  /**
+   * The environment Claude Code runs with. With an API key, Dazza passes it in;
+   * on a subscription, a stray ANTHROPIC_API_KEY in the user's shell is removed
+   * so it can't quietly switch them to pay-as-you-go billing.
+   */
+  private env(): NodeJS.ProcessEnv {
+    const { ANTHROPIC_API_KEY: _, ...env } = process.env;
+    return this.connection?.method === 'api-key'
+      ? { ...env, ANTHROPIC_API_KEY: this.connection.apiKey }
+      : env;
+  }
+
+  /** Hand the terminal to `claude auth login` so the user can sign in. */
+  async signIn(): Promise<void> {
+    await runInteractive(this.bin, ['auth', 'login']);
+  }
 
   async detect(): Promise<ProviderStatus> {
     const version = await execCommand(this.bin, ['--version']);
     if (version === undefined || version.exitCode !== 0) return { installed: false };
 
     const auth = AuthStatus.safeParse(
-      parseJson((await execCommand(this.bin, ['auth', 'status']))?.stdout),
+      parseJson((await execCommand(this.bin, ['auth', 'status'], this.env()))?.stdout),
     );
     const plan = auth.success ? auth.data.subscriptionType : undefined;
     return {
@@ -49,7 +73,7 @@ export class ClaudeProvider implements AgentProvider {
     const lines = spawnLines(
       this.bin,
       ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'],
-      { cwd: process.cwd(), input: `${JSON.stringify(request)}\n` },
+      { cwd: process.cwd(), input: `${JSON.stringify(request)}\n`, env: this.env() },
     );
     for await (const line of lines) {
       const parsed = InitializeResponse.safeParse(parseJson(line));
@@ -64,16 +88,12 @@ export class ClaudeProvider implements AgentProvider {
     throw new Error('Claude Code did not report its models');
   }
 
-  async logout(): Promise<void> {
-    const result = await execCommand(this.bin, ['auth', 'logout']);
-    if (result?.exitCode !== 0) throw new Error(result?.stderr.trim() || 'Sign-out failed');
-  }
-
   async *run(options: AgentRunOptions): AsyncGenerator<AgentEvent> {
     let finished = false;
     const lines = spawnLines(this.bin, buildClaudeArgs(options), {
       cwd: options.cwd,
       input: options.prompt,
+      env: this.env(),
       ...(options.signal && { signal: options.signal }),
     });
     for await (const line of lines) {

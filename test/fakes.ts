@@ -10,7 +10,6 @@ export class FakeProvider implements AgentProvider {
   readonly id = 'claude';
   readonly name = 'Fake';
   readonly runs: AgentRunOptions[] = [];
-  loggedOut = false;
 
   constructor(
     private readonly events: AgentEvent[] = [
@@ -28,7 +27,7 @@ export class FakeProvider implements AgentProvider {
     return {
       installed: true as const,
       version: '1.0.0',
-      loggedIn: !this.loggedOut,
+      loggedIn: true,
       plan: 'Claude Max',
     };
   }
@@ -40,9 +39,5 @@ export class FakeProvider implements AgentProvider {
 
   async listModels() {
     return this.models;
-  }
-
-  async logout() {
-    this.loggedOut = true;
   }
 }

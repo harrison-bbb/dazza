@@ -2,12 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   COMMANDS,
   type CommandContext,
-  complete,
+  commandMenu,
   helpText,
+  limitsReport,
   parseCommand,
   pickModel,
+  spendReport,
   suggest,
-  usageReport,
 } from '../../src/chat/commands.js';
 import { FakeProvider } from '../fakes.js';
 import { useTempProject } from '../helpers.js';
@@ -33,9 +34,11 @@ describe('parsing and completion', () => {
     expect(suggest('mod')?.name).toBe('model');
   });
 
-  it('completes command names', () => {
-    expect(complete('/da')).toEqual([['/dashboard'], '/da']);
-    expect(complete('hello')).toEqual([[], 'hello']);
+  it('builds the live menu from commands and aliases', () => {
+    expect(commandMenu('/').length).toBe(COMMANDS.length);
+    expect(commandMenu('/bo').map((m) => m.value)).toEqual(['/dashboard']);
+    expect(commandMenu('/model 2')).toEqual([]);
+    expect(commandMenu('hello')).toEqual([]);
   });
 
   it('lists every command in /help', () => {
@@ -54,30 +57,42 @@ describe('pickModel', () => {
   });
 });
 
-describe('usageReport', () => {
+describe('usage reports', () => {
   const now = new Date('2026-09-27T10:00:00Z');
 
-  it('shows limit windows and project totals', () => {
-    const report = usageReport(
+  it('shows subscription windows like Claude Code', () => {
+    const report = limitsReport(
       'Claude Max',
       {
         checkedAt: '2026-09-27T09:55:00Z',
-        windows: [{ id: 'five_hour', utilization: 0.25, resetsAt: '2026-09-27T12:00:00Z' }],
+        windows: [
+          { id: 'five_hour', utilization: 0.25, resetsAt: '2026-09-27T12:00:00Z' },
+          { id: 'seven_day', utilization: 0.1, resetsAt: '2026-10-01T00:00:00Z' },
+        ],
       },
-      { runs: 12, tokens: 1_400_000, costUsd: 3.2 },
       now,
     );
-    expect(report).toContain('Claude Max');
-    expect(report).toContain('5-hour limit');
-    expect(report).toContain('25%');
+    expect(report).toContain('Current session');
+    expect(report).toContain('25% used');
+    expect(report).toContain('Current week');
+    expect(report).toContain('██████████'); // 25% of a 40-wide bar
+    expect(report).toContain('Resets');
     expect(report).toContain('5 min ago');
-    expect(report).toContain('12 messages · 1.4M tokens · $3.20 at API prices');
   });
 
   it('says when there is no reading yet', () => {
-    const report = usageReport('Claude Pro', undefined, { runs: 1, tokens: 10, costUsd: 0 }, now);
-    expect(report).toContain('No limit reading yet');
+    expect(limitsReport('Claude Pro', undefined, now)).toContain('No reading yet');
+  });
+
+  it('shows API spend in dollars with a billing link', () => {
+    const report = spendReport(
+      { runs: 1, tokens: 12_000, costUsd: 0.42 },
+      { runs: 12, tokens: 1_400_000, costUsd: 3.2 },
+    );
+    expect(report).toContain('$0.42');
     expect(report).toContain('1 message ·');
+    expect(report).toContain('$3.20');
+    expect(report).toContain('console.anthropic.com/settings/billing');
   });
 });
 
@@ -92,6 +107,8 @@ describe('running commands', () => {
       store: project.store,
       config: project.config,
       provider,
+      connection: { provider: 'claude', method: 'subscription' },
+      session: { runs: 0, tokens: 0, costUsd: 0 },
       boardUrl: 'http://localhost:4777',
       say: (text) => said.push(text),
       exit: () => {
@@ -120,15 +137,24 @@ describe('running commands', () => {
     expect(await project.config.readSettings()).toEqual({ model: 'sonnet' });
   });
 
-  it('/logout needs confirming, then signs out and exits', async () => {
-    const { ctx, said, provider, exited } = context();
+  it('/logout signs out of Dazza only, then exits', async () => {
+    const { ctx, said, exited } = context();
+    await project.config.writeConnection({ provider: 'claude', method: 'subscription' });
     await run(ctx, '/logout');
-    expect(provider.loggedOut).toBe(false);
-    expect(said[0]).toContain('not just Dazza');
-
-    await run(ctx, '/logout confirm');
-    expect(provider.loggedOut).toBe(true);
+    expect(await project.config.readConnection()).toBeUndefined();
+    expect(said[0]).toContain('Signed out of Dazza');
     expect(exited()).toBe(true);
+  });
+
+  it('/usage picks the report for the connection', async () => {
+    const { ctx, said } = context();
+    await run(
+      { ...ctx, connection: { provider: 'claude', method: 'api-key', apiKey: 'k' } },
+      '/usage',
+    );
+    expect(said[0]).toContain('pay as you go');
+    await run(ctx, '/usage');
+    expect(said[1]).toContain('Claude Max');
   });
 
   it('/exit ends the chat', async () => {

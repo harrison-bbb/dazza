@@ -6,8 +6,6 @@ export interface AgentProvider {
   run(options: AgentRunOptions): AsyncIterable<AgentEvent>;
   /** Models this account can use, as the provider lists them. Must not spend tokens. */
   listModels(): Promise<ModelOption[]>;
-  /** Sign out of the provider's own CLI, which affects it everywhere, not just in Dazza. */
-  logout(): Promise<void>;
 }
 
 export interface ModelOption {

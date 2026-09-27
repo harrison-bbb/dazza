@@ -1,4 +1,5 @@
 import { styleText } from 'node:util';
+import { Config } from '../core/config.js';
 import { ClaudeProvider } from '../providers/claude.js';
 import { execCommand } from '../util/process.js';
 
@@ -12,7 +13,7 @@ const MIN_NODE_MAJOR = 20;
 
 /** `dazza doctor`: verify everything Dazza depends on. Exits non-zero if anything is missing. */
 export async function doctor(): Promise<void> {
-  const checks = await Promise.all([checkNode(), checkGit(), checkClaude()]);
+  const checks = await Promise.all([checkNode(), checkGit(), checkClaude(), checkConnection()]);
 
   for (const check of checks) {
     const mark = check.ok ? styleText('green', '✔') : styleText('red', '✖');
@@ -37,6 +38,19 @@ async function checkGit(): Promise<Check> {
     label: 'git',
     ok: result?.exitCode === 0,
     detail: result ? result.stdout.trim() : 'not installed',
+  };
+}
+
+async function checkConnection(): Promise<Check> {
+  const connection = await new Config().readConnection();
+  return {
+    label: 'Dazza',
+    ok: connection !== undefined,
+    detail: !connection
+      ? 'not connected (run `dazza` to connect)'
+      : connection.method === 'api-key'
+        ? 'connected with an Anthropic API key'
+        : 'connected through your Claude subscription',
   };
 }
 

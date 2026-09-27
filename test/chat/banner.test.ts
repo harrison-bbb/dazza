@@ -1,16 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { banner } from '../../src/chat/banner.js';
+import { logo, sessionInfo } from '../../src/chat/banner.js';
 
 describe('banner', () => {
-  it('shows the logo with version, agent and directory underneath', () => {
-    const lines = banner({
+  it('draws the wordmark', () => {
+    expect(logo().split('\n')[0]).toMatch(/^██████╗/);
+  });
+
+  it('shows version, agent, directory and board link', () => {
+    const lines = sessionInfo({
       version: '1.2.3',
       agent: 'Claude Code',
       cwd: '~/app',
       board: 'http://localhost:4777',
     }).split('\n');
-    expect(lines[0]).toMatch(/^██████╗/);
-    expect(lines.at(-2)).toBe('v1.2.3 · Claude Code · ~/app');
-    expect(lines.at(-1)).toBe('Board http://localhost:4777');
+    expect(lines).toEqual(['v1.2.3 · Claude Code · ~/app', 'Board http://localhost:4777']);
   });
 });

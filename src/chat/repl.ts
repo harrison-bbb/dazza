@@ -1,37 +1,55 @@
 import { homedir } from 'node:os';
-import { stdin, stdout } from 'node:process';
-import { createInterface } from 'node:readline';
 import pkg from '../../package.json' with { type: 'json' };
 import { startBoard } from '../board/server.js';
-import { Config } from '../core/config.js';
+import { Config, type Connection } from '../core/config.js';
 import { describeCodebase, inspectCodebase } from '../core/inspect.js';
 import { Manager } from '../core/manager.js';
 import { Store } from '../core/store.js';
 import { McpTools } from '../mcp/server.js';
 import { ClaudeProvider } from '../providers/claude.js';
+import { checkApiKey } from '../setup/anthropic.js';
+import { connect } from '../setup/connect.js';
 import { openInBrowser } from '../util/open.js';
-import { BRAND, banner } from './banner.js';
-import { type CommandContext, complete, parseCommand, suggest } from './commands.js';
+import { BRAND, logo, sessionInfo } from './banner.js';
+import { type CommandContext, commandMenu, parseCommand, suggest, type Usage } from './commands.js';
 import { describeTool, greeting, planCard } from './describe.js';
 import { Spinner } from './spinner.js';
 import { paint, renderInline } from './style.js';
+import { Terminal } from './terminal.js';
 
 const PROMPT = `${paint.hex(BRAND, '›')} `;
 
 /** `dazza`: the conversation with your developer. */
 export async function startChat(projectRoot: string): Promise<void> {
-  const provider = new ClaudeProvider();
+  const terminal = new Terminal();
+  try {
+    await chat(projectRoot, terminal);
+  } finally {
+    terminal.close();
+  }
+}
+
+async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
+  console.log(`\n${logo()}\n`);
+  const config = new Config();
+  const connection = (await config.readConnection()) ?? (await firstConnect(terminal, config));
+  if (!connection) return;
+
+  const provider = new ClaudeProvider({ connection });
   const status = await provider.detect();
-  if (!status.installed || !status.loggedIn) {
-    console.error(
-      paint.red('Dazza needs Claude Code installed and signed in. Run `dazza doctor`.'),
+  if (!status.installed || (connection.method === 'subscription' && !status.loggedIn)) {
+    say(
+      paint.red(
+        status.installed
+          ? 'Your Claude Code sign-in has expired. Run `claude` to sign in, then start Dazza again.'
+          : 'Dazza needs Claude Code installed. Run `dazza doctor` for details.',
+      ),
     );
     process.exitCode = 1;
     return;
   }
 
   const store = new Store(projectRoot);
-  const config = new Config();
   const found = await inspectCodebase(projectRoot);
   const codebase = found && describeCodebase(found);
   const board = await startBoard(store, projectRoot);
@@ -45,26 +63,26 @@ export async function startChat(projectRoot: string): Promise<void> {
   });
 
   const { model } = await config.readSettings();
+  const plan = connection.method === 'api-key' ? 'API key' : status.plan;
   console.log(
-    `\n${banner({
+    `${sessionInfo({
       version: pkg.version,
-      agent: [provider.name, status.plan, model && `model: ${model}`].filter(Boolean).join(' · '),
+      agent: [provider.name, plan, model && `model: ${model}`].filter(Boolean).join(' · '),
       cwd: projectRoot.replace(homedir(), '~'),
       board: board.url,
-    })}\n`,
+    })}`,
   );
   const hasConversation = (await store.readManagerSession()) !== undefined;
   say(greeting(await store.readPlan(), { hasConversation, ...(codebase && { codebase }) }));
 
-  const rl = createInterface({ input: stdin, output: stdout, prompt: PROMPT, completer: complete });
-  let running: AbortController | undefined;
   let exiting = false;
-  rl.on('SIGINT', () => (running ? running.abort() : rl.close()));
-
+  const session: Usage = { runs: 0, tokens: 0, costUsd: 0 };
   const context: CommandContext = {
     store,
     config,
     provider,
+    connection,
+    session,
     boardUrl: board.url,
     say,
     exit: () => {
@@ -72,21 +90,42 @@ export async function startChat(projectRoot: string): Promise<void> {
     },
   };
 
-  rl.prompt();
-  for await (const raw of rl) {
-    const line = raw.trim();
+  const history: string[] = [];
+  while (!exiting) {
+    const input = await terminal.readLine({ prompt: PROMPT, menu: commandMenu, history });
+    if (input === undefined) break;
+    const line = input.trim();
+    if (line && line !== history.at(-1)) history.push(line);
+
     if (line.startsWith('/')) {
       await runCommand(line, context);
     } else if (line) {
-      running = new AbortController();
-      await converse(manager, store, board.url, line, running.signal);
-      running = undefined;
+      const running = new AbortController();
+      terminal.interrupt(() => running.abort());
+      await converse(manager, store, board.url, line, running.signal, session);
+      terminal.interrupt(undefined);
     }
-    if (exiting) break;
-    rl.prompt();
   }
-  rl.close();
   board.close();
+}
+
+/** First launch, or after /logout: pick how Dazza connects, and remember it. */
+async function firstConnect(terminal: Terminal, config: Config): Promise<Connection | undefined> {
+  const claude = new ClaudeProvider();
+  const connection = await connect(
+    {
+      say,
+      select: (question, choices) => terminal.select(question, choices),
+      readLine: (options) => terminal.readLine(options),
+    },
+    {
+      detectClaude: () => claude.detect(),
+      signInToClaude: () => terminal.handOver(() => claude.signIn()),
+      checkApiKey,
+    },
+  );
+  if (connection) await config.writeConnection(connection);
+  return connection;
 }
 
 async function converse(
@@ -95,6 +134,7 @@ async function converse(
   boardUrl: string,
   message: string,
   signal: AbortSignal,
+  session: Usage,
 ) {
   const before = await store.readPlan();
   const spinner = new Spinner();
@@ -110,9 +150,16 @@ async function converse(
       } else if (event.type === 'tool_use') {
         rewrotePlan ||= event.tool === McpTools.savePlan;
         spinner.update(describeTool(event.tool, event.input));
-      } else if (event.type === 'finished' && !event.ok) {
-        spinner.stop();
-        say(paint.red(event.output || 'Something went wrong on my end.'));
+      } else if (event.type === 'finished') {
+        if (event.usage) {
+          session.runs++;
+          session.tokens += event.usage.tokens;
+          session.costUsd += event.usage.costUsd;
+        }
+        if (!event.ok) {
+          spinner.stop();
+          say(paint.red(event.output || 'Something went wrong on my end.'));
+        }
       }
     }
   } catch (error) {
