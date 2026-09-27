@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeTool, greeting } from '../../src/chat/describe.js';
+import { describeTool, greeting, planCard } from '../../src/chat/describe.js';
 import type { Plan } from '../../src/core/schema.js';
 import { makePlan, makeTask } from '../fixtures.js';
 
@@ -43,5 +43,23 @@ describe('describeTool', () => {
 
   it('falls back for anything else', () => {
     expect(describeTool('SomethingNew', null)).toBe('Working');
+  });
+});
+
+describe('planCard', () => {
+  const plan = makePlan([
+    makeTask({ id: 'T1', title: 'Setup' }),
+    makeTask({ id: 'T10', title: 'Launch' }),
+  ]);
+
+  it('lists tasks with aligned ids', () => {
+    const lines = planCard(plan, false).split('\n');
+    expect(lines[0]).toContain('Plan saved · 2 tasks');
+    expect(lines[1]).toBe('  T1   Setup');
+    expect(lines[2]).toBe('  T10  Launch');
+  });
+
+  it('flags a revised approved plan for re-approval', () => {
+    expect(planCard(plan, true)).toContain('needs your re-approval');
   });
 });

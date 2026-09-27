@@ -3,6 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import pkg from '../../package.json' with { type: 'json' };
+import { carryOverProgress } from '../core/plan.js';
 import { Plan, SCHEMA_VERSION, Task } from '../core/schema.js';
 import { Store } from '../core/store.js';
 
@@ -20,26 +21,38 @@ export const SavePlanInput = z.object({
 export type SavePlanInput = z.infer<typeof SavePlanInput>;
 
 /**
- * Validate and persist a drafted plan. Validation failures are returned to the
- * agent as tool errors so it can correct the plan and try again.
+ * Validate and persist a plan. Revising an approved plan is a scope change: it
+ * returns to draft for the user to re-approve. Problems are returned to the agent
+ * as tool errors so it can correct the plan and try again.
  */
 export async function savePlan(store: Store, input: SavePlanInput): Promise<CallToolResult> {
-  const existing = await store.readPlan();
-  if (existing?.approvedAt) {
-    return failure('The plan is already approved and locked. Changes need a scope change.');
-  }
+  const current = await store.readPlan();
+  const tasks = carryOverProgress(current, input.tasks);
+  if (typeof tasks === 'string') return failure(tasks);
 
-  const result = Plan.safeParse({ version: SCHEMA_VERSION, approvedAt: null, tasks: input.tasks });
+  const result = Plan.safeParse({ version: SCHEMA_VERSION, approvedAt: null, tasks });
   if (!result.success) return failure(`The plan is invalid:\n${z.prettifyError(result.error)}`);
 
+  const rescoped = Boolean(current?.approvedAt);
   await store.writeScope(input.scope);
   await store.writePlan(result.data);
   await store.appendEvent({
     at: new Date().toISOString(),
-    type: 'plan_created',
-    message: `Drafted a plan with ${result.data.tasks.length} tasks`,
+    type: rescoped ? 'scope_change_proposed' : 'plan_created',
+    message: `${rescoped ? 'Revised the approved plan' : 'Drafted a plan'}: ${tasks.length} tasks`,
   });
-  return { content: [{ type: 'text', text: `Saved ${result.data.tasks.length} tasks.` }] };
+
+  const count = `${tasks.length} tasks`;
+  return {
+    content: [
+      {
+        type: 'text',
+        text: rescoped
+          ? `Saved ${count}. The plan needs the user's approval again.`
+          : `Saved ${count}.`,
+      },
+    ],
+  };
 }
 
 export function createMcpServer(store: Store): McpServer {
@@ -50,7 +63,7 @@ export function createMcpServer(store: Store): McpServer {
     {
       description:
         'Save the scope of work and task breakdown for the user to review and approve. ' +
-        'Call again with the full plan to revise it.',
+        'Call again with the full plan to revise it. Task status is managed by Dazza.',
       inputSchema: SavePlanInput.shape,
     },
     (input) => savePlan(store, input),

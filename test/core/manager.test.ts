@@ -63,7 +63,9 @@ describe('Manager', () => {
 
     const run = provider.runs[0];
     expect(run?.systemPrompt).toContain('You are Dazza');
-    expect(run?.systemPrompt).toContain('T1 [todo] Scaffold');
+    expect(run?.prompt).toMatch(
+      /^<project-state>\n[\s\S]*T1 \[todo\] Scaffold[\s\S]*<\/project-state>\n\nstatus\?$/,
+    );
     expect(run?.allowedTools).toEqual(['Read', 'Glob', 'Grep', 'mcp__dazza__save_plan']);
     expect(run?.mcpServers).toEqual({ dazza: { command: 'node', args: ['dazza', 'mcp'] } });
   });

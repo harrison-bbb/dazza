@@ -10,10 +10,12 @@ export class Spinner {
   private timer: NodeJS.Timeout | undefined;
   private frame = 0;
   private text = '';
+  private startedAt = 0;
 
   start(text: string): void {
     this.text = text;
     if (!stdout.isTTY || this.timer) return;
+    this.startedAt = Date.now();
     this.timer = setInterval(() => this.render(), INTERVAL_MS);
     this.render();
   }
@@ -31,6 +33,8 @@ export class Spinner {
 
   private render(): void {
     const frame = FRAMES[this.frame++ % FRAMES.length] ?? '';
-    stdout.write(`\r\x1b[2K${paint.hex(BRAND, frame)} ${paint.dim(this.text)}`);
+    const seconds = Math.floor((Date.now() - this.startedAt) / 1000);
+    const elapsed = seconds > 0 ? paint.dim(` · ${seconds}s`) : '';
+    stdout.write(`\r\x1b[2K${paint.hex(BRAND, frame)} ${paint.dim(this.text)}${elapsed}`);
   }
 }

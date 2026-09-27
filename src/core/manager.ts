@@ -17,8 +17,9 @@ export interface ManagerOptions {
 }
 
 /**
- * The user-facing conversation. Every message resumes the same agent session,
- * with a fresh snapshot of project state so the agent never works from stale data.
+ * The user-facing conversation. Every message resumes the same agent session and
+ * carries a fresh snapshot of project state, because things change between messages
+ * (slash commands, the board, the work loop) that the conversation never saw.
  */
 export class Manager {
   constructor(private readonly options: ManagerOptions) {}
@@ -27,10 +28,11 @@ export class Manager {
     const { store, provider, projectRoot, mcpServer } = this.options;
     const sessionId = await store.readManagerSession();
 
+    const state = describeState(await store.readPlan());
     const events = provider.run({
-      prompt: message,
+      prompt: `<project-state>\n${state}\n</project-state>\n\n${message}`,
       cwd: projectRoot,
-      systemPrompt: `${managerPrompt}\n${describeState(await store.readPlan())}`,
+      systemPrompt: managerPrompt,
       allowedTools: MANAGER_TOOLS,
       mcpServers: { [MCP_SERVER_NAME]: mcpServer },
       ...(sessionId && { resumeSessionId: sessionId }),

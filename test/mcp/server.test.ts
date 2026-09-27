@@ -29,15 +29,34 @@ describe('savePlan', () => {
     expect(await project.store.readPlan()).toBeUndefined();
   });
 
-  it('refuses to overwrite an approved plan', async () => {
+  it('sends a revised approved plan back for re-approval, keeping progress', async () => {
     await project.store.writePlan({
       version: 1,
       approvedAt: '2026-09-27T10:00:00Z',
-      tasks: [makeTask({ id: 'T1' })],
+      tasks: [makeTask({ id: 'T1', status: 'done' }), makeTask({ id: 'T2' })],
+    });
+    const result = await savePlan(project.store, {
+      scope: '# Bigger\n',
+      tasks: [makeTask({ id: 'T1' }), makeTask({ id: 'T2' }), makeTask({ id: 'T3' })],
+    });
+
+    const plan = await project.store.readPlan();
+    expect(result.isError).toBeUndefined();
+    expect(plan?.approvedAt).toBeNull();
+    expect(plan?.tasks.map((t) => t.status)).toEqual(['done', 'todo', 'todo']);
+    expect((await project.store.readEvents()).at(-1)?.type).toBe('scope_change_proposed');
+  });
+
+  it('refuses to drop work that has started', async () => {
+    await project.store.writePlan({
+      version: 1,
+      approvedAt: '2026-09-27T10:00:00Z',
+      tasks: [makeTask({ id: 'T1', status: 'in_progress' })],
     });
     const result = await savePlan(project.store, { scope: 'x', tasks: [makeTask({ id: 'T9' })] });
 
     expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain('T1 (in_progress)');
     expect((await project.store.readPlan())?.tasks[0]?.id).toBe('T1');
   });
 });

@@ -20,3 +20,29 @@ export function progress(plan: Plan): { done: number; total: number } {
 export function approve(plan: Plan, at: Date): Plan {
   return plan.approvedAt ? plan : { ...plan, approvedAt: at.toISOString() };
 }
+
+/**
+ * Carry progress from the current plan into a revised task list. Planners describe
+ * the work; Dazza owns status, so any status the planner supplied is replaced.
+ * Returns an error message if the revision would drop work that has already started.
+ */
+export function carryOverProgress(current: Plan | undefined, revised: Task[]): Task[] | string {
+  const previous = new Map(current?.tasks.map((task) => [task.id, task]));
+
+  const dropped = [...previous.values()]
+    .filter((task) => task.status !== 'todo' && !revised.some((r) => r.id === task.id))
+    .map((task) => `${task.id} (${task.status})`);
+  if (dropped.length > 0) {
+    return `These tasks have already started and can't be removed: ${dropped.join(', ')}`;
+  }
+
+  return revised.map((task) => {
+    const before = previous.get(task.id);
+    const doneSubtasks = new Set(before?.subtasks.filter((s) => s.done).map((s) => s.id));
+    return {
+      ...task,
+      status: before?.status ?? 'todo',
+      subtasks: task.subtasks.map((s) => ({ ...s, done: doneSubtasks.has(s.id) })),
+    };
+  });
+}

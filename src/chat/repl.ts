@@ -5,10 +5,9 @@ import pkg from '../../package.json' with { type: 'json' };
 import { Manager } from '../core/manager.js';
 import { approve } from '../core/plan.js';
 import { Store } from '../core/store.js';
-import { McpTools } from '../mcp/server.js';
 import { ClaudeProvider } from '../providers/claude.js';
 import { BRAND, banner } from './banner.js';
-import { describeTool, greeting } from './describe.js';
+import { describeTool, greeting, planCard } from './describe.js';
 import { Spinner } from './spinner.js';
 import { paint, renderInline } from './style.js';
 
@@ -72,8 +71,8 @@ export async function startChat(projectRoot: string): Promise<void> {
 }
 
 async function converse(manager: Manager, store: Store, message: string, signal: AbortSignal) {
+  const before = await store.readPlan();
   const spinner = new Spinner();
-  let savedPlan = false;
   spinner.start('Thinking');
 
   try {
@@ -83,7 +82,6 @@ async function converse(manager: Manager, store: Store, message: string, signal:
         say(renderInline(event.text));
         spinner.start('Thinking');
       } else if (event.type === 'tool_use') {
-        savedPlan ||= event.tool === McpTools.savePlan;
         spinner.update(describeTool(event.tool, event.input));
       } else if (event.type === 'finished' && !event.ok) {
         spinner.stop();
@@ -97,9 +95,9 @@ async function converse(manager: Manager, store: Store, message: string, signal:
     spinner.stop();
   }
 
-  const plan = savedPlan ? await store.readPlan() : undefined;
-  if (plan) {
-    say(`${paint.green('✔')} Plan saved: ${plan.tasks.length} tasks in ${paint.bold('.dazza/')}`);
+  const after = await store.readPlan();
+  if (after && JSON.stringify(after) !== JSON.stringify(before)) {
+    console.log(`${planCard(after, Boolean(before?.approvedAt))}\n`);
   }
 }
 

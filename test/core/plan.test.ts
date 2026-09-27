@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { approve, nextTask, progress } from '../../src/core/plan.js';
+import { approve, carryOverProgress, nextTask, progress } from '../../src/core/plan.js';
 import { makePlan, makeTask } from '../fixtures.js';
 
 describe('nextTask', () => {
@@ -37,5 +37,37 @@ describe('approve', () => {
     const second = approve(first, new Date('2026-09-28T10:00:00Z'));
     expect(first.approvedAt).toBe('2026-09-27T10:00:00.000Z');
     expect(second).toBe(first);
+  });
+});
+
+describe('carryOverProgress', () => {
+  it('ignores planner-supplied status and keeps real progress', () => {
+    const current = makePlan([
+      makeTask({
+        id: 'T1',
+        status: 'in_progress',
+        subtasks: [{ id: 'T1.1', title: 'a', done: true }],
+      }),
+    ]);
+    const revised = [
+      makeTask({ id: 'T1', subtasks: [{ id: 'T1.1', title: 'a', done: false }] }),
+      makeTask({ id: 'T2', status: 'done' }),
+    ];
+    const tasks = carryOverProgress(current, revised);
+
+    expect(tasks).not.toBeTypeOf('string');
+    if (typeof tasks === 'string') return;
+    expect(tasks.map((t) => t.status)).toEqual(['in_progress', 'todo']);
+    expect(tasks[0]?.subtasks[0]?.done).toBe(true);
+  });
+
+  it('allows removing tasks that have not started', () => {
+    const current = makePlan([makeTask({ id: 'T1' }), makeTask({ id: 'T2' })]);
+    expect(carryOverProgress(current, [makeTask({ id: 'T1' })])).toHaveLength(1);
+  });
+
+  it('rejects removing started tasks', () => {
+    const current = makePlan([makeTask({ id: 'T1', status: 'review' })]);
+    expect(carryOverProgress(current, [])).toMatch(/T1 \(review\)/);
   });
 });
