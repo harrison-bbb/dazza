@@ -80,10 +80,13 @@ describe('MCP tools, called through a real client', () => {
     expect(tools.map((t) => t.name).sort()).toEqual([
       'add_subtask',
       'add_task',
+      'block',
       'comment',
       'save_plan',
       'set_status',
+      'submit',
       'update_item',
+      'update_subtask',
     ]);
   });
 

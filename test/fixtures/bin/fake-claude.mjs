@@ -8,7 +8,12 @@ const prompt = args[0] === '-p' ? readFileSync(0, 'utf8') : '';
 if (args.includes('--input-format')) {
   const request = JSON.parse(prompt.trim());
   const models = [
-    { value: 'default', displayName: 'Default (recommended)', description: 'Opus 5.5' },
+    {
+      value: 'default',
+      displayName: 'Default (recommended)',
+      description: 'Opus 5.5',
+      supportsAutoMode: true,
+    },
     { value: 'sonnet', displayName: 'Sonnet 5', description: 'Everyday tasks' },
   ];
   console.log(

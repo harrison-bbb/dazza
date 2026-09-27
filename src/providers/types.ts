@@ -13,6 +13,8 @@ export interface ModelOption {
   id: string;
   name: string;
   description: string;
+  /** Whether the model can run autonomously (needed to build). */
+  autonomous: boolean;
 }
 
 export type ProviderId = 'claude' | 'codex';
@@ -40,6 +42,11 @@ export interface AgentRunOptions {
   allowedTools?: string[];
   /** The only MCP servers the session may use, keyed by server name. */
   mcpServers?: Record<string, McpServerConfig>;
+  /**
+   * Let the agent edit files and run commands without asking, with the
+   * provider's own safety checks blocking risky actions.
+   */
+  autonomous?: boolean;
   signal?: AbortSignal;
 }
 
@@ -52,7 +59,8 @@ export interface McpServerConfig {
 export type AgentEvent =
   | { type: 'started'; sessionId: string; model: string }
   | { type: 'text'; text: string }
-  | { type: 'tool_use'; tool: string; input: unknown }
+  | { type: 'tool_use'; id: string; tool: string; input: unknown }
+  | { type: 'tool_result'; id: string; ok: boolean }
   | { type: 'limits'; windows: UsageWindow[] }
   | {
       type: 'finished';

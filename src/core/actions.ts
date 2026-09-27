@@ -1,6 +1,8 @@
+import { Git } from '../git/git.js';
 import { approve, findItem, withStatus } from './plan.js';
 import type { Actor, Plan } from './schema.js';
 import type { Store } from './store.js';
+import { landApprovedWork } from './work.js';
 
 /**
  * Things the user can do to a project. The terminal and the board both go through
@@ -42,13 +44,28 @@ export async function closeTask(
   taskId: string,
   now = new Date(),
 ): Promise<ActionResult> {
-  return transition(store, taskId, now, (plan, task) => {
+  const result = await transition(store, taskId, now, (plan, task) => {
     if (task.status !== 'review') return fail(`${taskId} isn't in review.`);
     return {
       plan: withStatus(plan, taskId, 'closed'),
       event: { type: 'task_approved', message: `Approved and closed ${task.title}` },
     };
   });
+  if (!result.ok) return result;
+
+  // Approved work lands on the base branch, in order.
+  const landed = await landApprovedWork(store, new Git(store.root));
+  const plan = await store.readPlan();
+  const base = plan && findItem(plan, taskId)?.task.handoff?.baseBranch;
+  if (landed.includes(taskId))
+    return { ok: true, message: `${result.message}. Merged into ${base}.` };
+  if (base) {
+    return {
+      ok: true,
+      message: `${result.message}. It lands on ${base} once the work before it is approved.`,
+    };
+  }
+  return result;
 }
 
 /** Send reviewed work back to Dazza with a note on what to change. */

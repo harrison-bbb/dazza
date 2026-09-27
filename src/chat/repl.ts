@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import pkg from '../../package.json' with { type: 'json' };
 import { startBoard } from '../board/server.js';
+import { build } from '../core/builder.js';
 import { Config, type Connection } from '../core/config.js';
 import { describeCodebase, inspectCodebase } from '../core/inspect.js';
 import { Manager } from '../core/manager.js';
@@ -11,6 +12,7 @@ import { checkApiKey } from '../setup/anthropic.js';
 import { connect } from '../setup/connect.js';
 import { openInBrowser } from '../util/open.js';
 import { BRAND, logo, sessionInfo } from './banner.js';
+import { createBuildRenderer } from './buildView.js';
 import { type CommandContext, commandMenu, parseCommand, suggest, type Usage } from './commands.js';
 import { describeTool, greeting, planCard } from './describe.js';
 import { Spinner } from './spinner.js';
@@ -77,6 +79,7 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
 
   let exiting = false;
   const session: Usage = { runs: 0, tokens: 0, costUsd: 0 };
+  const mcpServer = { command: process.execPath, args: [cliPath(), 'mcp', '--root', projectRoot] };
   const context: CommandContext = {
     store,
     config,
@@ -84,6 +87,7 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
     connection,
     session,
     boardUrl: board.url,
+    startBuild: () => runBuild({ store, config, provider, mcpServer, terminal, session }),
     say,
     exit: () => {
       exiting = true;
@@ -107,6 +111,67 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
     }
   }
   board.close();
+}
+
+interface BuildContext {
+  store: Store;
+  config: Config;
+  provider: ClaudeProvider;
+  mcpServer: { command: string; args: string[] };
+  terminal: Terminal;
+  session: Usage;
+}
+
+/** /build: work through the plan, streaming what Dazza does. Ctrl-C stops it cleanly. */
+async function runBuild({
+  store,
+  config,
+  provider,
+  mcpServer,
+  terminal,
+  session,
+}: BuildContext): Promise<void> {
+  const models = await provider.listModels();
+  const chosen = (await config.readSettings()).model;
+  const model = models.find((m) => m.id === chosen) ?? models[0];
+  if (model && !model.autonomous) {
+    say(
+      `${model.name} can’t build on its own: it doesn’t support Claude Code’s auto mode. ` +
+        'Switch to one that does, like Opus or Sonnet, with /model.',
+    );
+    return;
+  }
+
+  const controller = new AbortController();
+  terminal.interrupt(() => controller.abort());
+  const spinner = new Spinner();
+  const render = createBuildRenderer(store.root);
+  try {
+    for await (const event of build({
+      store,
+      config,
+      provider,
+      mcpServer,
+      signal: controller.signal,
+    })) {
+      spinner.stop();
+      const output = render(event, await store.readPlan());
+      if (output) console.log(output);
+      if (event.type === 'agent' && event.event.type === 'finished' && event.event.usage) {
+        session.runs++;
+        session.tokens += event.event.usage.tokens;
+        session.costUsd += event.event.usage.costUsd;
+      }
+      if (event.type === 'task_started' || event.type === 'agent') spinner.start('Working');
+    }
+  } catch (error) {
+    spinner.stop();
+    say(paint.red(`Build stopped: ${errorMessage(error)}`));
+  } finally {
+    spinner.stop();
+    terminal.interrupt(undefined);
+    console.log('');
+  }
 }
 
 /** First launch, or after /logout: pick how Dazza connects, and remember it. */

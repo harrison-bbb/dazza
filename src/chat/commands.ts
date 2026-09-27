@@ -18,6 +18,8 @@ export interface CommandContext {
   /** What this chat session has used so far. */
   session: Usage;
   boardUrl: string;
+  /** Build the approved plan, showing the work live. */
+  startBuild(): Promise<void>;
   /** Print Dazza's reply. */
   say(text: string): void;
   /** End the chat after this command. */
@@ -41,6 +43,13 @@ export const COMMANDS: Command[] = [
     run({ boardUrl, say }) {
       openInBrowser(boardUrl);
       say(`Opened ${paint.hex(BRAND, boardUrl)}`);
+    },
+  },
+  {
+    name: 'build',
+    description: 'Start building the plan, task by task, and watch the work',
+    async run({ startBuild }) {
+      await startBuild();
     },
   },
   {

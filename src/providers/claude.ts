@@ -82,6 +82,7 @@ export class ClaudeProvider implements AgentProvider {
           id: m.value,
           name: m.displayName,
           description: m.description,
+          autonomous: m.supportsAutoMode ?? false,
         }));
       }
     }
@@ -90,6 +91,8 @@ export class ClaudeProvider implements AgentProvider {
 
   async *run(options: AgentRunOptions): AsyncGenerator<AgentEvent> {
     let finished = false;
+    // The stream can repeat a tool call across messages; report each one once.
+    const seenTools = new Set<string>();
     const lines = spawnLines(this.bin, buildClaudeArgs(options), {
       cwd: options.cwd,
       input: options.prompt,
@@ -99,6 +102,10 @@ export class ClaudeProvider implements AgentProvider {
     for await (const line of lines) {
       for (const event of parseClaudeLine(line)) {
         if (event.type === 'finished') finished = true;
+        if (event.type === 'tool_use') {
+          if (seenTools.has(event.id)) continue;
+          seenTools.add(event.id);
+        }
         yield event;
       }
     }
@@ -121,6 +128,8 @@ export function buildClaudeArgs(options: Omit<AgentRunOptions, 'prompt'>): strin
     );
   }
   if (options.allowedTools?.length) args.push('--allowedTools', options.allowedTools.join(','));
+  // Auto mode: edits and commands go ahead, Claude Code's safety classifier blocks risky ones.
+  if (options.autonomous) args.push('--permission-mode', 'auto');
   return args;
 }
 
@@ -138,6 +147,8 @@ export function parseClaudeLine(line: string): AgentEvent[] {
       return [{ type: 'started', sessionId: message.session_id, model: message.model }];
     case 'assistant':
       return message.message.content.flatMap(toContentEvent);
+    case 'user':
+      return message.message.content.flatMap(toToolResult);
     case 'rate_limit_event':
       return [
         {
@@ -168,7 +179,14 @@ function toContentEvent(block: unknown): AgentEvent[] {
   if (!parsed.success) return [];
   return parsed.data.type === 'text'
     ? [{ type: 'text', text: parsed.data.text }]
-    : [{ type: 'tool_use', tool: parsed.data.name, input: parsed.data.input }];
+    : [{ type: 'tool_use', id: parsed.data.id, tool: parsed.data.name, input: parsed.data.input }];
+}
+
+function toToolResult(block: unknown): AgentEvent[] {
+  const parsed = ToolResultBlock.safeParse(block);
+  return parsed.success
+    ? [{ type: 'tool_result', id: parsed.data.tool_use_id, ok: parsed.data.is_error !== true }]
+    : [];
 }
 
 function parseJson(text: string | undefined): unknown {
@@ -191,6 +209,14 @@ const StreamLine = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('assistant'),
     message: z.object({ content: z.array(z.unknown()) }),
+  }),
+  z.object({
+    type: z.literal('user'),
+    message: z.object({
+      content: z
+        .union([z.array(z.unknown()), z.string()])
+        .transform((c) => (typeof c === 'string' ? [] : c)),
+    }),
   }),
   z.object({
     type: z.literal('result'),
@@ -218,15 +244,26 @@ const InitializeResponse = z.object({
   response: z.object({
     response: z.object({
       models: z.array(
-        z.object({ value: z.string(), displayName: z.string(), description: z.string() }),
+        z.object({
+          value: z.string(),
+          displayName: z.string(),
+          description: z.string(),
+          supportsAutoMode: z.boolean().optional(),
+        }),
       ),
     }),
   }),
 });
 
+const ToolResultBlock = z.object({
+  type: z.literal('tool_result'),
+  tool_use_id: z.string(),
+  is_error: z.boolean().optional(),
+});
+
 const ContentBlock = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string() }),
-  z.object({ type: z.literal('tool_use'), name: z.string(), input: z.unknown() }),
+  z.object({ type: z.literal('tool_use'), id: z.string(), name: z.string(), input: z.unknown() }),
 ]);
 
 const AuthStatus = z.object({

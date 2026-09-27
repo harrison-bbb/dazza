@@ -14,7 +14,12 @@ const expectedEvents: AgentEvent[] = [
     sessionId: 'a8d5b882-70c9-4d36-84a8-00382f526314',
     model: 'claude-haiku-4-5-20251001',
   },
-  { type: 'tool_use', tool: 'Read', input: { file_path: '/project/note.txt' } },
+  {
+    type: 'tool_use',
+    id: 'toolu_016oeAo52zwhuAxEeMU74ArB',
+    tool: 'Read',
+    input: { file_path: '/project/note.txt' },
+  },
   {
     type: 'limits',
     windows: [
@@ -22,6 +27,7 @@ const expectedEvents: AgentEvent[] = [
       { id: 'seven_day', utilization: 0.07, resetsAt: '2026-10-03T00:00:00.000Z' },
     ],
   },
+  { type: 'tool_result', id: 'toolu_016oeAo52zwhuAxEeMU74ArB', ok: true },
   { type: 'text', text: 'DONE' },
   {
     type: 'limits',
@@ -135,8 +141,8 @@ describe('ClaudeProvider', () => {
 
   it('lists the models the account can use, without sending a prompt', async () => {
     expect(await fakeClaude.listModels()).toEqual([
-      { id: 'default', name: 'Default (recommended)', description: 'Opus 5.5' },
-      { id: 'sonnet', name: 'Sonnet 5', description: 'Everyday tasks' },
+      { id: 'default', name: 'Default (recommended)', description: 'Opus 5.5', autonomous: true },
+      { id: 'sonnet', name: 'Sonnet 5', description: 'Everyday tasks', autonomous: false },
     ]);
   });
 

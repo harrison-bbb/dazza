@@ -1,16 +1,17 @@
-import { MCP_SERVER_NAME, McpTools } from '../mcp/server.js';
+import { MANAGER_TOOLS, MCP_SERVER_NAME } from '../mcp/server.js';
 import managerPrompt from '../prompts/manager.md';
 import type { AgentEvent, AgentProvider, McpServerConfig } from '../providers/types.js';
 import type { Config } from './config.js';
 import { progress } from './plan.js';
 import type { Event, Plan } from './schema.js';
 import type { Store } from './store.js';
+import { trackUsage } from './usage.js';
 
 /**
  * Read-only tools to inspect the codebase, plus Dazza's own tools to plan and to
  * change the project when the user asks. No tools that edit code.
  */
-const MANAGER_TOOLS = ['Read', 'Glob', 'Grep', ...Object.values(McpTools)];
+const TOOLS = ['Read', 'Glob', 'Grep', ...MANAGER_TOOLS];
 
 export interface ManagerOptions {
   store: Store;
@@ -45,7 +46,7 @@ export class Manager {
       prompt: `<project-state>\n${state}\n</project-state>\n\n${message}`,
       cwd: projectRoot,
       systemPrompt: managerPrompt,
-      allowedTools: MANAGER_TOOLS,
+      allowedTools: TOOLS,
       mcpServers: { [MCP_SERVER_NAME]: mcpServer },
       ...(sessionId && { resumeSessionId: sessionId }),
       ...(model && { model }),
@@ -56,10 +57,7 @@ export class Manager {
       if (event.type === 'started' || event.type === 'finished') {
         await store.writeManagerSession(event.sessionId);
       }
-      if (event.type === 'finished' && event.usage) await store.recordUsage(event.usage);
-      if (event.type === 'limits') {
-        await config.writeLimits({ checkedAt: new Date().toISOString(), windows: event.windows });
-      }
+      await trackUsage(store, config, event);
       yield event;
     }
   }

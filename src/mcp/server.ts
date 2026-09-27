@@ -16,6 +16,8 @@ import {
 import { carryOverProgress } from '../core/plan.js';
 import { Plan, SCHEMA_VERSION, Task } from '../core/schema.js';
 import { Store } from '../core/store.js';
+import { blockTask, setSubtaskStatus, submitTask, WorkReport } from '../core/work.js';
+import { Git } from '../git/git.js';
 
 export const MCP_SERVER_NAME = 'dazza';
 
@@ -27,7 +29,28 @@ export const McpTools = {
   addSubtask: tool('add_subtask'),
   setStatus: tool('set_status'),
   comment: tool('comment'),
+  updateSubtask: tool('update_subtask'),
+  block: tool('block'),
+  submit: tool('submit'),
 } as const;
+
+/** Tools for the conversation: planning, and changing the project when the user asks. */
+export const MANAGER_TOOLS = [
+  McpTools.savePlan,
+  McpTools.updateItem,
+  McpTools.addTask,
+  McpTools.addSubtask,
+  McpTools.setStatus,
+  McpTools.comment,
+];
+
+/** Tools for building a task: report progress, ask the user, hand work over. */
+export const WORKER_TOOLS = [
+  McpTools.updateSubtask,
+  McpTools.comment,
+  McpTools.block,
+  McpTools.submit,
+];
 
 function tool(name: string): string {
   return `mcp__${MCP_SERVER_NAME}__${name}`;
@@ -160,6 +183,39 @@ export function createMcpServer(store: Store): McpServer {
       inputSchema: { id: z.string(), body: z.string().min(1) },
     },
     async ({ id, body }) => toResult(await addComment(store, id, body, 'dazza')),
+  );
+
+  // While building a task.
+  server.registerTool(
+    'update_subtask',
+    {
+      description: 'Mark a subtask of the task you are building as started or finished.',
+      inputSchema: { id: z.string(), status: z.enum(['building', 'closed']) },
+    },
+    async ({ id, status }) => toResult(await setSubtaskStatus(store, id, status)),
+  );
+
+  server.registerTool(
+    'block',
+    {
+      description:
+        'Stop and ask the user for something you cannot decide or get yourself: a decision, ' +
+        'a credential, access, or permission. Ask one clear question. Then stop working.',
+      inputSchema: { taskId: z.string(), question: z.string().min(1) },
+    },
+    async ({ taskId, question }) => toResult(await blockTask(store, taskId, question)),
+  );
+
+  server.registerTool(
+    'submit',
+    {
+      description:
+        'Hand the finished task to the user for review. Dazza commits your changes. ' +
+        'Only call this once the acceptance criteria are met and the checks pass.',
+      inputSchema: { taskId: z.string(), ...WorkReport.shape },
+    },
+    async ({ taskId, ...report }) =>
+      toResult(await submitTask(store, new Git(store.root), taskId, report)),
   );
 
   return server;

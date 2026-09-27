@@ -37,6 +37,10 @@ export const Handoff = z.object({
   /** Steps the user can follow to check the work themselves. */
   howToVerify: z.array(z.string().min(1)).default([]),
   branch: z.string().optional(),
+  /** The branch the task was built on top of, e.g. "main". */
+  baseBranch: z.string().optional(),
+  /** The commit holding the submitted work. */
+  commit: z.string().optional(),
   filesChanged: z.number().int().nonnegative().optional(),
   /** Automated checks Dazza ran, e.g. tests, lint, build. */
   checks: z.array(z.object({ name: z.string().min(1), passed: z.boolean() })).default([]),

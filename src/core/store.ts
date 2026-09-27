@@ -7,7 +7,20 @@ export const STATE_DIR = '.dazza';
 
 const MANAGER_SESSION_FILE = 'session.json';
 const USAGE_FILE = 'usage.json';
-const LOCAL_FILES = [MANAGER_SESSION_FILE, USAGE_FILE];
+const BUILD_FILE = 'build.json';
+const LOCAL_FILES = [MANAGER_SESSION_FILE, USAGE_FILE, BUILD_FILE];
+
+/** Machine-local bookkeeping for a task being built. */
+export const TaskBuild = z.object({
+  branch: z.string(),
+  baseBranch: z.string(),
+  /** The commit the task started from, to measure what changed. */
+  startCommit: z.string(),
+  /** The worker's agent session, resumed when work continues. */
+  sessionId: z.string().optional(),
+});
+export type TaskBuild = z.infer<typeof TaskBuild>;
+const BuildState = z.record(z.string(), TaskBuild);
 
 const ManagerSession = z.object({ sessionId: z.string() });
 
@@ -26,8 +39,8 @@ export type ProjectUsage = z.infer<typeof ProjectUsage>;
 export class Store {
   readonly dir: string;
 
-  constructor(projectRoot: string) {
-    this.dir = join(projectRoot, STATE_DIR);
+  constructor(readonly root: string) {
+    this.dir = join(root, STATE_DIR);
   }
 
   async init(): Promise<void> {
@@ -78,6 +91,21 @@ export class Store {
       costUsd: total.costUsd + run.costUsd,
     };
     await this.writeAtomic(USAGE_FILE, `${JSON.stringify(next, null, 2)}\n`);
+  }
+
+  async readTaskBuild(taskId: string): Promise<TaskBuild | undefined> {
+    return (await this.readTaskBuilds())[taskId];
+  }
+
+  async readTaskBuilds(): Promise<Record<string, TaskBuild>> {
+    const raw = await this.readOptional(BUILD_FILE);
+    return raw === undefined ? {} : BuildState.parse(JSON.parse(raw));
+  }
+
+  async writeTaskBuild(taskId: string, build: TaskBuild): Promise<void> {
+    const raw = await this.readOptional(BUILD_FILE);
+    const all = raw === undefined ? {} : BuildState.parse(JSON.parse(raw));
+    await this.writeAtomic(BUILD_FILE, `${JSON.stringify({ ...all, [taskId]: build }, null, 2)}\n`);
   }
 
   async appendEvent(event: EventInput): Promise<void> {

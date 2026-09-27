@@ -14,9 +14,9 @@ import { FakeProvider } from '../fakes.js';
 import { useTempProject } from '../helpers.js';
 
 const models = [
-  { id: 'default', name: 'Default (recommended)', description: 'Opus 5.5' },
-  { id: 'opus', name: 'Opus 5.5', description: 'Most capable' },
-  { id: 'sonnet', name: 'Sonnet 5', description: 'Everyday' },
+  { id: 'default', name: 'Default (recommended)', description: 'Opus 5.5', autonomous: true },
+  { id: 'opus', name: 'Opus 5.5', description: 'Most capable', autonomous: true },
+  { id: 'sonnet', name: 'Sonnet 5', description: 'Everyday', autonomous: true },
 ];
 
 describe('parsing and completion', () => {
@@ -110,6 +110,7 @@ describe('running commands', () => {
       connection: { provider: 'claude', method: 'subscription' },
       session: { runs: 0, tokens: 0, costUsd: 0 },
       boardUrl: 'http://localhost:4777',
+      startBuild: async () => {},
       say: (text) => said.push(text),
       exit: () => {
         exited = true;
