@@ -78,6 +78,7 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
 
   // Telegram: notifications out, the user's replies in, same conversation.
   let bridge: TelegramBridge | undefined;
+  let waitingForLimit = false;
   const session: ChatSession = new ChatSession({
     store,
     config,
@@ -98,6 +99,12 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
     },
     onBuildEvent: (event) => {
       if (!bridge) return;
+      // After waiting out a limit, say when work starts again.
+      if (event.type === 'waiting' && event.reason === 'usage_limit') waitingForLimit = true;
+      if (event.type === 'task_started' && waitingForLimit) {
+        waitingForLimit = false;
+        void bridge.send(`▶ Your limit has reset. Back on ${event.task.id}: ${event.task.title}.`);
+      }
       void notificationFor(event, store).then((note) => {
         if (note) void bridge?.send(note.text, note.images);
       });

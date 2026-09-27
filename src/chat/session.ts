@@ -1,5 +1,6 @@
 import { type BuildEvent, build } from '../core/builder.js';
 import type { Config } from '../core/config.js';
+import { clock, explainAgentError } from '../core/errors.js';
 import type { Manager } from '../core/manager.js';
 import type { Store } from '../core/store.js';
 import { McpTools } from '../mcp/server.js';
@@ -149,6 +150,7 @@ export class ChatSession {
       for await (const event of manager.send(message, signal)) {
         this.countUsage(event);
         this.noticeShares(event);
+        if (event.type === 'retry') output.status('chat', retryStatus(event));
         if (event.type === 'text') {
           reply.push(event.text);
           output.say(renderInline(event.text));
@@ -156,7 +158,13 @@ export class ChatSession {
           rewrotePlan ||= event.tool === McpTools.savePlan;
           output.status('chat', describeTool(event.tool, event.input));
         } else if (event.type === 'finished' && !event.ok) {
-          output.say(paint.red(event.output || 'Something went wrong on my end.'));
+          output.say(
+            paint.red(
+              event.error
+                ? explainAgentError(event.error)
+                : event.output || 'Something went wrong on my end.',
+            ),
+          );
         }
       }
     } catch (error) {
@@ -184,8 +192,12 @@ export class ChatSession {
         if (event.type === 'agent') {
           this.countUsage(event.event);
           this.noticeShares(event.event);
+          if (event.event.type === 'retry') output.status('build', retryStatus(event.event));
         }
         if (event.type === 'task_started') output.status('build', `Building ${event.task.id}`);
+        if (event.type === 'waiting' && event.reason === 'usage_limit') {
+          output.status('build', `Waiting for your usage limit to reset (${clock(event.until)})`);
+        }
         const text = render(event, await store.readPlan());
         if (text) output.print(text);
         onBuildEvent?.(event);
@@ -232,6 +244,10 @@ export class ChatSession {
       this.usage.costUsd += event.usage.costUsd;
     }
   }
+}
+
+function retryStatus(event: Extract<AgentEvent, { type: 'retry' }>): string {
+  return `Anthropic didn’t answer; retrying (${event.attempt}/${event.maxRetries})`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

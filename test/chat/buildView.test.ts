@@ -71,6 +71,18 @@ describe('renderBuildEvent', () => {
     expect(out).toContain('on branch dazza/T1-setup');
   });
 
+  it('says when a usage limit pauses the build and when it resumes', () => {
+    const until = new Date(Date.now() + 3_600_000).toISOString();
+    const out = renderBuildEvent(
+      { type: 'waiting', task, reason: 'usage_limit', until },
+      plan,
+      '/p',
+    );
+    expect(out).toContain('Usage limit reached.');
+    expect(out).toContain('T1 is paused; I’ll pick it back up at');
+    expect(out).toContain('Keep Dazza open');
+  });
+
   it('summarises a handover from the handoff', () => {
     const out = renderBuildEvent({ type: 'task_finished', task, outcome: 'review' }, plan, '/p');
     expect(out).toContain('T1 is ready for your review · 4 files changed · 2 checks passed');

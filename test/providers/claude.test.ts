@@ -61,7 +61,14 @@ describe('parseClaudeLine', () => {
       duration_ms: 10,
     });
     expect(parseClaudeLine(line)).toEqual([
-      { type: 'finished', ok: false, output: '', sessionId: 's1', durationMs: 10 },
+      {
+        type: 'finished',
+        ok: false,
+        output: '',
+        sessionId: 's1',
+        durationMs: 10,
+        error: { kind: 'failed', message: 'error_max_turns' },
+      },
     ]);
   });
 
@@ -144,6 +151,15 @@ describe('ClaudeProvider', () => {
       { id: 'default', name: 'Default (recommended)', description: 'Opus 5.5', autonomous: true },
       { id: 'sonnet', name: 'Sonnet 5', description: 'Everyday tasks', autonomous: false },
     ]);
+  });
+
+  it('gives up at once on retries that can’t succeed, like a rejected key', async () => {
+    const started = Date.now();
+    const events: AgentEvent[] = [];
+    for await (const event of fakeClaude.run({ prompt: 'BADKEY', cwd: process.cwd() }))
+      events.push(event);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(events.at(-1)).toMatchObject({ type: 'finished', ok: false, error: { kind: 'auth' } });
   });
 
   describe('billing mode', () => {

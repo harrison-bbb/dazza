@@ -1,11 +1,13 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import { Git } from '../git/git.js';
 import { MCP_SERVER_NAME, WORKER_TOOLS } from '../mcp/server.js';
 import workerPrompt from '../prompts/worker.md';
-import type { AgentEvent, AgentProvider, McpServerConfig } from '../providers/types.js';
+import type { AgentError, AgentEvent, AgentProvider, McpServerConfig } from '../providers/types.js';
 import type { Config } from './config.js';
+import { explainAgentError } from './errors.js';
 import { nextTask } from './plan.js';
 import type { Event, Plan, Task } from './schema.js';
-import type { Store } from './store.js';
+import type { Store, TaskBuild } from './store.js';
 import { trackUsage } from './usage.js';
 import { blockTask, pauseTask, prepareRepo, startTask } from './work.js';
 
@@ -16,22 +18,64 @@ export interface BuilderOptions {
   /** How the agent CLI should launch Dazza's MCP server. */
   mcpServer: McpServerConfig;
   signal?: AbortSignal;
+  /** Overrides for the timing policy, e.g. in tests. */
+  timing?: Partial<Timing>;
 }
 
-/** What the build loop reports, for the CLI (and later other channels) to show. */
+/** How patient the build is. */
+export interface Timing {
+  /** No activity at all for this long means the worker is stuck. */
+  stallMs: number;
+  /** Retries after the agent CLI crashes, resuming its session. */
+  crashRetries: number;
+  /** Retries when the service is overloaded, waiting longer each time. */
+  overloadRetries: number;
+  overloadDelayMs: number;
+  /** How long to wait at a usage limit when the reset time is unknown. */
+  limitFallbackMs: number;
+  /** Extra time after a limit resets before resuming, so it has really lifted. */
+  resumeMarginMs: number;
+}
+
+export const DEFAULT_TIMING: Timing = {
+  // Long installs and test runs can be quiet for a while; twenty minutes of
+  // complete silence is something else.
+  stallMs: 20 * 60_000,
+  crashRetries: 1,
+  overloadRetries: 3,
+  overloadDelayMs: 60_000,
+  limitFallbackMs: 30 * 60_000,
+  resumeMarginMs: 60_000,
+};
+
+/** What the build loop reports, for the CLI (and other channels) to show. */
 export type BuildEvent =
   | { type: 'repo_created' }
   | { type: 'task_started'; task: Task; branch: string; resumed: boolean }
   | { type: 'agent'; task: Task; event: AgentEvent }
   | { type: 'task_finished'; task: Task; outcome: 'review' | 'blocked' | 'paused' }
+  /** Holding off until a usage limit resets, or a busy service settles. */
+  | { type: 'waiting'; task: Task; reason: 'usage_limit' | 'overloaded'; until: string }
+  | { type: 'retrying'; task: Task; reason: string }
   | { type: 'stopped'; reason: string };
+
+/** How one run of the worker ended. */
+type Attempt =
+  | { kind: 'finished'; finalText: string }
+  | { kind: 'aborted' }
+  | { kind: 'stalled' }
+  | { kind: 'crashed'; message: string }
+  | { kind: 'error'; error: AgentError };
 
 /**
  * Build the plan: take the next ready task, build it on its own branch, and move
- * on once it's handed over or blocked. Runs until nothing is ready or it's aborted.
+ * on once it's handed over or blocked. Waits out usage limits, retries crashes
+ * and busy services, and stops a stuck worker. Runs until nothing is ready, the
+ * user has to act, or it's aborted.
  */
 export async function* build(options: BuilderOptions): AsyncGenerator<BuildEvent> {
-  const { store, config, provider, mcpServer, signal } = options;
+  const { store, config, signal } = options;
+  const timing = { ...DEFAULT_TIMING, ...options.timing };
   const git = new Git(store.root);
 
   const repo = await prepareRepo(git);
@@ -56,56 +100,186 @@ export async function* build(options: BuilderOptions): AsyncGenerator<BuildEvent
       return;
     }
 
-    const resumed = (await store.readTaskBuild(task.id)) !== undefined;
-    const build = await startTask(store, git, task);
-    yield { type: 'task_started', task, branch: build.branch, resumed };
+    let crashes = 0;
+    let overloads = 0;
+    let announced = false;
+    for (;;) {
+      const resumed = (await store.readTaskBuild(task.id)) !== undefined;
+      const build = await startTask(store, git, task);
+      if (!announced) yield { type: 'task_started', task, branch: build.branch, resumed };
+      announced = true;
 
-    const { model } = await config.readSettings();
-    let finalText = '';
-    try {
-      const events = provider.run({
-        prompt: taskBrief(plan, task, await store.readScope(), await store.readEvents(), resumed),
-        cwd: store.root,
-        systemPrompt: workerPrompt,
-        autonomous: true,
-        allowedTools: WORKER_TOOLS,
-        mcpServers: { [MCP_SERVER_NAME]: mcpServer },
-        ...(build.sessionId && { resumeSessionId: build.sessionId }),
-        ...(model && { model }),
-        ...(signal && { signal }),
-      });
-      for await (const event of events) {
-        if (event.type === 'started')
-          await store.writeTaskBuild(task.id, { ...build, sessionId: event.sessionId });
-        if (event.type === 'finished') finalText = event.output;
-        await trackUsage(store, config, event);
-        yield { type: 'agent', task, event };
-      }
-    } catch (error) {
-      await pauseTask(store, task.id);
-      if (signal?.aborted) {
+      const attempt = yield* runWorker(options, plan, task, resumed, build, timing);
+
+      if (attempt.kind === 'aborted') {
+        await pauseTask(store, task.id);
         yield { type: 'task_finished', task, outcome: 'paused' };
         return;
       }
-      throw error;
-    }
+      if (attempt.kind === 'stalled') {
+        await pauseTask(store, task.id);
+        await blockTask(
+          store,
+          task.id,
+          `I stopped because nothing happened for ${Math.round(timing.stallMs / 60_000)} minutes, so ` +
+            'something was probably stuck (a command waiting for input, or a hung dev server). ' +
+            'Tell me how to proceed, or /build to try again.',
+        );
+        yield { type: 'task_finished', task, outcome: 'blocked' };
+        break;
+      }
+      if (attempt.kind === 'crashed') {
+        if (crashes++ < timing.crashRetries) {
+          yield {
+            type: 'retrying',
+            task,
+            reason: `Claude Code crashed (${attempt.message}). Trying again.`,
+          };
+          continue;
+        }
+        await pauseTask(store, task.id);
+        await blockTask(
+          store,
+          task.id,
+          `Claude Code kept crashing on this task: ${attempt.message}`,
+        );
+        yield { type: 'task_finished', task, outcome: 'blocked' };
+        break;
+      }
+      if (attempt.kind === 'error') {
+        const { error } = attempt;
+        await pauseTask(store, task.id);
+        if (error.kind === 'usage_limit') {
+          const until =
+            error.resetsAt ?? (await limitResetTime(config)) ?? inFuture(timing.limitFallbackMs);
+          yield { type: 'waiting', task, reason: 'usage_limit', until };
+          await sleepUntil(Date.parse(until) + timing.resumeMarginMs, signal);
+          break; // back to the top: the task is picked up again, resuming its session
+        }
+        if (error.kind === 'overloaded' && overloads++ < timing.overloadRetries) {
+          const until = inFuture(timing.overloadDelayMs * overloads);
+          yield { type: 'waiting', task, reason: 'overloaded', until };
+          await sleepUntil(Date.parse(until), signal);
+          if (signal?.aborted) return;
+          continue;
+        }
+        if (error.kind === 'credits' || error.kind === 'auth' || error.kind === 'overloaded') {
+          yield { type: 'stopped', reason: explainAgentError(error, task.id) };
+          return;
+        }
+        // Anything else: the worker stopped with an error; surface it below.
+      }
 
-    const status = (await store.readPlan())?.tasks.find((t) => t.id === task.id)?.status;
-    if (status === 'review') {
-      yield { type: 'task_finished', task, outcome: 'review' };
-    } else if (status === 'blocked') {
-      yield { type: 'task_finished', task, outcome: 'blocked' };
-    } else {
-      // The worker stopped without handing over or asking anything: surface it
-      // to the user rather than silently retrying.
-      await blockTask(
-        store,
-        task.id,
-        `I stopped before finishing this task.${finalText ? ` My last note: ${finalText}` : ''}`,
-      );
-      yield { type: 'task_finished', task, outcome: 'blocked' };
+      const finalText =
+        attempt.kind === 'finished'
+          ? attempt.finalText
+          : attempt.kind === 'error'
+            ? attempt.error.message
+            : '';
+      const status = (await store.readPlan())?.tasks.find((t) => t.id === task.id)?.status;
+      if (status === 'review' || status === 'blocked') {
+        yield { type: 'task_finished', task, outcome: status };
+      } else {
+        // The worker stopped without handing over or asking anything: surface it
+        // to the user rather than silently retrying.
+        await pauseTask(store, task.id);
+        await blockTask(
+          store,
+          task.id,
+          `I stopped before finishing this task.${finalText ? ` My last note: ${finalText}` : ''}`,
+        );
+        yield { type: 'task_finished', task, outcome: 'blocked' };
+      }
+      break;
     }
   }
+}
+
+/** One run of the worker on a task, with a watchdog for runs that go silent. */
+async function* runWorker(
+  options: BuilderOptions,
+  plan: Plan,
+  task: Task,
+  resumed: boolean,
+  build: TaskBuild,
+  timing: Timing,
+): AsyncGenerator<BuildEvent, Attempt> {
+  const { store, config, provider, mcpServer, signal } = options;
+  const run = new AbortController();
+  const stopRun = () => run.abort();
+  signal?.addEventListener('abort', stopRun);
+  let stalled = false;
+  let watchdog: NodeJS.Timeout | undefined;
+  const feedWatchdog = () => {
+    clearTimeout(watchdog);
+    watchdog = setTimeout(() => {
+      stalled = true;
+      run.abort();
+    }, timing.stallMs);
+  };
+
+  const { model } = await config.readSettings();
+  let finalText = '';
+  let error: AgentError | undefined;
+  try {
+    feedWatchdog();
+    const events = provider.run({
+      prompt: taskBrief(plan, task, await store.readScope(), await store.readEvents(), resumed),
+      cwd: store.root,
+      systemPrompt: workerPrompt,
+      autonomous: true,
+      allowedTools: WORKER_TOOLS,
+      mcpServers: { [MCP_SERVER_NAME]: mcpServer },
+      ...(build.sessionId && { resumeSessionId: build.sessionId }),
+      ...(model && { model }),
+      signal: run.signal,
+    });
+    for await (const event of events) {
+      feedWatchdog();
+      if (event.type === 'started')
+        await store.writeTaskBuild(task.id, { ...build, sessionId: event.sessionId });
+      if (event.type === 'finished') {
+        finalText = event.output;
+        error = event.error;
+      }
+      await trackUsage(store, config, event);
+      yield { type: 'agent', task, event };
+    }
+  } catch (thrown) {
+    if (signal?.aborted) return { kind: 'aborted' };
+    if (stalled) return { kind: 'stalled' };
+    return {
+      kind: 'crashed',
+      message: thrown instanceof Error ? thrown.message.slice(0, 300) : String(thrown),
+    };
+  } finally {
+    clearTimeout(watchdog);
+    signal?.removeEventListener('abort', stopRun);
+  }
+  if (signal?.aborted) return { kind: 'aborted' };
+  if (stalled) return { kind: 'stalled' };
+  return error && error.kind !== 'failed'
+    ? { kind: 'error', error }
+    : { kind: 'finished', finalText };
+}
+
+/** When the tightest usage window resets, from the latest reading. */
+async function limitResetTime(config: Config): Promise<string | undefined> {
+  const limits = await config.readLimits();
+  const full = limits?.windows.filter((w) => w.utilization >= 0.98) ?? [];
+  return full
+    .map((w) => w.resetsAt)
+    .sort()
+    .at(-1);
+}
+
+function inFuture(ms: number): string {
+  return new Date(Date.now() + ms).toISOString();
+}
+
+async function sleepUntil(time: number, signal: AbortSignal | undefined): Promise<void> {
+  const ms = Math.max(0, time - Date.now());
+  await sleep(ms, undefined, signal ? { signal } : {}).catch(() => {});
 }
 
 /** Everything the worker needs to know about its task, in one message. */

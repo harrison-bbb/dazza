@@ -26,6 +26,19 @@ if (args.includes('--input-format')) {
   console.log('2.1.283 (Claude Code)');
 } else if (args[0] === 'auth') {
   console.log(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'max' }));
+} else if (prompt === 'BADKEY') {
+  // What Claude Code does with a rejected key: retry with backoff, for minutes.
+  console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', model: 'm' }));
+  console.log(
+    JSON.stringify({
+      type: 'system',
+      subtype: 'api_retry',
+      attempt: 1,
+      max_retries: 10,
+      error: 'authentication_failed',
+    }),
+  );
+  setTimeout(() => {}, 60_000);
 } else if (prompt === 'ENV') {
   // Reports which API key (if any) it was given, so tests can check billing mode.
   const key = process.env.ANTHROPIC_API_KEY ?? 'none';

@@ -61,7 +61,14 @@ export type AgentEvent =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; tool: string; input: unknown }
   | { type: 'tool_result'; id: string; ok: boolean }
-  | { type: 'limits'; windows: UsageWindow[] }
+  /** The CLI is retrying a failed API call itself. */
+  | { type: 'retry'; attempt: number; maxRetries: number; reason: string }
+  | {
+      type: 'limits';
+      windows: UsageWindow[];
+      /** Set when the account is currently being refused for hitting a limit. */
+      limitedUntil?: string;
+    }
   | {
       type: 'finished';
       ok: boolean;
@@ -69,7 +76,20 @@ export type AgentEvent =
       sessionId: string;
       durationMs: number;
       usage?: RunUsage;
+      /** Why the run failed, when it did. */
+      error?: AgentError;
     };
+
+/**
+ * Why a run failed, in terms Dazza can act on: wait for a limit to reset, ask
+ * the user to top up or reconnect, retry a busy service, or give up.
+ */
+export type AgentError =
+  | { kind: 'usage_limit'; message: string; resetsAt?: string }
+  | { kind: 'credits'; message: string }
+  | { kind: 'auth'; message: string }
+  | { kind: 'overloaded'; message: string }
+  | { kind: 'failed'; message: string };
 
 /** A subscription rate-limit window, e.g. the rolling five hours or the week. */
 export interface UsageWindow {

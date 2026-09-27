@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { BuildEvent } from '../core/builder.js';
 import type { TelegramLink } from '../core/config.js';
+import { clock } from '../core/errors.js';
 import type { Store } from '../core/store.js';
 import { TelegramApi, TelegramError } from './api.js';
 
@@ -97,7 +98,15 @@ export async function notificationFor(
   event: BuildEvent,
   store: Store,
 ): Promise<Notification | undefined> {
-  if (event.type === 'stopped') return { text: `Build finished. ${event.reason}`, images: [] };
+  if (event.type === 'stopped') return { text: event.reason, images: [] };
+  if (event.type === 'waiting' && event.reason === 'usage_limit') {
+    return {
+      text:
+        `⏸ You’ve hit your Claude usage limit, so I’ve paused ${event.task.id}. ` +
+        `I’ll pick it back up at ${clock(event.until)}, as long as Dazza stays open on your computer.`,
+      images: [],
+    };
+  }
   if (event.type !== 'task_finished' || event.outcome === 'paused') return undefined;
 
   const plan = await store.readPlan();

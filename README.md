@@ -61,6 +61,16 @@ While Dazza runs, a project board is served at `http://localhost:4777`: a dashbo
 
 While it builds you can keep talking to Dazza in the terminal. Comments you leave on the board, or instructions you give in the chat, reach the build at its next check-in.
 
+### When things go wrong
+
+Builds are meant to run while you're away, so Dazza handles the usual failures itself:
+
+- **Usage limit reached** (subscription): Dazza pauses the task and messages you with the reset time. When the limit lifts, it picks up the same session, as long as Dazza is still open.
+- **Out of API credit, or a rejected key:** Dazza stops straight away, instead of letting Claude Code retry for minutes, and tells you what to do.
+- **Anthropic overloaded:** Dazza backs off and retries.
+- **Claude Code crashes:** Dazza retries once. If it crashes again, the task is blocked with the error.
+- **A stuck worker** (20 minutes of complete silence): Dazza stops it, blocks the task with an explanation, and moves on.
+
 ### Screenshots
 
 Dazza takes screenshots when a picture helps, not for everything:

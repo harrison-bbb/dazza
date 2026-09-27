@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import type { Connection } from '../core/config.js';
 import { execCommand, runInteractive, spawnLines } from '../util/process.js';
+import { classifyError, isHopeless } from './errors.js';
 import type {
+  AgentError,
   AgentEvent,
   AgentProvider,
   AgentRunOptions,
@@ -91,23 +93,64 @@ export class ClaudeProvider implements AgentProvider {
 
   async *run(options: AgentRunOptions): AsyncGenerator<AgentEvent> {
     let finished = false;
+    // A "rejected" rate-limit reading tells us when a usage limit resets.
+    let limitedUntil: string | undefined;
+    // Stop the CLI ourselves when it's retrying something retries can't fix.
+    const run = new AbortController();
+    const forward = () => run.abort();
+    options.signal?.addEventListener('abort', forward);
+    let hopeless: AgentError | undefined;
     // The stream can repeat a tool call across messages; report each one once.
     const seenTools = new Set<string>();
     const lines = spawnLines(this.bin, buildClaudeArgs(options), {
       cwd: options.cwd,
       input: options.prompt,
       env: this.env(),
-      ...(options.signal && { signal: options.signal }),
+      signal: run.signal,
     });
-    for await (const line of lines) {
-      for (const event of parseClaudeLine(line)) {
-        if (event.type === 'finished') finished = true;
-        if (event.type === 'tool_use') {
-          if (seenTools.has(event.id)) continue;
-          seenTools.add(event.id);
+    try {
+      for await (const line of lines) {
+        for (const event of parseClaudeLine(line)) {
+          if (event.type === 'limits' && event.limitedUntil) limitedUntil = event.limitedUntil;
+          if (event.type === 'retry') {
+            const error = classifyError(event.reason);
+            if (isHopeless(error)) {
+              hopeless = error;
+              run.abort();
+            }
+          }
+          if (event.type === 'tool_use') {
+            if (seenTools.has(event.id)) continue;
+            seenTools.add(event.id);
+          }
+          if (event.type === 'finished') {
+            finished = true;
+            if (event.error?.kind === 'usage_limit' && !event.error.resetsAt && limitedUntil) {
+              yield { ...event, error: { ...event.error, resetsAt: limitedUntil } };
+              continue;
+            }
+          }
+          yield event;
         }
-        yield event;
       }
+    } catch (error) {
+      // Claude Code exits non-zero after reporting a failed result; the result
+      // already says what went wrong, so only a crash without one is an error.
+      if (!finished && !hopeless) throw error;
+    } finally {
+      options.signal?.removeEventListener('abort', forward);
+    }
+    if (hopeless && !finished) {
+      const error = hopeless;
+      yield {
+        type: 'finished',
+        ok: false,
+        output: error.message,
+        sessionId: '',
+        durationMs: 0,
+        error,
+      };
+      return;
     }
     if (!finished) throw new Error('Claude Code exited without reporting a result');
   }
@@ -144,22 +187,38 @@ export function parseClaudeLine(line: string): AgentEvent[] {
   const message = parsed.data;
   switch (message.type) {
     case 'system':
-      return [{ type: 'started', sessionId: message.session_id, model: message.model }];
+      return message.subtype === 'init'
+        ? [{ type: 'started', sessionId: message.session_id, model: message.model }]
+        : [
+            {
+              type: 'retry',
+              attempt: message.attempt,
+              maxRetries: message.max_retries,
+              reason: message.error ?? 'API error',
+            },
+          ];
     case 'assistant':
       return message.message.content.flatMap(toContentEvent);
     case 'user':
       return message.message.content.flatMap(toToolResult);
-    case 'rate_limit_event':
+    case 'rate_limit_event': {
+      const info = message.rate_limit_info;
+      const limited = info.status === 'rejected' && info.resetsAt !== undefined;
       return [
         {
           type: 'limits',
-          windows: Object.entries(message.rate_limit_info.unifiedWindows).map(([id, w]) => ({
+          windows: Object.entries(info.unifiedWindows).map(([id, w]) => ({
             id,
             utilization: w.utilization,
             resetsAt: new Date(w.resetsAt * 1000).toISOString(),
           })),
+          ...(limited &&
+            info.resetsAt !== undefined && {
+              limitedUntil: new Date(info.resetsAt * 1000).toISOString(),
+            }),
         },
       ];
+    }
     case 'result':
       return [
         {
@@ -169,6 +228,9 @@ export function parseClaudeLine(line: string): AgentEvent[] {
           sessionId: message.session_id,
           durationMs: message.duration_ms,
           ...(message.usage && { usage: toRunUsage(message.usage, message.total_cost_usd) }),
+          ...(failed(message) && {
+            error: classifyError(message.result ?? message.subtype, message.api_error_status),
+          }),
         },
       ];
   }
@@ -200,12 +262,21 @@ function parseJson(text: string | undefined): unknown {
 
 // Only the fields Dazza reads. Everything else in the stream is ignored.
 const StreamLine = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('system'),
-    subtype: z.literal('init'),
-    session_id: z.string(),
-    model: z.string(),
-  }),
+  z.discriminatedUnion('subtype', [
+    z.object({
+      type: z.literal('system'),
+      subtype: z.literal('init'),
+      session_id: z.string(),
+      model: z.string(),
+    }),
+    z.object({
+      type: z.literal('system'),
+      subtype: z.literal('api_retry'),
+      attempt: z.number(),
+      max_retries: z.number(),
+      error: z.string().optional(),
+    }),
+  ]),
   z.object({
     type: z.literal('assistant'),
     message: z.object({ content: z.array(z.unknown()) }),
@@ -226,15 +297,17 @@ const StreamLine = z.discriminatedUnion('type', [
     session_id: z.string(),
     duration_ms: z.number(),
     total_cost_usd: z.number().default(0),
+    api_error_status: z.number().nullish(),
     usage: z.record(z.string(), z.unknown()).optional(),
   }),
   z.object({
     type: z.literal('rate_limit_event'),
     rate_limit_info: z.object({
-      unifiedWindows: z.record(
-        z.string(),
-        z.object({ utilization: z.number(), resetsAt: z.number() }),
-      ),
+      status: z.string().optional(),
+      resetsAt: z.number().optional(),
+      unifiedWindows: z
+        .record(z.string(), z.object({ utilization: z.number(), resetsAt: z.number() }))
+        .default({}),
     }),
   }),
 ]);
@@ -283,6 +356,10 @@ function toRunUsage(usage: Record<string, unknown>, costUsd: number): RunUsage {
       count('cache_creation_input_tokens'),
     costUsd,
   };
+}
+
+function failed(result: { subtype: string; is_error: boolean }): boolean {
+  return result.is_error || result.subtype !== 'success';
 }
 
 function capitalize(text: string): string {
