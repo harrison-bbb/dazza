@@ -1,0 +1,84 @@
+import { describe, expect, it } from 'vitest';
+import { describeState, Manager } from '../../src/core/manager.js';
+import type { AgentEvent, AgentProvider, AgentRunOptions } from '../../src/providers/types.js';
+import { makePlan, makeTask } from '../fixtures.js';
+import { useTempProject } from '../helpers.js';
+
+/** Records what it was asked to run and replays canned events. */
+class FakeProvider implements AgentProvider {
+  readonly id = 'claude';
+  readonly name = 'Fake';
+  readonly runs: AgentRunOptions[] = [];
+
+  async detect() {
+    return { installed: true as const, version: '1.0.0', loggedIn: true };
+  }
+
+  async *run(options: AgentRunOptions): AsyncGenerator<AgentEvent> {
+    this.runs.push(options);
+    yield { type: 'started', sessionId: 'session-1', model: 'fake' };
+    yield { type: 'text', text: 'What are we building?' };
+    yield { type: 'finished', ok: true, output: '', sessionId: 'session-1', durationMs: 1 };
+  }
+}
+
+describe('Manager', () => {
+  const project = useTempProject();
+
+  const setup = () => {
+    const provider = new FakeProvider();
+    const manager = new Manager({
+      store: project.store,
+      provider,
+      projectRoot: project.root,
+      mcpServer: { command: 'node', args: ['dazza', 'mcp'] },
+    });
+    return { provider, manager };
+  };
+
+  const drain = async (events: AsyncIterable<AgentEvent>) => {
+    const all: AgentEvent[] = [];
+    for await (const event of events) all.push(event);
+    return all;
+  };
+
+  it('relays agent events', async () => {
+    const { manager } = setup();
+    const events = await drain(manager.send('hi'));
+    expect(events.map((e) => e.type)).toEqual(['started', 'text', 'finished']);
+  });
+
+  it('resumes the same session on the next message', async () => {
+    const { provider, manager } = setup();
+    await drain(manager.send('first'));
+    await drain(manager.send('second'));
+    expect(provider.runs[0]?.resumeSessionId).toBeUndefined();
+    expect(provider.runs[1]?.resumeSessionId).toBe('session-1');
+  });
+
+  it('gives the agent current project state and only planning tools', async () => {
+    const { provider, manager } = setup();
+    await project.store.writePlan(makePlan([makeTask({ id: 'T1', title: 'Scaffold' })]));
+    await drain(manager.send('status?'));
+
+    const run = provider.runs[0];
+    expect(run?.systemPrompt).toContain('You are Dazza');
+    expect(run?.systemPrompt).toContain('T1 [todo] Scaffold');
+    expect(run?.allowedTools).toEqual(['Read', 'Glob', 'Grep', 'mcp__dazza__save_plan']);
+    expect(run?.mcpServers).toEqual({ dazza: { command: 'node', args: ['dazza', 'mcp'] } });
+  });
+});
+
+describe('describeState', () => {
+  it('says when there is no plan', () => {
+    expect(describeState(undefined)).toContain('No plan yet.');
+  });
+
+  it('summarises an approved plan with progress', () => {
+    const plan = {
+      ...makePlan([makeTask({ id: 'T1', status: 'done' }), makeTask({ id: 'T2' })]),
+      approvedAt: '2026-09-27T10:00:00Z',
+    };
+    expect(describeState(plan)).toContain('approved, 1/2 tasks done');
+  });
+});

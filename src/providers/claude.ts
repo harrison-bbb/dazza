@@ -31,6 +31,7 @@ export class ClaudeProvider implements AgentProvider {
     let finished = false;
     const lines = spawnLines(this.bin, buildClaudeArgs(options), {
       cwd: options.cwd,
+      input: options.prompt,
       ...(options.signal && { signal: options.signal }),
     });
     for await (const line of lines) {
@@ -43,11 +44,21 @@ export class ClaudeProvider implements AgentProvider {
   }
 }
 
-export function buildClaudeArgs(options: AgentRunOptions): string[] {
-  const args = ['-p', options.prompt, '--output-format', 'stream-json', '--verbose'];
+/** CLI flags for a headless run. The prompt itself is sent on stdin, never as an argument. */
+export function buildClaudeArgs(options: Omit<AgentRunOptions, 'prompt'>): string[] {
+  const args = ['-p', '--output-format', 'stream-json', '--verbose'];
   if (options.resumeSessionId) args.push('--resume', options.resumeSessionId);
   if (options.systemPrompt) args.push('--append-system-prompt', options.systemPrompt);
   if (options.model) args.push('--model', options.model);
+  if (options.mcpServers) {
+    // Strict: the agent gets exactly the servers Dazza hands it, not the user's personal ones.
+    args.push(
+      '--mcp-config',
+      JSON.stringify({ mcpServers: options.mcpServers }),
+      '--strict-mcp-config',
+    );
+  }
+  if (options.allowedTools?.length) args.push('--allowedTools', options.allowedTools.join(','));
   return args;
 }
 

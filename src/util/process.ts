@@ -43,6 +43,8 @@ export async function execCommand(
 
 export interface SpawnLinesOptions {
   cwd: string;
+  /** Written to the process's stdin, which is then closed. */
+  input?: string;
   signal?: AbortSignal;
 }
 
@@ -57,9 +59,10 @@ export async function* spawnLines(
 ): AsyncGenerator<string> {
   const child = spawn(command, args, {
     cwd: options.cwd,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: 'pipe',
     ...(options.signal && { signal: options.signal }),
   });
+  child.stdin.end(options.input);
 
   let stderr = '';
   child.stderr.setEncoding('utf8');

@@ -3,15 +3,16 @@
 import { readFileSync } from 'node:fs';
 
 const args = process.argv.slice(2);
+const prompt = args[0] === '-p' ? readFileSync(0, 'utf8') : '';
 
 if (args[0] === '--version') {
   console.log('2.1.283 (Claude Code)');
 } else if (args[0] === 'auth') {
   console.log(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai' }));
-} else if (args[1] === 'CRASH') {
+} else if (prompt === 'CRASH') {
   console.error('something went wrong');
   process.exit(2);
-} else if (args[1] === 'SILENT') {
+} else if (prompt === 'SILENT') {
   // Exits cleanly without ever emitting a result event.
 } else {
   process.stdout.write(readFileSync(new URL('../claude/read-file.jsonl', import.meta.url)));

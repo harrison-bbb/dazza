@@ -15,3 +15,8 @@ export function progress(plan: Plan): { done: number; total: number } {
     total: plan.tasks.length,
   };
 }
+
+/** Lock the plan so work can begin. Approving twice keeps the original timestamp. */
+export function approve(plan: Plan, at: Date): Plan {
+  return plan.approvedAt ? plan : { ...plan, approvedAt: at.toISOString() };
+}

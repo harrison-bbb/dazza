@@ -25,6 +25,19 @@ you ──chat──▶ dazza ──scopes──▶ .dazza/ (scope + tasks) ─�
 - **Plain-file state.** Everything lives in `.dazza/` in your repo. You can read it, diff it and commit it.
 - **Safe by default.** Each task gets its own branch. Nothing merges until you approve it.
 
+## Try it
+
+Dazza needs [Claude Code](https://docs.claude.com/en/docs/claude-code) installed and signed in.
+
+```sh
+pnpm install && pnpm build && pnpm link --global
+cd ~/some-project
+dazza doctor   # check everything's ready
+dazza          # start talking
+```
+
+Just type to talk to Dazza. `/status`, `/approve` and `/help` are shortcuts.
+
 ## Development
 
 Requires Node 22 and pnpm.

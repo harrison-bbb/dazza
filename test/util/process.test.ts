@@ -41,4 +41,13 @@ describe('spawnLines', () => {
     }
     // Reaching here without hanging means the child was killed.
   });
+
+  it('writes input to stdin', async () => {
+    const script = 'process.stdin.pipe(process.stdout)';
+    const lines: string[] = [];
+    for await (const line of spawnLines(node, ['-e', script], { cwd, input: 'from stdin' })) {
+      lines.push(line);
+    }
+    expect(lines).toEqual(['from stdin']);
+  });
 });

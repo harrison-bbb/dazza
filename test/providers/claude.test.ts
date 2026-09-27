@@ -53,9 +53,8 @@ describe('parseClaudeLine', () => {
 
 describe('buildClaudeArgs', () => {
   it('runs headless with streaming JSON output', () => {
-    expect(buildClaudeArgs({ prompt: 'hi', cwd: '/p' })).toEqual([
+    expect(buildClaudeArgs({ cwd: '/p' })).toEqual([
       '-p',
-      'hi',
       '--output-format',
       'stream-json',
       '--verbose',
@@ -64,11 +63,12 @@ describe('buildClaudeArgs', () => {
 
   it('passes optional settings through', () => {
     const args = buildClaudeArgs({
-      prompt: 'hi',
       cwd: '/p',
       resumeSessionId: 's1',
       systemPrompt: 'Be brief.',
       model: 'haiku',
+      allowedTools: ['Read', 'mcp__dazza__save_plan'],
+      mcpServers: { dazza: { command: 'node', args: ['mcp'] } },
     });
     expect(args).toEqual(
       expect.arrayContaining([
@@ -78,6 +78,11 @@ describe('buildClaudeArgs', () => {
         'Be brief.',
         '--model',
         'haiku',
+        '--allowedTools',
+        'Read,mcp__dazza__save_plan',
+        '--mcp-config',
+        '{"mcpServers":{"dazza":{"command":"node","args":["mcp"]}}}',
+        '--strict-mcp-config',
       ]),
     );
   });

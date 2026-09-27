@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nextTask, progress } from '../../src/core/plan.js';
+import { approve, nextTask, progress } from '../../src/core/plan.js';
 import { makePlan, makeTask } from '../fixtures.js';
 
 describe('nextTask', () => {
@@ -27,5 +27,15 @@ describe('progress', () => {
   it('counts done tasks', () => {
     const plan = makePlan([makeTask({ id: 'T1', status: 'done' }), makeTask({ id: 'T2' })]);
     expect(progress(plan)).toEqual({ done: 1, total: 2 });
+  });
+});
+
+describe('approve', () => {
+  it('stamps the approval time once', () => {
+    const plan = makePlan([makeTask({ id: 'T1' })]);
+    const first = approve(plan, new Date('2026-09-27T10:00:00Z'));
+    const second = approve(first, new Date('2026-09-28T10:00:00Z'));
+    expect(first.approvedAt).toBe('2026-09-27T10:00:00.000Z');
+    expect(second).toBe(first);
   });
 });

@@ -1,8 +1,14 @@
 import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { z } from 'zod';
 import { Event, Plan } from './schema.js';
 
 export const STATE_DIR = '.dazza';
+
+const MANAGER_SESSION_FILE = 'session.json';
+const LOCAL_FILES = [MANAGER_SESSION_FILE];
+
+const ManagerSession = z.object({ sessionId: z.string() });
 
 /**
  * File-backed project state. Everything lives in `<root>/.dazza/` as plain,
@@ -17,6 +23,8 @@ export class Store {
 
   async init(): Promise<void> {
     await mkdir(this.dir, { recursive: true });
+    // Machine-local state stays out of git; everything else is meant to be committed.
+    await writeFile(this.path('.gitignore'), `${LOCAL_FILES.join('\n')}\n`, 'utf8');
   }
 
   async readPlan(): Promise<Plan | undefined> {
@@ -34,6 +42,16 @@ export class Store {
 
   async writeScope(markdown: string): Promise<void> {
     await this.writeAtomic('scope.md', markdown);
+  }
+
+  /** The manager conversation's agent session, so `dazza` picks up where it left off. */
+  async readManagerSession(): Promise<string | undefined> {
+    const raw = await this.readOptional(MANAGER_SESSION_FILE);
+    return raw === undefined ? undefined : ManagerSession.parse(JSON.parse(raw)).sessionId;
+  }
+
+  async writeManagerSession(sessionId: string): Promise<void> {
+    await this.writeAtomic(MANAGER_SESSION_FILE, `${JSON.stringify({ sessionId }, null, 2)}\n`);
   }
 
   async appendEvent(event: Event): Promise<void> {

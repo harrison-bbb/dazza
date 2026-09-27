@@ -20,7 +20,16 @@ export interface AgentRunOptions {
   /** Extra instructions appended to the agent's own system prompt. */
   systemPrompt?: string;
   model?: string;
+  /** Tools the agent may use without asking. Anything else needing permission is denied. */
+  allowedTools?: string[];
+  /** The only MCP servers the session may use, keyed by server name. */
+  mcpServers?: Record<string, McpServerConfig>;
   signal?: AbortSignal;
+}
+
+export interface McpServerConfig {
+  command: string;
+  args: string[];
 }
 
 /** Provider-neutral view of what the agent is doing. Every run ends with `finished`. */
