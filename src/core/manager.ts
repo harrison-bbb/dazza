@@ -50,13 +50,13 @@ export class Manager {
 
 const RECENT_COMMENTS = 10;
 
-/** A compact snapshot of the plan, plus the user's latest comments from the board. */
+/** A compact snapshot of the plan, plus the latest comments from the board. */
 export function describeState(plan: Plan | undefined, events: Event[] = []): string {
   if (!plan) return 'No plan yet.';
 
-  const { done, total } = progress(plan);
+  const { closed, total } = progress(plan);
   const status = plan.approvedAt
-    ? `approved, ${done}/${total} tasks done`
+    ? `approved, ${closed}/${total} tasks closed`
     : 'draft, awaiting approval';
   const lines = [
     `Plan (${status}):`,
@@ -65,8 +65,10 @@ export function describeState(plan: Plan | undefined, events: Event[] = []): str
 
   const comments = events.filter((e) => e.type === 'comment').slice(-RECENT_COMMENTS);
   if (comments.length > 0) {
-    lines.push('', 'Recent comments from the user on the board:');
-    lines.push(...comments.map((c) => `- ${c.taskId ?? 'general'} (${c.at}): ${c.message}`));
+    lines.push('', 'Recent comments on the board:');
+    lines.push(
+      ...comments.map((c) => `- ${c.taskId ?? 'general'} · ${c.actor} (${c.at}): ${c.message}`),
+    );
   }
   return lines.join('\n');
 }

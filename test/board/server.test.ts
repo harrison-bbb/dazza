@@ -57,6 +57,22 @@ describe('board server', () => {
     expect((await project.store.readEvents()).at(-1)?.message).toBe('Looks good');
   });
 
+  it('closes, cancels and requests changes on tasks', async () => {
+    await project.store.writePlan(
+      makePlan([
+        makeTask({ id: 'T1', status: 'review' }),
+        makeTask({ id: 'T2', status: 'review' }),
+        makeTask({ id: 'T3' }),
+      ]),
+    );
+    expect((await post('/api/tasks/T1/close')).status).toBe(200);
+    expect((await post('/api/tasks/T1/close')).status).toBe(409);
+    expect((await post('/api/tasks/T2/request-changes', { body: 'Tweak it' })).status).toBe(200);
+    expect((await post('/api/tasks/T3/cancel')).status).toBe(200);
+    const statuses = (await project.store.readPlan())?.tasks.map((t) => t.status);
+    expect(statuses).toEqual(['closed', 'planned', 'cancelled']);
+  });
+
   it('rejects writes without the CSRF header', async () => {
     await project.store.writePlan(makePlan([makeTask({ id: 'T1' })]));
     expect((await post('/api/approve', undefined, {})).status).toBe(403);

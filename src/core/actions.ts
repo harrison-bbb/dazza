@@ -1,41 +1,130 @@
-import { approve } from './plan.js';
+import { approve, findItem, withStatus } from './plan.js';
+import type { Actor, Plan } from './schema.js';
 import type { Store } from './store.js';
 
 /**
  * Things the user can do to a project. The terminal and the board both go through
- * here, so they always behave identically.
+ * here, so the rules (e.g. only reviewed work can be closed) live in one place.
  */
 
 export type ActionResult = { ok: true; message: string } | { ok: false; message: string };
 
 export async function approvePlan(store: Store, now = new Date()): Promise<ActionResult> {
   const plan = await store.readPlan();
-  if (!plan) return { ok: false, message: 'Nothing to approve yet.' };
-  if (plan.approvedAt) return { ok: false, message: 'Already approved.' };
+  if (!plan) return fail('Nothing to approve yet.');
+  if (plan.approvedAt) return fail('Already approved.');
 
   await store.writePlan(approve(plan, now));
-  await store.appendEvent({
-    at: now.toISOString(),
-    type: 'plan_approved',
-    message: 'Plan approved',
-  });
+  await log(store, now, { type: 'plan_approved', message: 'Approved the plan' });
   return { ok: true, message: `Approved. ${plan.tasks.length} tasks locked in.` };
 }
 
+/** Comment on a task or subtask. Dazza comments through the same path. */
 export async function addComment(
   store: Store,
-  taskId: string,
+  itemId: string,
   body: string,
+  actor: Actor = 'user',
   now = new Date(),
 ): Promise<ActionResult> {
   const text = body.trim();
-  if (!text) return { ok: false, message: 'Comment is empty.' };
-
+  if (!text) return fail('Comment is empty.');
   const plan = await store.readPlan();
-  if (!plan?.tasks.some((task) => task.id === taskId)) {
-    return { ok: false, message: `No task ${taskId}.` };
-  }
+  if (!plan || !findItem(plan, itemId)) return fail(`No task ${itemId}.`);
 
-  await store.appendEvent({ at: now.toISOString(), type: 'comment', taskId, message: text });
+  await log(store, now, { type: 'comment', actor, taskId: itemId, message: text });
   return { ok: true, message: 'Comment added.' };
+}
+
+/** Accept work Dazza handed over. Only tasks in review can be closed. */
+export async function closeTask(
+  store: Store,
+  taskId: string,
+  now = new Date(),
+): Promise<ActionResult> {
+  return transition(store, taskId, now, (plan, task) => {
+    if (task.status !== 'review') return fail(`${taskId} isn't in review.`);
+    return {
+      plan: withStatus(plan, taskId, 'closed'),
+      event: { type: 'task_approved', message: `Approved and closed ${task.title}` },
+    };
+  });
+}
+
+/** Send reviewed work back to Dazza with a note on what to change. */
+export async function requestChanges(
+  store: Store,
+  taskId: string,
+  note: string,
+  now = new Date(),
+): Promise<ActionResult> {
+  if (!note.trim()) return fail('Say what needs to change.');
+  const result = await transition(store, taskId, now, (plan, task) => {
+    if (task.status !== 'review') return fail(`${taskId} isn't in review.`);
+    return {
+      plan: withStatus(plan, taskId, 'planned'),
+      event: { type: 'task_rejected', message: `Requested changes to ${task.title}` },
+    };
+  });
+  if (result.ok) await addComment(store, taskId, note, 'user', now);
+  return result;
+}
+
+/** Drop a task from scope. Anything not already closed can be cancelled. */
+export async function cancelTask(
+  store: Store,
+  taskId: string,
+  now = new Date(),
+): Promise<ActionResult> {
+  return transition(store, taskId, now, (plan, task) => {
+    if (task.status === 'closed' || task.status === 'cancelled') {
+      return fail(`${taskId} is already ${task.status}.`);
+    }
+    return {
+      plan: withStatus(plan, taskId, 'cancelled'),
+      event: { type: 'task_cancelled', message: `Cancelled ${task.title}` },
+    };
+  });
+}
+
+type Transition =
+  | ActionResult
+  | {
+      plan: Plan;
+      event: { type: 'task_approved' | 'task_rejected' | 'task_cancelled'; message: string };
+    };
+
+async function transition(
+  store: Store,
+  taskId: string,
+  now: Date,
+  apply: (plan: Plan, task: Plan['tasks'][number]) => Transition,
+): Promise<ActionResult> {
+  const plan = await store.readPlan();
+  const found = plan && findItem(plan, taskId);
+  if (!plan || !found || found.subtask) return fail(`No task ${taskId}.`);
+
+  const result = apply(plan, found.task);
+  if ('ok' in result) return result;
+
+  await store.writePlan(result.plan);
+  await log(store, now, { ...result.event, taskId });
+  return { ok: true, message: result.event.message };
+}
+
+function log(
+  store: Store,
+  now: Date,
+  event: {
+    type: Parameters<Store['appendEvent']>[0]['type'];
+    message: string;
+    taskId?: string;
+    actor?: Actor;
+  },
+): Promise<void> {
+  return store.appendEvent({ at: now.toISOString(), actor: 'user', ...event });
+}
+
+function fail(message: string): ActionResult {
+  return { ok: false, message };
 }

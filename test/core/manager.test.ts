@@ -64,7 +64,7 @@ describe('Manager', () => {
     const run = provider.runs[0];
     expect(run?.systemPrompt).toContain('You are Dazza');
     expect(run?.prompt).toMatch(
-      /^<project-state>\n[\s\S]*T1 \[todo\] Scaffold[\s\S]*<\/project-state>\n\nstatus\?$/,
+      /^<project-state>\n[\s\S]*T1 \[planned\] Scaffold[\s\S]*<\/project-state>\n\nstatus\?$/,
     );
     expect(run?.allowedTools).toEqual(['Read', 'Glob', 'Grep', 'mcp__dazza__save_plan']);
     expect(run?.mcpServers).toEqual({ dazza: { command: 'node', args: ['dazza', 'mcp'] } });
@@ -78,16 +78,22 @@ describe('describeState', () => {
 
   it('includes recent board comments', () => {
     const state = describeState(makePlan([makeTask({ id: 'T1' })]), [
-      { at: '2026-09-27T10:00:00Z', type: 'comment', taskId: 'T1', message: 'Use Postgres' },
+      {
+        at: '2026-09-27T10:00:00Z',
+        type: 'comment',
+        actor: 'user',
+        taskId: 'T1',
+        message: 'Use Postgres',
+      },
     ]);
-    expect(state).toContain('T1 (2026-09-27T10:00:00Z): Use Postgres');
+    expect(state).toContain('T1 · user (2026-09-27T10:00:00Z): Use Postgres');
   });
 
   it('summarises an approved plan with progress', () => {
     const plan = {
-      ...makePlan([makeTask({ id: 'T1', status: 'done' }), makeTask({ id: 'T2' })]),
+      ...makePlan([makeTask({ id: 'T1', status: 'closed' }), makeTask({ id: 'T2' })]),
       approvedAt: '2026-09-27T10:00:00Z',
     };
-    expect(describeState(plan)).toContain('approved, 1/2 tasks done');
+    expect(describeState(plan)).toContain('approved, 1/2 tasks closed');
   });
 });

@@ -1,36 +1,35 @@
 import { useSyncExternalStore } from 'react';
 
-export type View = 'overview' | 'docs' | 'list' | 'board';
-export const VIEWS: readonly View[] = ['overview', 'docs', 'list', 'board'];
+/**
+ * Hash routes, so every screen can be linked and the back button works:
+ *   #/            dashboard
+ *   #/doc         scope document
+ *   #/tasks       task list
+ *   #/tasks/T3    task (or subtask, e.g. T3.2)
+ */
+export type Route =
+  | { view: 'dashboard' }
+  | { view: 'doc' }
+  | { view: 'tasks' }
+  | { view: 'item'; id: string };
 
-export interface Route {
-  view: View;
-  /** The task open in the drawer, if any. */
-  taskId: string | undefined;
-}
-
-/** Hash routing (`#/list?task=T3`) so any view or task can be linked and bookmarked. */
 export function useRoute(): Route {
-  const hash = useSyncExternalStore(subscribe, () => window.location.hash);
-  return parse(hash);
+  return parse(useSyncExternalStore(subscribe, () => window.location.hash));
 }
 
-export function navigate(route: Partial<Route>): void {
-  const current = parse(window.location.hash);
-  const view = route.view ?? current.view;
-  const taskId = 'taskId' in route ? route.taskId : current.taskId;
-  window.location.hash = `/${view}${taskId ? `?task=${encodeURIComponent(taskId)}` : ''}`;
-}
-
-export function href(view: View, taskId?: string): string {
-  return `#/${view}${taskId ? `?task=${encodeURIComponent(taskId)}` : ''}`;
-}
+export const paths = {
+  dashboard: '#/',
+  doc: '#/doc',
+  tasks: '#/tasks',
+  item: (id: string) => `#/tasks/${encodeURIComponent(id)}`,
+};
 
 function parse(hash: string): Route {
-  const [path = '', query = ''] = hash.replace(/^#\/?/, '').split('?');
-  const view = VIEWS.find((v) => v === path) ?? 'overview';
-  const taskId = new URLSearchParams(query).get('task') ?? undefined;
-  return { view, taskId };
+  const [section, id] = hash.replace(/^#\/?/, '').split('/');
+  if (section === 'doc') return { view: 'doc' };
+  if (section === 'tasks')
+    return id ? { view: 'item', id: decodeURIComponent(id) } : { view: 'tasks' };
+  return { view: 'dashboard' };
 }
 
 function subscribe(onChange: () => void): () => void {

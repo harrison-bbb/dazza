@@ -1,5 +1,5 @@
 import { basename } from 'node:path';
-import { nextTask, progress } from '../core/plan.js';
+import { currentTask, nextTask, progress } from '../core/plan.js';
 import type { Plan } from '../core/schema.js';
 import { McpTools } from '../mcp/server.js';
 import { paint } from './style.js';
@@ -12,14 +12,16 @@ export function greeting(plan: Plan | undefined, hasConversation = false): strin
       : "New project. Tell me what we're building, whenever you're ready.";
   }
 
-  const { done, total } = progress(plan);
+  const { closed, total } = progress(plan);
   if (!plan.approvedAt) {
     return `Plan drafted: ${total} tasks, waiting on your approval. Review it on the board (/board), then approve — or tell me what to change.`;
   }
-  if (done === total) return `All ${total} tasks done. Nice.`;
+  if (closed === total) return `All ${total} tasks closed. Nice.`;
 
+  const current = currentTask(plan);
+  if (current) return `${closed}/${total} tasks closed. Building ${current.id} ${current.title}.`;
   const next = nextTask(plan);
-  return `${done}/${total} tasks done.${next ? ` Next up: ${next.id} ${next.title}.` : ''}`;
+  return `${closed}/${total} tasks closed.${next ? ` Next up: ${next.id} ${next.title}.` : ''}`;
 }
 
 /** The task list shown after the plan is saved, so the user can see what they're approving. */

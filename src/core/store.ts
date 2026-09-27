@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { Event, Plan } from './schema.js';
+import { Event, type EventInput, Plan } from './schema.js';
 
 export const STATE_DIR = '.dazza';
 
@@ -54,7 +54,7 @@ export class Store {
     await this.writeAtomic(MANAGER_SESSION_FILE, `${JSON.stringify({ sessionId }, null, 2)}\n`);
   }
 
-  async appendEvent(event: Event): Promise<void> {
+  async appendEvent(event: EventInput): Promise<void> {
     await this.init();
     await appendFile(this.path('events.jsonl'), `${JSON.stringify(Event.parse(event))}\n`);
   }

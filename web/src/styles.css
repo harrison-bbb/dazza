@@ -2,84 +2,43 @@
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
 
-@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
-
 /*
- * Design tokens. Status colours are validated for colour-blind separation and
- * contrast against --panel in both themes; don't change them without re-checking.
+ * Charcoal, one accent. Greys carry the structure; colour is reserved for the
+ * few status icons that need it. No blues.
  */
-:root {
-  --bg: #f4f5f7;
-  --panel: #ffffff;
-  --raised: #eef0f3;
-  --line: #e3e6eb;
-  --line-strong: #cdd2da;
-  --ink: #0e1525;
-  --ink-2: #3a4254;
-  --muted: #677084;
-  --accent: #53c66a;
-  --accent-ink: #0b1a10;
-  --accent-text: #23843c;
-  --st-todo: #8b93a5;
-  --st-progress: #4382f2;
-  --st-review: #c28517;
-  --st-blocked: #e2466b;
-  --st-done: #2f9f4c;
-  color-scheme: light;
-}
-
-:root[data-theme="dark"] {
-  --bg: #0e1525;
-  --panel: #1c2333;
-  --raised: #252d40;
-  --line: #2b3245;
-  --line-strong: #3c445c;
-  --ink: #f5f9fc;
-  --ink-2: #c2c8d3;
-  --muted: #8a93a8;
-  --accent: #53c66a;
-  --accent-ink: #0b1a10;
-  --accent-text: #6fd184;
-  --st-todo: #5b6478;
-  --st-progress: #4382f2;
-  --st-review: #c28517;
-  --st-blocked: #e2466b;
-  --st-done: #3daf57;
-  color-scheme: dark;
-}
-
-@theme inline {
+@theme {
   --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono Variable", ui-monospace, monospace;
 
-  --color-bg: var(--bg);
-  --color-panel: var(--panel);
-  --color-raised: var(--raised);
-  --color-line: var(--line);
-  --color-line-strong: var(--line-strong);
-  --color-ink: var(--ink);
-  --color-ink-2: var(--ink-2);
-  --color-muted: var(--muted);
-  --color-accent: var(--accent);
-  --color-accent-ink: var(--accent-ink);
-  --color-accent-text: var(--accent-text);
-  --color-st-todo: var(--st-todo);
-  --color-st-progress: var(--st-progress);
-  --color-st-review: var(--st-review);
-  --color-st-blocked: var(--st-blocked);
-  --color-st-done: var(--st-done);
+  --color-bg: #161616;
+  --color-panel: #1b1b1b;
+  --color-hover: #222222;
+  --color-line: #2a2a2a;
+  --color-line-strong: #383838;
+  --color-ink: #ececec;
+  --color-ink-2: #b3b3b3;
+  --color-muted: #7d7d7d;
+  --color-faint: #575757;
+  --color-accent: #53c66a;
+  --color-accent-ink: #0d1a10;
+  --color-amber: #d4a24c;
+  --color-red: #e0604f;
 }
 
 @layer base {
+  html {
+    color-scheme: dark;
+  }
+
   body {
-    @apply bg-bg font-sans text-ink antialiased;
+    @apply bg-bg font-sans text-[14px] leading-6 text-ink antialiased;
   }
 
   ::selection {
-    @apply bg-accent text-accent-ink;
+    @apply bg-accent/30;
   }
 
   :focus-visible {
-    @apply outline-2 outline-offset-2 outline-accent;
+    @apply outline-1 outline-offset-2 outline-ink-2;
   }
 }

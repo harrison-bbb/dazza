@@ -17,7 +17,13 @@ export function scopeSections(markdown: string): ScopeSection[] {
     });
 }
 
-/** The "What I'll need from you" section, however the apostrophe was typed. */
-export function needsFromYou(markdown: string): string | undefined {
-  return scopeSections(markdown).find((s) => /^what i.ll need/i.test(s.title))?.body;
+/** The first sentence of the Overview, as a one-line summary of the project. */
+export function scopeSummary(markdown: string): string | undefined {
+  const overview = scopeSections(markdown).find((s) => /^overview/i.test(s.title))?.body;
+  return (
+    overview
+      ?.replace(/\s+/g, ' ')
+      .match(/^.*?[.!?](\s|$)/)?.[0]
+      .trim() ?? overview
+  );
 }

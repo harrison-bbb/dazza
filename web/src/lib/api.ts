@@ -9,13 +9,14 @@ export async function fetchProject(): Promise<ProjectSnapshot> {
   return res.json() as Promise<ProjectSnapshot>;
 }
 
-export function approvePlan(): Promise<ActionResponse> {
-  return post('/api/approve');
-}
+export const approvePlan = () => post('/api/approve');
+export const closeTask = (id: string) => post(`${task(id)}/close`);
+export const cancelTask = (id: string) => post(`${task(id)}/cancel`);
+export const requestChanges = (id: string, body: string) =>
+  post(`${task(id)}/request-changes`, { body });
+export const addComment = (id: string, body: string) => post(`${task(id)}/comments`, { body });
 
-export function addComment(taskId: string, body: string): Promise<ActionResponse> {
-  return post(`/api/tasks/${encodeURIComponent(taskId)}/comments`, { body });
-}
+const task = (id: string) => `/api/tasks/${encodeURIComponent(id)}`;
 
 async function post(path: string, body?: unknown): Promise<ActionResponse> {
   const res = await fetch(path, {

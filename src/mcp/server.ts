@@ -63,7 +63,9 @@ export function createMcpServer(store: Store): McpServer {
     {
       description:
         'Save the scope of work and task breakdown for the user to review and approve. ' +
-        'Call again with the full plan to revise it. Task status is managed by Dazza.',
+        'Call again with the full plan to revise it. New tasks and subtasks are `planned` by ' +
+        'default; set `backlog` for agreed nice-to-haves that should wait. After that, status ' +
+        'is managed by Dazza.',
       inputSchema: SavePlanInput.shape,
     },
     (input) => savePlan(store, input),

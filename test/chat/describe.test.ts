@@ -22,14 +22,14 @@ describe('greeting', () => {
 
   it('reports progress and the next task', () => {
     const plan = approved(
-      makePlan([makeTask({ id: 'T1', status: 'done' }), makeTask({ id: 'T2', title: 'Auth' })]),
+      makePlan([makeTask({ id: 'T1', status: 'closed' }), makeTask({ id: 'T2', title: 'Auth' })]),
     );
-    expect(greeting(plan)).toBe('1/2 tasks done. Next up: T2 Auth.');
+    expect(greeting(plan)).toBe('1/2 tasks closed. Next up: T2 Auth.');
   });
 
   it('celebrates (quietly) when everything is done', () => {
-    expect(greeting(approved(makePlan([makeTask({ id: 'T1', status: 'done' })])))).toBe(
-      'All 1 tasks done. Nice.',
+    expect(greeting(approved(makePlan([makeTask({ id: 'T1', status: 'closed' })])))).toBe(
+      'All 1 tasks closed. Nice.',
     );
   });
 });

@@ -1,44 +1,20 @@
 import type { ComponentProps, ReactNode } from 'react';
 import { cn } from '../lib/format';
 
-export function Card({ className, ...props }: ComponentProps<'section'>) {
-  return <section className={cn('rounded-xl border border-line bg-panel', className)} {...props} />;
-}
+type ButtonProps = ComponentProps<'button'> & { variant?: 'primary' | 'secondary' | 'quiet' };
 
-export function CardHeader({ title, action }: { title: ReactNode; action?: ReactNode }) {
-  return (
-    <header className="flex items-center justify-between gap-3 px-5 pt-4 pb-3">
-      <Label>{title}</Label>
-      {action}
-    </header>
-  );
-}
-
-/** Small uppercase mono label used for section headings. */
-export function Label({ className, ...props }: ComponentProps<'h2'>) {
-  return (
-    <h2
-      className={cn(
-        'font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted',
-        className,
-      )}
-      {...props}
-    />
-  );
-}
-
-type ButtonProps = ComponentProps<'button'> & { variant?: 'primary' | 'ghost' };
-
-export function Button({ variant = 'ghost', className, ...props }: ButtonProps) {
+export function Button({ variant = 'secondary', className, ...props }: ButtonProps) {
   return (
     <button
       type="button"
       className={cn(
-        'inline-flex h-9 items-center gap-2 rounded-lg px-3.5 text-sm font-semibold transition',
-        'disabled:cursor-not-allowed disabled:opacity-50',
-        variant === 'primary'
-          ? 'bg-accent text-accent-ink shadow-[inset_0_-2px_0_rgb(0_0_0/0.18)] hover:brightness-110 active:translate-y-px'
-          : 'border border-line bg-panel text-ink-2 hover:border-line-strong hover:text-ink',
+        'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-[13px] font-medium transition-colors',
+        'disabled:pointer-events-none',
+        variant === 'primary' &&
+          'bg-accent text-accent-ink hover:bg-accent/90 disabled:bg-hover disabled:text-faint',
+        variant !== 'primary' && 'disabled:opacity-40',
+        variant === 'secondary' && 'border border-line-strong text-ink hover:bg-hover',
+        variant === 'quiet' && 'px-2 text-muted hover:text-ink',
         className,
       )}
       {...props}
@@ -55,7 +31,7 @@ export function InlineText({ children }: { children: string }) {
     parts.push(
       <code
         key={match.index}
-        className="rounded border border-line bg-raised px-1 font-mono text-[0.85em] text-ink"
+        className="rounded bg-hover px-1 py-px font-mono text-[0.9em] text-ink"
       >
         {match[1]}
       </code>,
@@ -66,7 +42,16 @@ export function InlineText({ children }: { children: string }) {
   return parts;
 }
 
-/** A task id in mono, the way it's referenced everywhere. */
-export function TaskId({ id, className }: { id: string; className?: string }) {
-  return <span className={cn('font-mono text-xs text-muted tabular-nums', className)}>{id}</span>;
+export function Id({ children }: { children: string }) {
+  return <span className="font-mono text-[12px] text-muted">{children}</span>;
+}
+
+/** A quiet section heading. */
+export function Heading({ children, aside }: { children: ReactNode; aside?: ReactNode }) {
+  return (
+    <div className="mb-2 flex items-baseline justify-between">
+      <h2 className="text-[13px] font-medium text-muted">{children}</h2>
+      {aside && <span className="text-[12px] text-faint">{aside}</span>}
+    </div>
+  );
 }

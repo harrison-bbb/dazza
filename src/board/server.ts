@@ -6,7 +6,7 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
-import { addComment, approvePlan } from '../core/actions.js';
+import { addComment, approvePlan, cancelTask, closeTask, requestChanges } from '../core/actions.js';
 import type { Store } from '../core/store.js';
 import { CSRF_HEADER, type ProjectSnapshot } from './api.js';
 
@@ -47,10 +47,27 @@ export function createBoardApp(store: Store, projectRoot: string, webRoot: strin
   });
 
   app.post('/api/tasks/:id/comments', async (c) => {
-    const parsed = CommentBody.safeParse(await c.req.json().catch(() => undefined));
-    if (!parsed.success) return c.json({ ok: false, message: 'Expected { body }' }, 400);
-    const result = await addComment(store, c.req.param('id'), parsed.data.body);
+    const body = await readBody(c.req.raw);
+    if (body === undefined) return c.json({ ok: false, message: 'Expected { body }' }, 400);
+    const result = await addComment(store, c.req.param('id'), body);
     return c.json(result, result.ok ? 201 : 400);
+  });
+
+  app.post('/api/tasks/:id/close', async (c) => {
+    const result = await closeTask(store, c.req.param('id'));
+    return c.json(result, result.ok ? 200 : 409);
+  });
+
+  app.post('/api/tasks/:id/cancel', async (c) => {
+    const result = await cancelTask(store, c.req.param('id'));
+    return c.json(result, result.ok ? 200 : 409);
+  });
+
+  app.post('/api/tasks/:id/request-changes', async (c) => {
+    const body = await readBody(c.req.raw);
+    if (body === undefined) return c.json({ ok: false, message: 'Expected { body }' }, 400);
+    const result = await requestChanges(store, c.req.param('id'), body);
+    return c.json(result, result.ok ? 200 : 409);
   });
 
   // Pushes a `change` event whenever project files change, from any process
@@ -119,6 +136,11 @@ function listen(app: Hono, port: number): Promise<ReturnType<typeof serve>> {
 
 function isAddressInUse(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'EADDRINUSE';
+}
+
+async function readBody(request: Request): Promise<string | undefined> {
+  const parsed = CommentBody.safeParse(await request.json().catch(() => undefined));
+  return parsed.success ? parsed.data.body : undefined;
 }
 
 function debounce(fn: () => void, ms: number): () => void {

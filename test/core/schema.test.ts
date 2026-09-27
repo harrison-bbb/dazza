@@ -9,7 +9,7 @@ describe('Plan schema', () => {
       tasks: [{ id: 'T1', title: 'Init', description: 'Set up', acceptanceCriteria: ['Runs'] }],
     });
     expect(plan.approvedAt).toBeNull();
-    expect(plan.tasks[0]).toMatchObject({ status: 'todo', subtasks: [], dependsOn: [] });
+    expect(plan.tasks[0]).toMatchObject({ status: 'planned', subtasks: [], dependsOn: [] });
   });
 
   it('requires at least one acceptance criterion', () => {
@@ -28,7 +28,10 @@ describe('Plan schema', () => {
   });
 
   it('rejects subtasks that do not belong to their parent', () => {
-    const task = makeTask({ id: 'T1', subtasks: [{ id: 'T2.1', title: 'Wrong', done: false }] });
+    const task = makeTask({
+      id: 'T1',
+      subtasks: [{ id: 'T2.1', title: 'Wrong', description: '', status: 'planned' }],
+    });
     expect(Plan.safeParse(makePlan([task])).success).toBe(false);
   });
 });

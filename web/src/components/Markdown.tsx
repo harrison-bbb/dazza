@@ -1,49 +1,42 @@
-import type { ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { slugify } from '../lib/format';
 
 const components: Components = {
-  h1: ({ children }) => (
-    <h1 className="mt-2 mb-4 text-2xl font-semibold tracking-tight">{children}</h1>
-  ),
+  h1: ({ children }) => <h1 className="mt-10 mb-3 text-xl font-semibold">{children}</h1>,
   h2: ({ children }) => (
-    <h2
-      id={slugify(textOf(children))}
-      className="mt-10 mb-3 scroll-mt-6 border-b border-line pb-2 text-lg font-semibold tracking-tight first:mt-0"
-    >
-      {children}
-    </h2>
+    <h2 className="mt-10 mb-3 text-[15px] font-semibold text-ink first:mt-0">{children}</h2>
   ),
   h3: ({ children }) => <h3 className="mt-6 mb-2 font-semibold">{children}</h3>,
-  p: ({ children }) => <p className="my-3 leading-7 text-ink-2">{children}</p>,
-  ul: ({ children }) => <ul className="my-3 space-y-1.5">{children}</ul>,
-  ol: ({ children }) => <ol className="my-3 list-decimal space-y-1.5 pl-5">{children}</ol>,
-  li: ({ children }) => (
-    <li className="relative pl-5 leading-7 text-ink-2 before:absolute before:top-[0.7em] before:left-0.5 before:size-1.5 before:rounded-[2px] before:bg-accent">
-      {children}
-    </li>
+  p: ({ children }) => <p className="my-3 text-ink-2 leading-7">{children}</p>,
+  ul: ({ children }) => (
+    <ul className="my-3 list-disc space-y-1 pl-5 marker:text-faint">{children}</ul>
   ),
+  ol: ({ children }) => (
+    <ol className="my-3 list-decimal space-y-1 pl-5 marker:text-faint">{children}</ol>
+  ),
+  li: ({ children }) => <li className="pl-1 text-ink-2 leading-7">{children}</li>,
   strong: ({ children }) => <strong className="font-semibold text-ink">{children}</strong>,
   a: ({ children, href }) => (
-    <a href={href} className="text-accent-text underline underline-offset-2">
+    <a
+      href={href}
+      className="text-ink underline decoration-faint underline-offset-2 hover:decoration-ink"
+    >
       {children}
     </a>
   ),
   code: ({ children }) => (
-    <code className="rounded-md border border-line bg-raised px-1.5 py-0.5 font-mono text-[0.85em] text-ink">
-      {children}
-    </code>
+    <code className="rounded bg-hover px-1 py-px font-mono text-[0.9em] text-ink">{children}</code>
   ),
   table: ({ children }) => (
-    <div className="my-4 overflow-x-auto rounded-lg border border-line">
-      <table className="w-full text-sm">{children}</table>
+    <div className="my-4 overflow-x-auto">
+      <table className="w-full text-[13px]">{children}</table>
     </div>
   ),
   th: ({ children }) => (
-    <th className="border-b border-line bg-raised px-3 py-2 text-left font-medium">{children}</th>
+    <th className="border-b border-line py-2 pr-4 text-left font-medium text-muted">{children}</th>
   ),
-  td: ({ children }) => <td className="border-b border-line px-3 py-2 text-ink-2">{children}</td>,
+  td: ({ children }) => <td className="border-b border-line py-2 pr-4 text-ink-2">{children}</td>,
+  hr: () => <hr className="my-8 border-line" />,
 };
 
 export function Markdown({ children }: { children: string }) {
@@ -52,10 +45,4 @@ export function Markdown({ children }: { children: string }) {
       {children}
     </ReactMarkdown>
   );
-}
-
-function textOf(node: ReactNode): string {
-  if (typeof node === 'string' || typeof node === 'number') return String(node);
-  if (Array.isArray(node)) return node.map(textOf).join('');
-  return '';
 }

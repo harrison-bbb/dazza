@@ -33,7 +33,7 @@ describe('savePlan', () => {
     await project.store.writePlan({
       version: 1,
       approvedAt: '2026-09-27T10:00:00Z',
-      tasks: [makeTask({ id: 'T1', status: 'done' }), makeTask({ id: 'T2' })],
+      tasks: [makeTask({ id: 'T1', status: 'closed' }), makeTask({ id: 'T2' })],
     });
     const result = await savePlan(project.store, {
       scope: '# Bigger\n',
@@ -43,7 +43,7 @@ describe('savePlan', () => {
     const plan = await project.store.readPlan();
     expect(result.isError).toBeUndefined();
     expect(plan?.approvedAt).toBeNull();
-    expect(plan?.tasks.map((t) => t.status)).toEqual(['done', 'todo', 'todo']);
+    expect(plan?.tasks.map((t) => t.status)).toEqual(['closed', 'planned', 'planned']);
     expect((await project.store.readEvents()).at(-1)?.type).toBe('scope_change_proposed');
   });
 
@@ -51,12 +51,12 @@ describe('savePlan', () => {
     await project.store.writePlan({
       version: 1,
       approvedAt: '2026-09-27T10:00:00Z',
-      tasks: [makeTask({ id: 'T1', status: 'in_progress' })],
+      tasks: [makeTask({ id: 'T1', status: 'building' })],
     });
     const result = await savePlan(project.store, { scope: 'x', tasks: [makeTask({ id: 'T9' })] });
 
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain('T1 (in_progress)');
+    expect(JSON.stringify(result.content)).toContain('T1 (building)');
     expect((await project.store.readPlan())?.tasks[0]?.id).toBe('T1');
   });
 });

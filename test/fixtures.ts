@@ -7,7 +7,7 @@ export function makeTask(overrides: Partial<Task> & Pick<Task, 'id'>): Task {
     acceptanceCriteria: ['The thing is done'],
     subtasks: [],
     dependsOn: [],
-    status: 'todo',
+    status: 'planned',
     ...overrides,
   };
 }

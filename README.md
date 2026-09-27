@@ -38,7 +38,7 @@ dazza          # start talking
 
 Just type to talk to Dazza. `/status`, `/board`, `/approve` and `/help` are shortcuts.
 
-While Dazza runs, a project board is served at `http://localhost:4777`. It has an overview dashboard, the scope doc, and list and kanban views of every task. It opens automatically when your first plan is ready, updates live, and lets you approve the plan or leave notes on tasks. Run `dazza board` to open it without starting a chat.
+While Dazza runs, a project board is served at `http://localhost:4777`: a dashboard, the scope document, the task list, and a page for every task and subtask with a comment thread shared with Dazza. It opens when your first plan is ready and updates live. Tasks move through backlog → planned → building → in review (or blocked). Only you close or cancel them, so nothing is done until you say so. Run `dazza board` to open it without starting a chat.
 
 ## Development
 
