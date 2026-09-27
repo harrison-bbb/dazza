@@ -33,7 +33,7 @@ interface AgentProvider {
 
 A `Connection` (in `~/.config/dazza/connection.json`) is a provider plus a method:
 
-- **subscription**: the CLI's own sign-in. Dazza removes stray API key variables from the child's environment (`ANTHROPIC_API_KEY` for Claude Code, `OPENAI_API_KEY` and `CODEX_API_KEY` for Codex), so billing can't quietly switch to a key in the user's shell.
+- **subscription**: the CLI's own sign-in. Dazza removes stray API key variables from the child's environment (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX` for Claude Code, `OPENAI_API_KEY` and `CODEX_API_KEY` for Codex), so billing can't quietly switch to a key in the user's shell.
 - **api-key**: Dazza passes the saved key in (`ANTHROPIC_API_KEY` or `CODEX_API_KEY`).
 
 Prompts always go on stdin, never as a command-line argument.

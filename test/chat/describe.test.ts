@@ -30,7 +30,21 @@ describe('greeting', () => {
     const plan = approved(
       makePlan([makeTask({ id: 'T1', status: 'closed' }), makeTask({ id: 'T2', title: 'Auth' })]),
     );
-    expect(greeting(plan)).toBe('1/2 tasks closed. Next up: T2 Auth.');
+    expect(greeting(plan)).toBe('1/2 tasks closed. Next up: T2 Auth. Run /build to start.');
+  });
+
+  it('says what’s waiting on the user', () => {
+    const plan = approved(
+      makePlan([
+        makeTask({ id: 'T1', status: 'review', title: 'Editor' }),
+        makeTask({ id: 'T2', status: 'blocked' }),
+        makeTask({ id: 'T3', status: 'blocked' }),
+        makeTask({ id: 'T4', status: 'building', title: 'Tags' }),
+      ]),
+    );
+    expect(greeting(plan)).toBe(
+      '0/4 tasks closed. Building T4 Tags. T1 Editor is waiting for your review. 2 tasks are blocked on you (T2, T3).',
+    );
   });
 
   it('celebrates (quietly) when everything is done', () => {

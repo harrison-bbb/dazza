@@ -72,7 +72,11 @@ export const COMMANDS: Command[] = [
     description: 'Approve the drafted plan so Dazza can start',
     async run({ store, say }) {
       const result = await approvePlan(store);
-      say(result.ok ? `${paint.green('✔')} ${result.message}` : result.message);
+      say(
+        result.ok
+          ? `${paint.green('✔')} ${result.message} Run ${paint.bold('/build')} when you want me to start.`
+          : result.message,
+      );
     },
   },
   {

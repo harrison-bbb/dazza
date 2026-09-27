@@ -63,4 +63,37 @@ describe('spawnLines abort', () => {
     };
     await expect(run()).rejects.toThrow(/abort/i);
   });
+
+  it('stops the whole tree on abort, including what the process started', async () => {
+    // The child starts a grandchild (think: a dev server) and reports its pid.
+    const script = `
+      const { spawn } = require('node:child_process');
+      const kid = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+      console.log(kid.pid);
+      setInterval(() => {}, 1000);
+    `;
+    const controller = new AbortController();
+    let grandchild = 0;
+    const run = async () => {
+      for await (const line of spawnLines(node, ['-e', script], {
+        cwd,
+        signal: controller.signal,
+      })) {
+        grandchild = Number(line);
+        controller.abort();
+      }
+    };
+    await run().catch(() => {});
+    const alive = () => {
+      try {
+        process.kill(grandchild, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    for (let i = 0; i < 50 && alive(); i++) await new Promise((r) => setTimeout(r, 20));
+    expect(grandchild).toBeGreaterThan(0);
+    expect(alive()).toBe(false);
+  });
 });

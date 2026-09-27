@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 import { currentTask, nextTask, progress } from '../core/plan.js';
-import type { Plan } from '../core/schema.js';
+import type { Plan, Task } from '../core/schema.js';
 import { McpTools } from '../mcp/server.js';
 import { paint } from './style.js';
 
@@ -26,9 +26,26 @@ export function greeting(plan: Plan | undefined, context: GreetingContext = {}):
   if (closed === total) return `All ${total} tasks closed. Nice.`;
 
   const current = currentTask(plan);
-  if (current) return `${closed}/${total} tasks closed. Building ${current.id} ${current.title}.`;
-  const next = nextTask(plan);
-  return `${closed}/${total} tasks closed.${next ? ` Next up: ${next.id} ${next.title}.` : ''}`;
+  const next = current ? undefined : nextTask(plan);
+  const withStatus = (status: Task['status']) => plan.tasks.filter((t) => t.status === status);
+  return [
+    `${closed}/${total} tasks closed.`,
+    current && `Building ${current.id} ${current.title}.`,
+    waiting(withStatus('review'), 'waiting for your review'),
+    waiting(withStatus('blocked'), 'blocked on you'),
+    next && `Next up: ${next.id} ${next.title}. Run /build to start.`,
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+/** "T3 Editor is waiting for your review", or "2 tasks are … (T3, T4)". */
+function waiting(tasks: Task[], what: string): string | undefined {
+  const [only] = tasks;
+  if (!only) return undefined;
+  return tasks.length === 1
+    ? `${only.id} ${only.title} is ${what}.`
+    : `${tasks.length} tasks are ${what} (${tasks.map((t) => t.id).join(', ')}).`;
 }
 
 /** The task list shown after the plan is saved, so the user can see what they're approving. */

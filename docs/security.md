@@ -16,7 +16,7 @@ Per-user config lives in `~/.config/dazza` (or `$XDG_CONFIG_HOME/dazza`, or `$DA
 
 Tokens are plain text in these files, protected only by file permissions. Anyone who can read your home directory as you can read them. Moving them to the OS keychain is planned.
 
-On a subscription connection, Dazza never sees your Claude or ChatGPT credentials. The agent CLI keeps its own sign-in. Dazza also strips `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and `CODEX_API_KEY` from the agent's environment, so a key left in your shell can't switch billing without you knowing.
+On a subscription connection, Dazza never sees your Claude or ChatGPT credentials. The agent CLI keeps its own sign-in. Dazza also strips variables that change billing from the agent's environment (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `OPENAI_API_KEY`, `CODEX_API_KEY`), so something left in your shell can't switch billing without you knowing.
 
 Tokens are never put in log output. The Telegram token is part of every Bot API URL, so errors report Telegram's description only, never the URL.
 

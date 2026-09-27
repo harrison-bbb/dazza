@@ -67,7 +67,12 @@ export type BuildEvent =
   /** Holding off until a usage limit resets, or a busy service settles. */
   | { type: 'waiting'; task: Task; reason: 'usage_limit' | 'overloaded'; until: string }
   | { type: 'retrying'; task: Task; reason: string }
-  | { type: 'stopped'; reason: string };
+  /**
+   * The build ended. `idle`: nothing is ready to build (it's all in review,
+   * blocked, or done), so it can pick up again when something is. Otherwise
+   * the user has to sort something out first.
+   */
+  | { type: 'stopped'; reason: string; idle?: boolean };
 
 /** How one run of the worker ended. */
 type Attempt =
@@ -139,7 +144,7 @@ async function* buildTasks(options: BuilderOptions): AsyncGenerator<BuildEvent> 
     }
     const task = nextTask(plan);
     if (!task) {
-      yield { type: 'stopped', reason: idleReason(plan) };
+      yield { type: 'stopped', reason: idleReason(plan), idle: true };
       return;
     }
 

@@ -213,6 +213,29 @@ describe('MCP tools, called through a real client', () => {
     expect(second).not.toContain('Make it blue');
   });
 
+  it('keeps the builder to the task it’s building', async () => {
+    await project.store.writePlan(
+      makePlan([
+        makeTask({ id: 'T1', status: 'building' }),
+        makeTask({ id: 'T2', status: 'closed' }),
+      ]),
+    );
+    const worker = await connect('worker');
+    const blocked = await worker.callTool({
+      name: 'block',
+      arguments: { taskId: 'T2', question: 'Reopen this?' },
+    });
+    expect(blocked.isError).toBe(true);
+    expect(text(blocked)).toContain("You're building T1; T2 isn't part of it");
+    expect((await project.store.readPlan())?.tasks[1]?.status).toBe('closed');
+
+    const own = await worker.callTool({
+      name: 'comment',
+      arguments: { id: 'T1', body: 'Using Zod' },
+    });
+    expect(own.isError).toBeFalsy();
+  });
+
   it('edits, adds, moves and comments on work', async () => {
     await project.store.writePlan(
       makePlan([makeTask({ id: 'T1', status: 'review' }), makeTask({ id: 'T2' })]),

@@ -275,8 +275,9 @@ export class Terminal {
   private quit(): void {
     this.close();
     stdout.write('\x1b[?25h\n');
-    // The whole process group, so agent CLIs Dazza started stop too.
-    process.kill(0, 'SIGINT');
+    // Exiting (rather than dying to a signal) runs the exit hooks that stop
+    // the agents and app servers Dazza started.
+    process.exit(130);
   }
 
   private async nextLine(prompt: string): Promise<string | undefined> {

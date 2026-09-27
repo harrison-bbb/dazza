@@ -40,8 +40,9 @@ if (args.includes('--input-format')) {
   );
   setTimeout(() => {}, 60_000);
 } else if (prompt === 'ENV') {
-  // Reports which API key (if any) it was given, so tests can check billing mode.
-  const key = process.env.ANTHROPIC_API_KEY ?? 'none';
+  // Reports what it was given that decides billing, so tests can check billing mode.
+  const billing = ['ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK'].filter((v) => process.env[v]);
+  const key = [process.env.ANTHROPIC_API_KEY ?? 'none', ...billing].join(' ');
   console.log(
     JSON.stringify({
       type: 'result',

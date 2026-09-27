@@ -2,6 +2,7 @@ import { type BuildEvent, build } from '../core/builder.js';
 import type { Config } from '../core/config.js';
 import { clock, explainAgentError } from '../core/errors.js';
 import type { Manager } from '../core/manager.js';
+import { nextTask } from '../core/plan.js';
 import type { Store } from '../core/store.js';
 import { McpTools } from '../mcp/server.js';
 import type { Remote } from '../notify/channel.js';
@@ -77,6 +78,12 @@ export class ChatSession {
   >();
   private chat: { controller: AbortController; done: Promise<void> } | undefined;
   private building: { controller: AbortController; done: Promise<void> } | undefined;
+  /**
+   * The user wants the plan built: they started a build, and haven't stopped it
+   * and it hasn't hit a problem. A build that ran out of ready work picks up
+   * again by itself when something is ready (see `resumeIfReady`).
+   */
+  private keepBuilding = false;
 
   constructor(private readonly options: SessionOptions) {}
 
@@ -100,6 +107,7 @@ export class ChatSession {
   /** Start building in the background. Returns false if a build is already running. */
   startBuild(): boolean {
     if (this.building) return false;
+    this.keepBuilding = true;
     const controller = new AbortController();
     this.building = { controller, done: this.runBuild(controller.signal) };
     return true;
@@ -107,10 +115,25 @@ export class ChatSession {
 
   /** Stop the build; the current task is paused and resumes next time. */
   async stopBuild(): Promise<void> {
+    this.keepBuilding = false;
     if (!this.building) return;
     this.options.output.status('build', 'Stopping');
     this.building.controller.abort();
     await this.building.done;
+  }
+
+  /**
+   * Start building again if the user wants the plan built, nothing is running,
+   * and a task is ready, e.g. once they've answered a blocked task. Resolves the
+   * task picked up, if any.
+   */
+  async resumeIfReady(): Promise<string | undefined> {
+    if (!this.keepBuilding || this.building) return undefined;
+    const plan = await this.options.store.readPlan();
+    const task = plan?.approvedAt ? nextTask(plan) : undefined;
+    if (!task) return undefined;
+    this.startBuild();
+    return task.id;
   }
 
   /** Stop answering: drop queued messages and cut off the current reply. */
@@ -165,7 +188,8 @@ export class ChatSession {
       for await (const event of manager.send(message, signal)) {
         this.countUsage(event);
         this.noticeShares(event);
-        if (event.type === 'retry') output.status('chat', retryStatus(event));
+        if (event.type === 'retry')
+          output.status('chat', retryStatus(event, this.options.provider.name));
         if (event.type === 'text') {
           reply.push(event.text);
           output.say(renderInline(event.text));
@@ -203,7 +227,8 @@ export class ChatSession {
         if (event.type === 'agent') {
           this.countUsage(event.event);
           this.noticeShares(event.event);
-          if (event.event.type === 'retry') output.status('build', retryStatus(event.event));
+          if (event.event.type === 'retry')
+            output.status('build', retryStatus(event.event, this.options.provider.name));
         }
         if (event.type === 'task_started') output.status('build', `Building ${event.task.id}`);
         if (event.type === 'waiting' && event.reason === 'usage_limit') {
@@ -211,9 +236,12 @@ export class ChatSession {
         }
         const text = render(event, await store.readPlan());
         if (text) output.print(text);
+        // A problem (no credit, a sign-in to fix) needs the user before building again.
+        if (event.type === 'stopped' && !event.idle) this.keepBuilding = false;
         onBuildEvent?.(event);
       }
     } catch (error) {
+      this.keepBuilding = false;
       output.say(paint.red(`Build stopped: ${errorMessage(error)}`));
     } finally {
       this.building = undefined;
@@ -258,8 +286,8 @@ export class ChatSession {
   }
 }
 
-function retryStatus(event: Extract<AgentEvent, { type: 'retry' }>): string {
-  return `Anthropic didn’t answer; retrying (${event.attempt}/${event.maxRetries})`;
+function retryStatus(event: Extract<AgentEvent, { type: 'retry' }>, provider: string): string {
+  return `No answer from ${provider}; retrying (${event.attempt}/${event.maxRetries})`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

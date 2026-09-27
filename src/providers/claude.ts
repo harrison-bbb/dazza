@@ -12,6 +12,14 @@ import type {
   RunUsage,
 } from './types.js';
 
+/** Environment variables that change who Claude Code bills, or how it signs in. */
+const BILLING_ENV = [
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'CLAUDE_CODE_USE_BEDROCK',
+  'CLAUDE_CODE_USE_VERTEX',
+];
+
 /**
  * Drives the user's installed `claude` CLI in headless mode, so authentication
  * (subscription or API key) is whatever the user already set up for Claude Code.
@@ -29,12 +37,14 @@ export class ClaudeProvider implements AgentProvider {
   }
 
   /**
-   * The environment Claude Code runs with. With an API key, Dazza passes it in;
-   * on a subscription, a stray ANTHROPIC_API_KEY in the user's shell is removed
-   * so it can't quietly switch them to pay-as-you-go billing.
+   * The environment Claude Code runs with: only the connection the user chose
+   * decides billing. Anything in their shell that would switch it (a stray API
+   * key or auth token, or Bedrock/Vertex) is removed. With an API key, Dazza
+   * passes that key in.
    */
   private env(): NodeJS.ProcessEnv {
-    const { ANTHROPIC_API_KEY: _, ...env } = process.env;
+    const env = { ...process.env };
+    for (const name of BILLING_ENV) delete env[name];
     return this.connection?.method === 'api-key'
       ? { ...env, ANTHROPIC_API_KEY: this.connection.apiKey }
       : env;

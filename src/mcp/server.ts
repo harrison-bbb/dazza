@@ -293,6 +293,21 @@ function registerWorkerTools(server: McpServer, store: Store): void {
     const news = await takeNewMessages(store, taskOrSubtaskId.split('.')[0] ?? taskOrSubtaskId);
     return toResult(result, news);
   };
+  // The builder works on one task: its tools reach that task and its subtasks, nothing else.
+  const ownTask = async (
+    id: string,
+    act: () => Promise<CallToolResult>,
+  ): Promise<CallToolResult> => {
+    const building = (await store.readPlan())?.tasks.find((t) => t.status === 'building');
+    const taskId = id.split('.')[0];
+    if (!building) return failure('No task is being built right now.');
+    if (taskId !== building.id) {
+      return failure(
+        `You're building ${building.id}; ${id} isn't part of it. Leave other tasks alone, and mention anything about them in a comment on ${building.id}.`,
+      );
+    }
+    return act();
+  };
 
   server.registerTool(
     'check_messages',
@@ -302,7 +317,8 @@ function registerWorkerTools(server: McpServer, store: Store): void {
         'between steps when you have been working for a while without other Dazza tool calls.',
       inputSchema: { taskId: z.string() },
     },
-    async ({ taskId }) => withNews(taskId, { ok: true, message: 'Checked.' }),
+    async ({ taskId }) =>
+      ownTask(taskId, () => withNews(taskId, { ok: true, message: 'Checked.' })),
   );
 
   server.registerTool(
@@ -314,7 +330,9 @@ function registerWorkerTools(server: McpServer, store: Store): void {
       inputSchema: { id: z.string(), body: z.string().min(1), screenshots: Attachments },
     },
     async ({ id, body, screenshots }) =>
-      withNews(id, await addComment(store, id, body, { actor: 'dazza', images: screenshots })),
+      ownTask(id, async () =>
+        withNews(id, await addComment(store, id, body, { actor: 'dazza', images: screenshots })),
+      ),
   );
 
   server.registerTool(
@@ -323,7 +341,8 @@ function registerWorkerTools(server: McpServer, store: Store): void {
       description: 'Mark a subtask of the task you are building as started or finished.',
       inputSchema: { id: z.string(), status: z.enum(['building', 'closed']) },
     },
-    async ({ id, status }) => withNews(id, await setSubtaskStatus(store, id, status)),
+    async ({ id, status }) =>
+      ownTask(id, async () => withNews(id, await setSubtaskStatus(store, id, status))),
   );
 
   server.registerTool(
@@ -336,7 +355,9 @@ function registerWorkerTools(server: McpServer, store: Store): void {
       inputSchema: { taskId: z.string(), question: z.string().min(1), screenshots: Attachments },
     },
     async ({ taskId, question, screenshots }) =>
-      withNews(taskId, await blockTask(store, taskId, question, { images: screenshots })),
+      ownTask(taskId, async () =>
+        withNews(taskId, await blockTask(store, taskId, question, { images: screenshots })),
+      ),
   );
 
   server.registerTool(
@@ -347,7 +368,8 @@ function registerWorkerTools(server: McpServer, store: Store): void {
         'Only call this once the acceptance criteria are met and the checks pass.',
       inputSchema: { taskId: z.string(), ...WorkReport.shape },
     },
-    async ({ taskId, ...report }) => toResult(await submitTask(store, taskId, report)),
+    async ({ taskId, ...report }) =>
+      ownTask(taskId, async () => toResult(await submitTask(store, taskId, report))),
   );
 }
 

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ChatSession } from '../../src/chat/session.js';
+import { setStatus } from '../../src/core/actions.js';
 import { Manager } from '../../src/core/manager.js';
-import { submitTask } from '../../src/core/work.js';
+import { blockTask, submitTask } from '../../src/core/work.js';
 import { Git } from '../../src/git/git.js';
 import type { AgentRunOptions } from '../../src/providers/types.js';
 import { FakeProvider } from '../fakes.js';
@@ -91,5 +92,31 @@ describe('ChatSession', () => {
     await session.stopBuild();
     expect(session.isBuilding).toBe(false);
     expect((await project.store.readPlan())?.tasks[0]?.status).toBe('planned');
+  });
+
+  it('picks the build back up once a blocked task is answered, unless the user stopped it', async () => {
+    let runs = 0;
+    provider.onRun = async (options) => {
+      if (!options.autonomous) return;
+      if (runs++ === 0) await blockTask(project.store, 'T1', 'Which database?');
+      else await submitTask(project.store, 'T1', { summary: 'Done', howToVerify: ['x'] });
+    };
+    session.startBuild();
+    await session.idle();
+    expect((await project.store.readPlan())?.tasks[0]?.status).toBe('blocked');
+    expect(await session.resumeIfReady()).toBeUndefined(); // nothing's ready yet
+
+    await setStatus(project.store, 'T1', 'planned', 'Postgres');
+    expect(await session.resumeIfReady()).toBe('T1');
+    await session.idle();
+    expect((await project.store.readPlan())?.tasks[0]?.status).toBe('review');
+
+    // Once the user stops building, answering doesn't start it again.
+    await session.stopBuild();
+    await project.store.writePlan({
+      ...makePlan([makeTask({ id: 'T2' })]),
+      approvedAt: '2026-09-27T10:00:00Z',
+    });
+    expect(await session.resumeIfReady()).toBeUndefined();
   });
 });

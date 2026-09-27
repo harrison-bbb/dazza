@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'node:child_process';
+import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
 
@@ -60,7 +60,9 @@ export interface SpawnLinesOptions {
 
 /**
  * Spawn a long-running command and yield its stdout line by line.
- * Throws `CommandError` if it exits non-zero. Stopping iteration early kills the process.
+ * Throws `CommandError` if it exits non-zero. Stopping iteration early, or the
+ * signal, stops the process and everything it started: an agent's dev servers
+ * and test watchers run in its process group, and go with it.
  */
 export async function* spawnLines(
   command: string,
@@ -70,9 +72,14 @@ export async function* spawnLines(
   const child = spawn(command, args, {
     cwd: options.cwd,
     stdio: 'pipe',
+    // Its own process group, so the whole tree can be stopped together.
+    detached: GROUPS,
     ...(options.env && { env: options.env }),
-    ...(options.signal && { signal: options.signal }),
   });
+  const stop = () => stopTree(child);
+  if (options.signal?.aborted) stop();
+  options.signal?.addEventListener('abort', stop);
+  if (child.pid) running.add(child.pid);
   if (options.keepStdinOpen) child.stdin.write(options.input ?? '');
   else child.stdin.end(options.input);
 
@@ -95,9 +102,38 @@ export async function* spawnLines(
       yield line;
     }
     const exitCode = await exited;
+    // Stopped on purpose: say so, rather than reporting the kill as a failure.
+    options.signal?.throwIfAborted();
     if (exitCode !== 0) throw new CommandError(command, exitCode, stderr);
   } finally {
-    if (child.exitCode === null) child.kill();
+    options.signal?.removeEventListener('abort', stop);
+    if (child.exitCode === null) stop();
+    if (child.pid) running.delete(child.pid);
+  }
+}
+
+/** Process groups are a POSIX thing; on Windows, kill the process itself. */
+const GROUPS = process.platform !== 'win32';
+/** Give a process tree this long to stop politely before it's killed. */
+const KILL_AFTER_MS = 3_000;
+/** Groups still running, stopped if Dazza exits first. */
+const running = new Set<number>();
+process.once('exit', () => {
+  for (const pid of running) signalTree(pid, 'SIGKILL');
+});
+
+function stopTree(child: ChildProcess): void {
+  if (!child.pid || child.exitCode !== null) return;
+  const pid = child.pid;
+  signalTree(pid, 'SIGTERM');
+  setTimeout(() => signalTree(pid, 'SIGKILL'), KILL_AFTER_MS).unref();
+}
+
+function signalTree(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(GROUPS ? -pid : pid, signal);
+  } catch {
+    // Already gone.
   }
 }
 

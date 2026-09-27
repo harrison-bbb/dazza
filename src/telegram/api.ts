@@ -2,8 +2,11 @@ import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { z } from 'zod';
 
+/** Buttons under a message, e.g. Approve / Request changes. */
+export type Keyboard = { text: string; callback_data: string }[][];
+
 /**
- * The three Telegram Bot API calls Dazza needs, over plain fetch. The token is
+ * The Telegram Bot API calls Dazza needs, over plain fetch. The token is
  * part of every URL, so it's never logged: errors carry Telegram's description only.
  */
 export class TelegramApi {
@@ -26,16 +29,59 @@ export class TelegramApi {
   ): Promise<Update[]> {
     return this.call(
       'getUpdates',
-      { timeout, allowed_updates: ['message'], ...(offset !== undefined && { offset }) },
+      {
+        timeout,
+        allowed_updates: ['message', 'callback_query'],
+        ...(offset !== undefined && { offset }),
+      },
       z.array(Update),
       signal,
     );
   }
 
-  async sendMessage(chatId: string, text: string): Promise<void> {
-    await this.call(
+  /** Send a message; resolves its id, so it can be edited or replied to. */
+  async sendMessage(
+    chatId: string,
+    text: string,
+    options: { keyboard?: Keyboard; replyTo?: number; forceReply?: boolean } = {},
+  ): Promise<number> {
+    const markup = options.keyboard
+      ? { inline_keyboard: options.keyboard }
+      : options.forceReply
+        ? { force_reply: true }
+        : undefined;
+    const sent = await this.call(
       'sendMessage',
-      { chat_id: chatId, text, link_preview_options: { is_disabled: true } },
+      {
+        chat_id: chatId,
+        text,
+        link_preview_options: { is_disabled: true },
+        ...(markup && { reply_markup: markup }),
+        ...(options.replyTo && { reply_parameters: { message_id: options.replyTo } }),
+      },
+      z.object({ message_id: z.number() }),
+    );
+    return sent.message_id;
+  }
+
+  /** Replace a message's buttons, or remove them. */
+  async setKeyboard(chatId: string, messageId: number, keyboard?: Keyboard): Promise<void> {
+    await this.call(
+      'editMessageReplyMarkup',
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: { inline_keyboard: keyboard ?? [] },
+      },
+      z.unknown(),
+    );
+  }
+
+  /** Acknowledge a button press, so Telegram stops showing it as loading. */
+  async answerButton(callbackId: string, text?: string): Promise<void> {
+    await this.call(
+      'answerCallbackQuery',
+      { callback_query_id: callbackId, ...(text && { text }) },
       z.unknown(),
     );
   }
@@ -103,12 +149,25 @@ const Envelope = z.object({
 
 const BotUser = z.object({ username: z.string(), first_name: z.string() });
 
+const Chat = z.object({ id: z.number(), type: z.string(), first_name: z.string().optional() });
+
 export const Update = z.object({
   update_id: z.number(),
   message: z
     .object({
-      chat: z.object({ id: z.number(), type: z.string(), first_name: z.string().optional() }),
+      message_id: z.number().default(0),
+      chat: Chat,
       text: z.string().optional(),
+      /** The message this one replies to, e.g. a notification or a "what should change?" */
+      reply_to_message: z.object({ message_id: z.number() }).optional(),
+    })
+    .optional(),
+  /** A button press. */
+  callback_query: z
+    .object({
+      id: z.string(),
+      data: z.string().optional(),
+      message: z.object({ message_id: z.number(), chat: Chat }).optional(),
     })
     .optional(),
 });

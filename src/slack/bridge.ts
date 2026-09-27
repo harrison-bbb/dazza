@@ -2,9 +2,10 @@ import { z } from 'zod';
 import type { SlackLink } from '../core/config.js';
 import {
   type Channel,
+  type ChannelHandlers,
   isRemoteCommand,
+  type Outcome,
   type Remote,
-  type RemoteCommand,
 } from '../notify/channel.js';
 import type { Notification } from '../notify/notification.js';
 import { claim } from '../util/lock.js';
@@ -23,23 +24,10 @@ import {
 } from './blocks.js';
 import { type Envelope, SocketMode, type SocketModeOptions } from './socket.js';
 
-/** What the user asked for, and what came of it. */
-export interface Outcome {
-  ok: boolean;
-  message: string;
-}
-
-export interface SlackHandlers {
-  /** A message from the user, to answer like one typed in the terminal. */
-  onMessage(text: string, from: Remote): void;
-  onCommand(command: RemoteCommand): Promise<string>;
-  onApprove(taskId: string): Promise<Outcome>;
-  onRequestChanges(taskId: string, note: string): Promise<Outcome>;
+export interface SlackHandlers extends ChannelHandlers {
   onApprovePlan(): Promise<Outcome>;
   /** The project as the Home tab shows it. */
   home(): Promise<Omit<HomeState, 'online'>>;
-  /** Something the user should know, e.g. another window has Slack. */
-  onProblem(text: string): void;
 }
 
 export type SlackClient = Pick<
@@ -395,10 +383,11 @@ export class SlackBridge implements Channel {
     }
   }
 
-  /** Run a Slack call, reporting the first failure to the terminal instead of throwing. */
+  /** Run a Slack call, reporting failures to the terminal (once per outage) instead of throwing. */
   private async guard(work: () => Promise<unknown>): Promise<void> {
     try {
       await work();
+      this.reportedFailure = false; // working again: report the next outage too
     } catch (error) {
       if (!this.reportedFailure) {
         this.reportedFailure = true;

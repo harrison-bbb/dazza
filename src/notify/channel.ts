@@ -19,6 +19,23 @@ export function isRemoteCommand(text: string): text is RemoteCommand {
   return (REMOTE_COMMANDS as readonly string[]).includes(text);
 }
 
+/** What the user asked for, and what came of it. */
+export interface Outcome {
+  ok: boolean;
+  message: string;
+}
+
+/** What a channel can ask of Dazza on the user's behalf. */
+export interface ChannelHandlers {
+  /** A message from the user, to answer like one typed in the terminal. */
+  onMessage(text: string, from: Remote): void;
+  onCommand(command: RemoteCommand): Promise<string>;
+  onApprove(taskId: string): Promise<Outcome>;
+  onRequestChanges(taskId: string, note: string): Promise<Outcome>;
+  /** Something the user should know, e.g. another window has the connection. */
+  onProblem(text: string): void;
+}
+
 /** Somewhere Dazza reaches the user while they're away from the terminal. */
 export interface Channel {
   readonly id: ChannelId;

@@ -168,16 +168,21 @@ describe('ClaudeProvider', () => {
         if (event.type === 'finished') return event.output;
       }
     };
-    const original = process.env.ANTHROPIC_API_KEY;
+    const names = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK'];
+    const original = names.map((name) => process.env[name]);
     beforeEach(() => {
       process.env.ANTHROPIC_API_KEY = 'stray-key-from-shell';
+      process.env.ANTHROPIC_AUTH_TOKEN = 'stray-token';
+      process.env.CLAUDE_CODE_USE_BEDROCK = '1';
     });
     afterEach(() => {
-      if (original === undefined) delete process.env.ANTHROPIC_API_KEY;
-      else process.env.ANTHROPIC_API_KEY = original;
+      names.forEach((name, i) => {
+        if (original[i] === undefined) delete process.env[name];
+        else process.env[name] = original[i];
+      });
     });
 
-    it('never passes a stray shell API key on a subscription', async () => {
+    it('never passes anything from the shell that would switch billing on a subscription', async () => {
       const provider = new ClaudeProvider({
         bin: fixture('bin/fake-claude.mjs'),
         connection: { provider: 'claude', method: 'subscription' },

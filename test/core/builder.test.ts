@@ -64,6 +64,7 @@ describe('build loop', () => {
     expect(events.at(-1)).toMatchObject({
       type: 'stopped',
       reason: expect.stringContaining('2 waiting for your review'),
+      idle: true,
     });
     expect(provider.runs[0]).toMatchObject({
       autonomous: true,

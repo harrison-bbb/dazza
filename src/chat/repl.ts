@@ -1,5 +1,6 @@
+import { unwatchFile, watchFile } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 import pkg from '../../package.json' with { type: 'json' };
 import { startBoard } from '../board/server.js';
 import { type ActionResult, approvePlan, closeTask, requestChanges } from '../core/actions.js';
@@ -8,12 +9,12 @@ import { Config, type Connection } from '../core/config.js';
 import { describeCodebase, inspectCodebase } from '../core/inspect.js';
 import { Manager } from '../core/manager.js';
 import { StateError, Store } from '../core/store.js';
-import {
-  type Channel,
-  type ChannelId,
-  isRemoteCommand,
-  type Remote,
-  type RemoteCommand,
+import type {
+  Channel,
+  ChannelHandlers,
+  ChannelId,
+  Remote,
+  RemoteCommand,
 } from '../notify/channel.js';
 import { info, type Notification, notificationFor } from '../notify/notification.js';
 import { createProvider, PROVIDER_HELP, providerFor } from '../providers/index.js';
@@ -32,6 +33,10 @@ import { paint, stripAnsi } from './style.js';
 import { Terminal } from './terminal.js';
 
 const PROMPT = `${paint.hex(BRAND, '›')} `;
+/** How often to look for plan changes made elsewhere (the board, the build). */
+const PLAN_POLL_MS = 500;
+/** Let a burst of plan writes settle before reacting to them. */
+const PLAN_SETTLE_MS = 300;
 
 /** `dazza`: the conversation with your developer. */
 export async function startChat(projectRoot: string): Promise<void> {
@@ -141,7 +146,10 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
         .then((note) => note && notify(note))
         .catch(() => {}); // a notification is a nicety; the terminal shows the event anyway
     },
-    onBuildEnd: refresh,
+    onBuildEnd: () => {
+      refresh();
+      void resumeIfReady();
+    },
     onShare: ({ taskId, text, images }) => {
       notify(
         info(
@@ -175,30 +183,26 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
     terminal.print(`\n${paint.dim(`📱 You, on ${where}: ${text}`)}`);
     session.send(text, from);
   };
-  /** Something the user did on Slack, echoed in the terminal. */
-  const fromSlack = (result: ActionResult): ActionResult => {
-    say(paint.dim(`📱 From Slack: ${result.message}`));
-    return result;
-  };
+  /** What the user did from their phone, echoed in the terminal. */
+  const fromPhone =
+    (where: string) =>
+    (result: ActionResult): ActionResult => {
+      say(paint.dim(`📱 From ${where}: ${result.message}`));
+      return result;
+    };
+  /** Everything a channel can do for the user: the same actions as the terminal and board. */
+  const handlersFor = (where: string): ChannelHandlers => ({
+    onMessage: fromRemote,
+    onCommand: remoteCommand,
+    onApprove: async (taskId) => fromPhone(where)(await closeTask(store, taskId)),
+    onRequestChanges: async (taskId, note) =>
+      fromPhone(where)(await requestChanges(store, taskId, note)),
+    onProblem: (text) => say(paint.dim(text)),
+  });
 
   const openChannels = async () => {
     const telegram = await config.readTelegram();
-    if (telegram) {
-      const bridge: TelegramBridge = new TelegramBridge(telegram, {
-        onMessage: (text) => {
-          const command = text.trim().toLowerCase().replace(/^\//, '');
-          if (text.trim().startsWith('/') && isRemoteCommand(command)) {
-            void remoteCommand(command)
-              .catch((error: unknown) => `That didn’t work: ${errorMessage(error)}`)
-              .then((reply) => bridge.send(reply));
-          } else {
-            fromRemote(text, { channel: 'telegram' });
-          }
-        },
-        onProblem: (text) => say(paint.dim(text)),
-      });
-      channels.set('telegram', bridge);
-    }
+    if (telegram) channels.set('telegram', new TelegramBridge(telegram, handlersFor('Telegram')));
     const slack = await config.readSlack();
     if (slack) {
       channels.set(
@@ -206,19 +210,14 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
         new SlackBridge(
           slack,
           {
-            onMessage: fromRemote,
-            onCommand: remoteCommand,
-            onApprove: async (taskId) => fromSlack(await closeTask(store, taskId)),
-            onRequestChanges: async (taskId, note) =>
-              fromSlack(await requestChanges(store, taskId, note)),
-            onApprovePlan: async () => fromSlack(await approvePlan(store)),
+            ...handlersFor('Slack'),
+            onApprovePlan: async () => fromPhone('Slack')(await approvePlan(store)),
             home: async () => ({
               project: basename(projectRoot),
               plan: await store.readPlan(),
               building: session.isBuilding,
               boardUrl: board.url,
             }),
-            onProblem: (text) => say(paint.dim(text)),
           },
           { lockFile: config.slackLockFile },
         ),
@@ -231,6 +230,30 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
     channels.clear();
   };
   await openChannels();
+
+  /**
+   * Pick the build back up when a task becomes ready (say, the user answered a
+   * blocked task, here or on the board or their phone), if they'd been building.
+   */
+  const resumeIfReady = async () => {
+    const taskId = await session.resumeIfReady().catch(() => undefined);
+    if (!taskId) return;
+    const text = `▶ ${taskId} is ready, so I’ve picked the build back up.`;
+    say(paint.dim(text));
+    notify(info(text, [], taskId));
+  };
+  // The plan changes from everywhere: this chat, the board, Slack, the build itself.
+  let approved = Boolean((await store.readPlan())?.approvedAt);
+  const onPlanChange = debounce(async () => {
+    const plan = await store.readPlan().catch(() => undefined);
+    if (plan?.approvedAt && !approved && !session.isBuilding) {
+      say(`Plan approved. Run ${paint.bold('/build')} when you want me to start.`);
+    }
+    approved = Boolean(plan?.approvedAt);
+    await resumeIfReady();
+  }, PLAN_SETTLE_MS);
+  const planFile = join(store.dir, 'tasks.json');
+  watchFile(planFile, { interval: PLAN_POLL_MS }, () => void onPlanChange());
 
   let exiting = false;
   const context: CommandContext = {
@@ -285,6 +308,7 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
 
   await session.stopBuild();
   await session.stopChat();
+  unwatchFile(planFile);
   await closeChannels();
   board.close();
 }
@@ -414,4 +438,12 @@ function cliPath(): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function debounce(fn: () => Promise<void>, ms: number): () => void {
+  let timer: NodeJS.Timeout | undefined;
+  return () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => void fn(), ms);
+  };
 }

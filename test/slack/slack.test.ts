@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { SlackLink } from '../../src/core/config.js';
-import type { Remote } from '../../src/notify/channel.js';
+import type { Outcome, Remote } from '../../src/notify/channel.js';
 import { connectSlack, type SlackSetupDeps } from '../../src/setup/slack.js';
 import { type Block, type Message, SlackApi, SlackError } from '../../src/slack/api.js';
 import {
@@ -11,7 +11,7 @@ import {
   notificationMessage,
   replyMessages,
 } from '../../src/slack/blocks.js';
-import { type Outcome, SlackBridge, type SlackHandlers } from '../../src/slack/bridge.js';
+import { SlackBridge, type SlackHandlers } from '../../src/slack/bridge.js';
 import { createAppUrl, SLACK_MANIFEST } from '../../src/slack/manifest.js';
 import { type Envelope, type SocketLike, SocketMode } from '../../src/slack/socket.js';
 import { claim } from '../../src/util/lock.js';

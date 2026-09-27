@@ -237,6 +237,8 @@ export class CodexStream {
   finished = false;
   private readonly startedAt = Date.now();
 
+  private lastText = '';
+
   constructor(private readonly model: string | undefined) {}
 
   parse(line: string): AgentEvent[] {
@@ -264,15 +266,19 @@ export class CodexStream {
       }
       case 'item.started':
         return itemStarted(event.item);
-      case 'item.completed':
-        return itemCompleted(event.item);
+      case 'item.completed': {
+        const events = itemCompleted(event.item);
+        // Like Claude Code's result: the agent's last words, e.g. why it stopped.
+        for (const e of events) if (e.type === 'text') this.lastText = e.text;
+        return events;
+      }
       case 'turn.completed':
         this.finished = true;
         return [
           {
             type: 'finished',
             ok: true,
-            output: '',
+            output: this.lastText,
             sessionId: this.threadId,
             durationMs: Date.now() - this.startedAt,
             usage: {
