@@ -1,16 +1,28 @@
 import { homedir } from 'node:os';
+import { basename } from 'node:path';
 import pkg from '../../package.json' with { type: 'json' };
 import { startBoard } from '../board/server.js';
-import { Config, type Connection, type TelegramLink } from '../core/config.js';
+import { type ActionResult, approvePlan, closeTask, requestChanges } from '../core/actions.js';
+import { Config, type Connection } from '../core/config.js';
 import { describeCodebase, inspectCodebase } from '../core/inspect.js';
 import { Manager } from '../core/manager.js';
 import { Store } from '../core/store.js';
+import {
+  type Channel,
+  type ChannelId,
+  isRemoteCommand,
+  type Remote,
+  type RemoteCommand,
+} from '../notify/channel.js';
+import { info, type Notification, notificationFor } from '../notify/notification.js';
 import { createProvider, PROVIDER_HELP, providerFor } from '../providers/index.js';
 import type { AgentProvider } from '../providers/types.js';
 import { checkApiKey } from '../setup/apiKeys.js';
 import { connect } from '../setup/connect.js';
+import { connectSlack } from '../setup/slack.js';
 import { connectTelegram } from '../setup/telegram.js';
-import { notificationFor, TelegramBridge } from '../telegram/bridge.js';
+import { SlackBridge } from '../slack/bridge.js';
+import { TelegramBridge } from '../telegram/bridge.js';
 import { BRAND, logo, sessionInfo } from './banner.js';
 import { type CommandContext, commandMenu, parseCommand, suggest } from './commands.js';
 import { greeting } from './describe.js';
@@ -78,8 +90,14 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
   const hasConversation = (await store.readManagerSession()) !== undefined;
   say(greeting(await store.readPlan(), { hasConversation, ...(codebase && { codebase }) }));
 
-  // Telegram: notifications out, the user's replies in, same conversation.
-  let bridge: TelegramBridge | undefined;
+  // Slack and Telegram: notifications out, the user's messages in, same conversation.
+  const channels = new Map<ChannelId, Channel>();
+  const notify = (note: Notification) => {
+    for (const channel of channels.values()) void channel.notify(note);
+  };
+  const refresh = () => {
+    for (const channel of channels.values()) channel.refresh();
+  };
   let waitingForLimit = false;
   const session: ChatSession = new ChatSession({
     store,
@@ -97,66 +115,106 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
       status: (key, text) => terminal.setStatus(key, text),
     },
     onReply: (reply, origin) => {
-      if (origin === 'telegram') void bridge?.send(reply);
+      if (origin !== 'terminal') void channels.get(origin.channel)?.reply(reply, origin);
     },
     onBuildEvent: (event) => {
-      if (!bridge) return;
+      if (event.type === 'task_started') refresh();
       // After waiting out a limit, say when work starts again.
       if (event.type === 'waiting' && event.reason === 'usage_limit') waitingForLimit = true;
       if (event.type === 'task_started' && waitingForLimit) {
         waitingForLimit = false;
-        void bridge.send(`▶ Your limit has reset. Back on ${event.task.id}: ${event.task.title}.`);
+        notify(info(`▶ Your limit has reset. Back on ${event.task.id}: ${event.task.title}.`));
       }
-      void notificationFor(event, store).then((note) => {
-        if (note) void bridge?.send(note.text, note.images);
-      });
+      void notificationFor(event, store).then((note) => note && notify(note));
     },
+    onBuildEnd: refresh,
     onShare: ({ taskId, text, images }) => {
-      void bridge?.send(
-        `📸 ${taskId ? `${taskId}: ` : ''}${text}`,
-        images.map((path) => store.mediaFile(path)),
+      notify(
+        info(
+          `📸 ${taskId ? `${taskId}: ` : ''}${text}`,
+          images.map((path) => store.mediaFile(path)),
+          taskId,
+        ),
       );
     },
   });
 
-  const openBridge = async () => {
-    const link = await config.readTelegram();
-    if (!link) return;
-    bridge = new TelegramBridge(link, {
-      onMessage: (text) => {
-        terminal.print(`\n${paint.dim(`📱 You, on Telegram: ${text}`)}`);
-        void fromTelegram(text);
-      },
-      onProblem: (text) => say(paint.dim(text)),
-    });
-    bridge.start();
-  };
-  const closeBridge = async () => {
-    await bridge?.stop();
-    bridge = undefined;
-  };
-  /** A few commands work from the phone; everything else is conversation. */
-  const fromTelegram = async (text: string) => {
-    const command = text.trim().toLowerCase();
-    if (command === '/status') {
-      await bridge?.send(stripAnsi(greeting(await store.readPlan(), { hasConversation: true })));
-    } else if (command === '/build') {
-      await startBuild(session, provider, config);
-      await bridge?.send(
-        session.isBuilding
+  /** Status, build and stop work from a phone too. */
+  const remoteCommand = async (command: RemoteCommand): Promise<string> => {
+    switch (command) {
+      case 'status':
+        return stripAnsi(greeting(await store.readPlan(), { hasConversation: true }));
+      case 'build':
+        await startBuild(session, provider, config);
+        return session.isBuilding
           ? 'Building. I’ll message you as tasks are ready.'
-          : 'I couldn’t start the build; check the terminal.',
-      );
-    } else if (command === '/stop') {
-      await session.stopBuild();
-      await bridge?.send(
-        'Stopped the build. The current task picks up where it left off next time.',
-      );
-    } else {
-      session.send(text, 'telegram');
+          : 'I couldn’t start the build; check the terminal.';
+      case 'stop':
+        if (!session.isBuilding) return 'Not building right now.';
+        await session.stopBuild();
+        return 'Stopped the build. The current task picks up where it left off next time.';
     }
   };
-  await openBridge();
+  /** A message from the user's phone: shown in the terminal, answered where it came from. */
+  const fromRemote = (text: string, from: Remote) => {
+    const where = from.channel === 'slack' ? 'Slack' : 'Telegram';
+    terminal.print(`\n${paint.dim(`📱 You, on ${where}: ${text}`)}`);
+    session.send(text, from);
+  };
+  /** Something the user did on Slack, echoed in the terminal. */
+  const fromSlack = (result: ActionResult): ActionResult => {
+    say(paint.dim(`📱 From Slack: ${result.message}`));
+    return result;
+  };
+
+  const openChannels = async () => {
+    const telegram = await config.readTelegram();
+    if (telegram) {
+      const bridge: TelegramBridge = new TelegramBridge(telegram, {
+        onMessage: (text) => {
+          const command = text.trim().toLowerCase().replace(/^\//, '');
+          if (text.trim().startsWith('/') && isRemoteCommand(command)) {
+            void remoteCommand(command).then((reply) => bridge.send(reply));
+          } else {
+            fromRemote(text, { channel: 'telegram' });
+          }
+        },
+        onProblem: (text) => say(paint.dim(text)),
+      });
+      channels.set('telegram', bridge);
+    }
+    const slack = await config.readSlack();
+    if (slack) {
+      channels.set(
+        'slack',
+        new SlackBridge(
+          slack,
+          {
+            onMessage: fromRemote,
+            onCommand: remoteCommand,
+            onApprove: async (taskId) => fromSlack(await closeTask(store, taskId)),
+            onRequestChanges: async (taskId, note) =>
+              fromSlack(await requestChanges(store, taskId, note)),
+            onApprovePlan: async () => fromSlack(await approvePlan(store)),
+            home: async () => ({
+              project: basename(projectRoot),
+              plan: await store.readPlan(),
+              building: session.isBuilding,
+              boardUrl: board.url,
+            }),
+            onProblem: (text) => say(paint.dim(text)),
+          },
+          { lockFile: config.slackLockFile },
+        ),
+      );
+    }
+    for (const channel of channels.values()) channel.start();
+  };
+  const closeChannels = async () => {
+    await Promise.all([...channels.values()].map((channel) => channel.stop()));
+    channels.clear();
+  };
+  await openChannels();
 
   let exiting = false;
   const context: CommandContext = {
@@ -168,16 +226,16 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
     boardUrl: board.url,
     startBuild: () => startBuild(session, provider, config),
     status: (text) => terminal.setStatus('chat', text),
-    linkTelegram: async () => {
-      const link = await setUpTelegram(terminal, config, false);
-      if (link) {
-        await closeBridge();
-        await openBridge();
+    link: async (channel) => {
+      if (await setUpChannel(channel, terminal, config)) {
+        await closeChannels();
+        await openChannels();
       }
     },
-    unlinkTelegram: async () => {
-      await closeBridge();
-      await config.clearTelegram();
+    unlink: async (channel) => {
+      await closeChannels();
+      await (channel === 'slack' ? config.clearSlack() : config.clearTelegram());
+      await openChannels();
     },
     say,
     exit: () => {
@@ -210,7 +268,7 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
 
   await session.stopBuild();
   await session.stopChat();
-  await closeBridge();
+  await closeChannels();
   board.close();
 }
 
@@ -258,32 +316,47 @@ async function firstConnect(terminal: Terminal, config: Config): Promise<Connect
   );
   if (connection) {
     await config.writeConnection(connection);
-    // First run: offer Telegram right after connecting, once.
-    const { telegramSkipped } = await config.readSettings();
-    if (!telegramSkipped && !(await config.readTelegram())) {
-      const link = await setUpTelegram(terminal, config, true);
-      if (!link) await config.updateSettings({ telegramSkipped: true });
+    // First run: offer a way to hear from Dazza when away, once.
+    const { messagingSkipped } = await config.readSettings();
+    const linked = (await config.readSlack()) || (await config.readTelegram());
+    if (!messagingSkipped && !linked) {
+      say(
+        'Dazza can message you when a task is ready for review or it needs you, ' +
+          'and you can answer from your phone.',
+      );
+      const channel = await terminal.select<ChannelId | undefined>('Where should I message you?', [
+        { label: 'Slack', hint: 'a DM from Dazza, with buttons to approve work', value: 'slack' },
+        { label: 'Telegram', hint: 'a bot of your own', value: 'telegram' },
+        { label: 'Skip for now', hint: 'run /slack or /telegram any time', value: undefined },
+      ]);
+      if (!channel || !(await setUpChannel(channel, terminal, config))) {
+        await config.updateSettings({ messagingSkipped: true });
+      }
     }
   }
   return connection;
 }
 
-/** Link a Telegram bot through the terminal, and save it. */
-async function setUpTelegram(
+/** Link Slack or a Telegram bot through the terminal, and save it. Resolves whether it worked. */
+async function setUpChannel(
+  channel: ChannelId,
   terminal: Terminal,
   config: Config,
-  optional: boolean,
-): Promise<TelegramLink | undefined> {
-  const link = await connectTelegram(
-    {
-      say,
-      select: (question, choices) => terminal.select(question, choices),
-      readLine: (options) => terminal.readLine(options),
-    },
-    { optional },
-  );
+): Promise<boolean> {
+  const ui = {
+    say,
+    select: <T>(question: string, choices: { label: string; hint?: string; value: T }[]) =>
+      terminal.select(question, choices),
+    readLine: (options: { prompt: string; mask?: boolean }) => terminal.readLine(options),
+  };
+  if (channel === 'slack') {
+    const link = await connectSlack(ui);
+    if (link) await config.writeSlack(link);
+    return Boolean(link);
+  }
+  const link = await connectTelegram(ui, { optional: false });
   if (link) await config.writeTelegram(link);
-  return link;
+  return Boolean(link);
 }
 
 async function runCommand(line: string, context: CommandContext): Promise<void> {

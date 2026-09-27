@@ -1,6 +1,7 @@
 import { approvePlan } from '../core/actions.js';
 import type { Config, Connection, Limits } from '../core/config.js';
 import type { Store } from '../core/store.js';
+import type { ChannelId } from '../notify/channel.js';
 import { PROVIDER_HELP } from '../providers/index.js';
 import type { AgentProvider, ModelOption, ProviderId } from '../providers/types.js';
 import { openInBrowser } from '../util/open.js';
@@ -22,10 +23,10 @@ export interface CommandContext {
   startBuild(): Promise<void>;
   /** Show (or clear) an activity in the status line while a command works. */
   status(text: string | undefined): void;
-  /** Walk through linking a Telegram bot. */
-  linkTelegram(): Promise<void>;
-  /** Unlink the current bot. */
-  unlinkTelegram(): Promise<void>;
+  /** Walk through linking Slack or a Telegram bot. */
+  link(channel: ChannelId): Promise<void>;
+  /** Forget the Slack app or Telegram bot. */
+  unlink(channel: ChannelId): Promise<void>;
   /** Print Dazza's reply. */
   say(text: string): void;
   /** End the chat after this command. */
@@ -132,13 +133,41 @@ export const COMMANDS: Command[] = [
     },
   },
   {
+    name: 'slack',
+    description: 'See your Slack link, or connect Slack',
+    async run({ config, say, link }) {
+      const slack = await config.readSlack();
+      if (!slack) return link('slack');
+      say(
+        `Connected to ${slack.teamName}. I message you there about reviews and blockers, ` +
+          'and you can reply, approve work and start builds from Slack.\n' +
+          paint.dim('Run /slack-disconnect to link a different workspace.'),
+      );
+    },
+  },
+  {
+    name: 'slack-disconnect',
+    description: 'Unlink Slack, then link it again if you like',
+    async run({ config, say, link, unlink }) {
+      const slack = await config.readSlack();
+      if (slack) {
+        await unlink('slack');
+        say(
+          `Disconnected from ${slack.teamName}. Let’s link it again, or press Ctrl-C to stay unlinked. ` +
+            paint.dim('To remove the app itself, delete it at https://api.slack.com/apps.'),
+        );
+      }
+      await link('slack');
+    },
+  },
+  {
     name: 'telegram',
     description: 'See your Telegram link, or connect Telegram',
-    async run({ config, say, linkTelegram }) {
-      const link = await config.readTelegram();
-      if (!link) return linkTelegram();
+    async run({ config, say, link }) {
+      const telegram = await config.readTelegram();
+      if (!telegram) return link('telegram');
       say(
-        `Connected to @${link.botUsername}. I message you there about reviews and blockers, ` +
+        `Connected to @${telegram.botUsername}. I message you there about reviews and blockers, ` +
           'and you can reply from your phone.\n' +
           paint.dim('Run /telegram-disconnect to link a different bot.'),
       );
@@ -147,15 +176,15 @@ export const COMMANDS: Command[] = [
   {
     name: 'telegram-disconnect',
     description: 'Unlink your Telegram bot and link a new one',
-    async run({ config, say, linkTelegram, unlinkTelegram }) {
-      const link = await config.readTelegram();
-      if (link) {
-        await unlinkTelegram();
+    async run({ config, say, link, unlink }) {
+      const telegram = await config.readTelegram();
+      if (telegram) {
+        await unlink('telegram');
         say(
-          `Disconnected @${link.botUsername}. Let’s link a new one, or press Ctrl-C to stay unlinked.`,
+          `Disconnected @${telegram.botUsername}. Let’s link a new one, or press Ctrl-C to stay unlinked.`,
         );
       }
-      await linkTelegram();
+      await link('telegram');
     },
   },
   {

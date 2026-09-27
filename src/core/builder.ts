@@ -213,6 +213,8 @@ async function* runWorker(
   const run = new AbortController();
   const stopRun = () => run.abort();
   signal?.addEventListener('abort', stopRun);
+  // A stop that came while the task was being set up still counts.
+  if (signal?.aborted) run.abort();
   let stalled = false;
   let watchdog: NodeJS.Timeout | undefined;
   const feedWatchdog = () => {

@@ -4,6 +4,7 @@ import { Config, type Connection } from '../core/config.js';
 import { findBrowser } from '../preview/capture.js';
 import { createProvider, PROVIDER_HELP, providerFor } from '../providers/index.js';
 import type { ProviderId } from '../providers/types.js';
+import { SlackApi } from '../slack/api.js';
 import { execCommand } from '../util/process.js';
 
 interface Check {
@@ -23,6 +24,7 @@ export async function doctor(): Promise<void> {
     checkAgent('claude', connection),
     checkAgent('codex', connection),
     checkConnection(connection),
+    checkSlack(),
     checkTelegram(),
     checkBrowser(),
   ]);
@@ -69,6 +71,23 @@ async function checkConnection(connection: Connection | undefined): Promise<Chec
   };
 }
 
+/** Slack is optional, but a linked app whose token stopped working is worth knowing about. */
+async function checkSlack(): Promise<Check> {
+  const link = await new Config().readSlack();
+  if (!link)
+    return { label: 'Slack', ok: true, detail: 'not linked (optional; /slack in the chat)' };
+  try {
+    await new SlackApi(link.botToken).authTest();
+    return { label: 'Slack', ok: true, detail: `linked to ${link.teamName}` };
+  } catch (error) {
+    return {
+      label: 'Slack',
+      ok: false,
+      detail: `linked to ${link.teamName}, but ${errorMessage(error)} (run /slack-disconnect, then /slack)`,
+    };
+  }
+}
+
 async function checkTelegram(): Promise<Check> {
   const link = await new Config().readTelegram();
   return {
@@ -113,4 +132,8 @@ async function checkAgent(id: ProviderId, connection: Connection | undefined): P
       ? `v${status.version}, signed in${status.authMethod ? ` via ${status.authMethod}` : ''}${status.plan ? ` · ${status.plan}` : ''}`
       : `v${status.version}, not signed in (run ${help.signIn})`,
   };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

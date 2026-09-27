@@ -102,7 +102,7 @@ describe('running commands', () => {
 
   const context = () => {
     const said: string[] = [];
-    let linked = 0;
+    const linked: string[] = [];
     const provider = new FakeProvider(undefined, models);
     let exited = false;
     const ctx: CommandContext = {
@@ -114,11 +114,12 @@ describe('running commands', () => {
       boardUrl: 'http://localhost:4777',
       startBuild: async () => {},
       status: () => {},
-      linkTelegram: async () => {
-        linked++;
+      link: async (channel) => {
+        linked.push(channel);
       },
-      unlinkTelegram: async () => {
-        await project.config.clearTelegram();
+      unlink: async (channel) => {
+        if (channel === 'telegram') await project.config.clearTelegram();
+        else await project.config.clearSlack();
       },
       say: (text) => said.push(text),
       exit: () => {
@@ -170,12 +171,12 @@ describe('running commands', () => {
   it('/telegram links when unlinked, and reports the link otherwise', async () => {
     const { ctx, said, linked } = context();
     await run(ctx, '/telegram');
-    expect(linked()).toBe(1);
+    expect(linked()).toEqual(['telegram']);
 
     await project.config.writeTelegram({ botToken: 't', botUsername: 'dazza_bot', chatId: '1' });
     await run(ctx, '/telegram');
     expect(said.at(-1)).toContain('Connected to @dazza_bot');
-    expect(linked()).toBe(1);
+    expect(linked()).toEqual(['telegram']);
   });
 
   it('/telegram-disconnect unlinks, then walks through linking a new bot', async () => {
@@ -184,7 +185,37 @@ describe('running commands', () => {
     await run(ctx, '/telegram-disconnect');
     expect(await project.config.readTelegram()).toBeUndefined();
     expect(said.at(-1)).toContain('Disconnected @old_bot');
-    expect(linked()).toBe(1);
+    expect(linked()).toEqual(['telegram']);
+  });
+
+  const slack = {
+    botToken: 'xoxb-1',
+    appToken: 'xapp-1',
+    appId: 'A1',
+    teamId: 'T1',
+    teamName: 'Acme',
+    userId: 'U1',
+    channelId: 'D1',
+  };
+
+  it('/slack links when unlinked, and reports the link otherwise', async () => {
+    const { ctx, said, linked } = context();
+    await run(ctx, '/slack');
+    expect(linked()).toEqual(['slack']);
+
+    await project.config.writeSlack(slack);
+    await run(ctx, '/slack');
+    expect(said.at(-1)).toContain('Connected to Acme');
+    expect(linked()).toEqual(['slack']);
+  });
+
+  it('/slack-disconnect forgets the workspace, then offers to link again', async () => {
+    const { ctx, said, linked } = context();
+    await project.config.writeSlack(slack);
+    await run(ctx, '/slack-disconnect');
+    expect(await project.config.readSlack()).toBeUndefined();
+    expect(said.at(-1)).toContain('Disconnected from Acme');
+    expect(linked()).toEqual(['slack']);
   });
 
   it('/exit ends the chat', async () => {

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { addComment } from '../../src/core/actions.js';
+import { notificationFor } from '../../src/notify/notification.js';
 import type { SetupUI } from '../../src/setup/connect.js';
 import { connectTelegram } from '../../src/setup/telegram.js';
 import { TelegramApi, TelegramError, type Update } from '../../src/telegram/api.js';
-import { notificationFor, TelegramBridge } from '../../src/telegram/bridge.js';
+import { TelegramBridge, telegramText } from '../../src/telegram/bridge.js';
 import { makePlan, makeTask } from '../fixtures.js';
 import { useTempProject } from '../helpers.js';
 
@@ -181,7 +182,7 @@ describe('notificationFor', () => {
       { type: 'task_finished', task, outcome: 'review' },
       project.store,
     );
-    const text = note?.text;
+    const text = note && telegramText(note);
     expect(note?.images).toEqual([project.store.mediaFile('T3/editor-desktop.png')]);
     expect(text).toContain('T3 is ready for your review: Editor');
     expect(text).toContain('Built the editor.');
@@ -197,7 +198,7 @@ describe('notificationFor', () => {
       { type: 'task_finished', task, outcome: 'blocked' },
       project.store,
     );
-    expect(note?.text).toContain('Should tags be case-sensitive?');
+    expect(note && telegramText(note)).toContain('Should tags be case-sensitive?');
     expect(
       await notificationFor({ type: 'task_finished', task, outcome: 'paused' }, project.store),
     ).toBeUndefined();

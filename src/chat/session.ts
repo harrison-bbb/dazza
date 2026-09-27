@@ -4,6 +4,7 @@ import { clock, explainAgentError } from '../core/errors.js';
 import type { Manager } from '../core/manager.js';
 import type { Store } from '../core/store.js';
 import { McpTools } from '../mcp/server.js';
+import type { Remote } from '../notify/channel.js';
 import type { AgentEvent, AgentProvider, McpServerConfig } from '../providers/types.js';
 import { openInBrowser } from '../util/open.js';
 import { createBuildRenderer } from './buildView.js';
@@ -32,9 +33,14 @@ export interface SessionOptions {
   output: SessionOutput;
   /** Called with every build event, e.g. to send notifications. */
   onBuildEvent?: (event: BuildEvent) => void;
-  /** Called with Dazza's full reply to a message, e.g. to answer on Telegram. */
+  /** Called once a build has finished, however it ended. */
+  onBuildEnd?: () => void;
+  /**
+   * Called with Dazza's full answer to every message, e.g. to answer on Slack.
+   * Empty if there was none (the reply was stopped, say).
+   */
   onReply?: (reply: string, origin: MessageOrigin) => void;
-  /** Called when Dazza shares screenshots in a comment, e.g. to send them to Telegram. */
+  /** Called when Dazza shares screenshots in a comment, e.g. to send them to Slack. */
   onShare?: (share: Share) => void;
 }
 
@@ -54,7 +60,7 @@ const SHARING_TOOLS: Record<string, string> = {
 };
 
 /** Where a message came from, so the reply can go back the same way. */
-export type MessageOrigin = 'terminal' | 'telegram';
+export type MessageOrigin = 'terminal' | Remote;
 
 /**
  * Everything running behind the prompt: the conversation with Dazza and the
@@ -143,6 +149,8 @@ export class ChatSession {
     const { store, manager, boardUrl, output, onReply } = this.options;
     const before = await store.readPlan();
     const reply: string[] = [];
+    /** What went wrong, for a user who isn't watching the terminal. */
+    let failure: string | undefined;
     let rewrotePlan = false;
     output.status('chat', 'Thinking');
 
@@ -158,21 +166,17 @@ export class ChatSession {
           rewrotePlan ||= event.tool === McpTools.savePlan;
           output.status('chat', describeTool(event.tool, event.input));
         } else if (event.type === 'finished' && !event.ok) {
-          output.say(
-            paint.red(
-              event.error
-                ? explainAgentError(event.error, { provider: this.options.provider.id })
-                : event.output || 'Something went wrong on my end.',
-            ),
-          );
+          failure = event.error
+            ? explainAgentError(event.error, { provider: this.options.provider.id })
+            : event.output || 'Something went wrong on my end.';
+          output.say(paint.red(failure));
         }
       }
     } catch (error) {
-      output.say(
-        signal.aborted ? paint.dim('Stopped.') : paint.red(`Error: ${errorMessage(error)}`),
-      );
+      if (!signal.aborted) failure = `Error: ${errorMessage(error)}`;
+      output.say(signal.aborted ? paint.dim('Stopped.') : paint.red(failure ?? ''));
     }
-    if (reply.length > 0) onReply?.(reply.join('\n\n'), origin);
+    onReply?.(reply.length > 0 ? reply.join('\n\n') : (failure ?? ''), origin);
 
     // Small edits are confirmed in Dazza's own reply; a rewritten plan gets the full card.
     const after = await store.readPlan();
@@ -207,6 +211,7 @@ export class ChatSession {
     } finally {
       this.building = undefined;
       output.status('build', undefined);
+      this.options.onBuildEnd?.();
     }
   }
 

@@ -12,8 +12,8 @@ import { z } from 'zod';
 export const Settings = z.object({
   /** Model id passed to the agent CLI; unset means the provider's default. */
   model: z.string().optional(),
-  /** The user chose not to set up Telegram during onboarding; don't ask again. */
-  telegramSkipped: z.boolean().optional(),
+  /** The user chose not to connect Slack or Telegram during onboarding; don't ask again. */
+  messagingSkipped: z.boolean().optional(),
 });
 export type Settings = z.infer<typeof Settings>;
 
@@ -39,6 +39,23 @@ export const TelegramLink = z.object({
   chatId: z.string().min(1),
 });
 export type TelegramLink = z.infer<typeof TelegramLink>;
+
+/**
+ * The Slack app Dazza messages the user through, in a DM. Holds two secrets: the
+ * bot token (to post) and the app-level token (to receive, over Socket Mode).
+ */
+export const SlackLink = z.object({
+  botToken: z.string().startsWith('xoxb-'),
+  appToken: z.string().startsWith('xapp-'),
+  appId: z.string(),
+  teamId: z.string(),
+  teamName: z.string(),
+  /** The user Dazza works for; messages and clicks from anyone else are ignored. */
+  userId: z.string(),
+  /** The DM between the user and the bot. */
+  channelId: z.string(),
+});
+export type SlackLink = z.infer<typeof SlackLink>;
 
 export const Limits = z.object({
   checkedAt: z.iso.datetime(),
@@ -84,6 +101,23 @@ export class Config {
 
   async clearTelegram(): Promise<void> {
     await rm(join(this.dir, 'telegram.json'), { force: true });
+  }
+
+  readSlack(): Promise<SlackLink | undefined> {
+    return this.read('slack.json', SlackLink);
+  }
+
+  writeSlack(link: SlackLink): Promise<void> {
+    return this.write('slack.json', link);
+  }
+
+  async clearSlack(): Promise<void> {
+    await rm(join(this.dir, 'slack.json'), { force: true });
+  }
+
+  /** Where one Dazza window claims the Slack connection, so replies don't go astray. */
+  get slackLockFile(): string {
+    return join(this.dir, 'slack.lock');
   }
 
   readLimits(): Promise<Limits | undefined> {

@@ -253,7 +253,7 @@ function registerManagerTools(server: McpServer, store: Store): void {
         "Post on a task or subtask's thread on the board, or on the project when there's no id. " +
         "Use as: 'user' to pass on something the user told you, e.g. an instruction for the task " +
         'being built; the build picks it up at its next check-in. Otherwise it posts as Dazza. ' +
-        'To send the user a screenshot, attach it here: it reaches them on the board and on Telegram.',
+        'To send the user a screenshot, attach it here: it reaches them on the board, and on Slack or Telegram if linked.',
       inputSchema: {
         id: z.string().optional(),
         body: z.string().min(1),
@@ -290,7 +290,7 @@ function registerWorkerTools(server: McpServer, store: Store): void {
     {
       description:
         "Post a note on a task or subtask's thread, e.g. a decision the user would want to know, " +
-        'or a screenshot of a visual problem you found. Screenshots reach the user on Telegram.',
+        'or a screenshot of a visual problem you found. Screenshots reach the user on Slack or Telegram too, if linked.',
       inputSchema: { id: z.string(), body: z.string().min(1), screenshots: Attachments },
     },
     async ({ id, body, screenshots }) =>

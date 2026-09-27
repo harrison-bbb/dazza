@@ -1,8 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import type { BuildEvent } from '../core/builder.js';
 import type { TelegramLink } from '../core/config.js';
-import { clock } from '../core/errors.js';
-import type { Store } from '../core/store.js';
+import type { Channel, Remote } from '../notify/channel.js';
+import type { Notification } from '../notify/notification.js';
 import { TelegramApi, TelegramError } from './api.js';
 
 const POLL_SECONDS = 25;
@@ -22,7 +21,8 @@ export interface BridgeOptions {
  * Dazza's line to the user's phone while it's open: sends notifications and
  * replies, and passes on messages from the user's own chat (and no one else's).
  */
-export class TelegramBridge {
+export class TelegramBridge implements Channel {
+  readonly id = 'telegram';
   private readonly api: Pick<TelegramApi, 'getUpdates' | 'sendMessage' | 'sendPhoto'>;
   private readonly controller = new AbortController();
   private polling: Promise<void> | undefined;
@@ -43,6 +43,17 @@ export class TelegramBridge {
     this.controller.abort();
     await this.polling;
   }
+
+  notify(note: Notification): Promise<void> {
+    return this.send(telegramText(note), note.images);
+  }
+
+  async reply(text: string, _to: Remote): Promise<void> {
+    if (text) await this.send(text);
+  }
+
+  /** Telegram has nothing that shows the project, so nothing to update. */
+  refresh(): void {}
 
   /**
    * Send a message, then any screenshots with it. Failures are reported once,
@@ -87,69 +98,29 @@ export class TelegramBridge {
   }
 }
 
-/** A message for the user's phone, with screenshot files to send after it. */
-export interface Notification {
-  text: string;
-  images: string[];
-}
-
-/** What to tell the user on Telegram about a build event, if anything. */
-export async function notificationFor(
-  event: BuildEvent,
-  store: Store,
-): Promise<Notification | undefined> {
-  if (event.type === 'stopped') return { text: event.reason, images: [] };
-  if (event.type === 'waiting' && event.reason === 'usage_limit') {
-    return {
-      text:
-        `⏸ You’ve hit your Claude usage limit, so I’ve paused ${event.task.id}. ` +
-        `I’ll pick it back up at ${clock(event.until)}, as long as Dazza stays open on your computer.`,
-      images: [],
-    };
-  }
-  if (event.type !== 'task_finished' || event.outcome === 'paused') return undefined;
-
-  const plan = await store.readPlan();
-  const task = plan?.tasks.find((t) => t.id === event.task.id) ?? event.task;
-
-  if (event.outcome === 'blocked') {
-    const question = (await store.readEvents())
-      .filter((e) => e.type === 'comment' && e.actor === 'dazza' && e.taskId === task.id)
-      .at(-1);
-    return {
-      text: [
-        `❓ ${task.id} needs you: ${task.title}`,
-        question?.message,
+/** A notification in Telegram's words: plain text, with its screenshots sent after. */
+export function telegramText(note: Notification): string {
+  switch (note.kind) {
+    case 'info':
+      return note.text;
+    case 'blocked':
+      return [
+        `❓ ${note.taskId} needs you: ${note.title}`,
+        note.question,
         'Reply here with your answer, and I’ll pick it back up next build.',
       ]
         .filter(Boolean)
-        .join('\n\n'),
-      images: (question?.images ?? []).map((path) => store.mediaFile(path)),
-    };
+        .join('\n\n');
+    case 'review':
+      return [
+        `✅ ${note.taskId} is ready for your review: ${note.title}`,
+        note.summary,
+        note.facts.join(' · '),
+        `Reply "close ${note.taskId}" to approve it, or tell me what to change.`,
+      ]
+        .filter(Boolean)
+        .join('\n\n');
   }
-
-  const handoff = task.handoff;
-  const checks = handoff?.checks ?? [];
-  const failing = checks.filter((c) => !c.passed).length;
-  const facts = [
-    handoff?.filesChanged !== undefined &&
-      `${handoff.filesChanged} ${handoff.filesChanged === 1 ? 'file' : 'files'} changed`,
-    checks.length > 0 &&
-      (failing
-        ? `${failing} failing ${failing === 1 ? 'check' : 'checks'}`
-        : `${checks.length} ${checks.length === 1 ? 'check' : 'checks'} passed`),
-  ].filter(Boolean);
-  return {
-    text: [
-      `✅ ${task.id} is ready for your review: ${task.title}`,
-      handoff?.summary,
-      facts.join(' · '),
-      `Reply "close ${task.id}" to approve it, or tell me what to change.`,
-    ]
-      .filter(Boolean)
-      .join('\n\n'),
-    images: (handoff?.screenshots ?? []).map((path) => store.mediaFile(path)),
-  };
 }
 
 function split(text: string): string[] {

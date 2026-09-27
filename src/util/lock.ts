@@ -1,4 +1,5 @@
-import { open, rm, stat } from 'node:fs/promises';
+import { mkdir, open, readFile, rm, stat } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const RETRY_MS = 20;
@@ -31,6 +32,40 @@ export async function withLock<T>(path: string, work: () => Promise<T>): Promise
     return await work();
   } finally {
     await rm(path, { force: true });
+  }
+}
+
+/**
+ * Claim something for as long as this process lives, e.g. the one connection
+ * to Slack. Resolves a release function, or undefined if another running
+ * process has it. A claim left by a process that has exited is taken over.
+ */
+export async function claim(path: string): Promise<(() => Promise<void>) | undefined> {
+  await mkdir(dirname(path), { recursive: true });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const handle = await open(path, 'wx');
+      await handle.writeFile(String(process.pid));
+      await handle.close();
+      return () => rm(path, { force: true });
+    } catch (error) {
+      if (!isExists(error)) throw error;
+      const holder = Number.parseInt(await readFile(path, 'utf8').catch(() => ''), 10);
+      if (isRunning(holder)) return undefined;
+      await rm(path, { force: true });
+    }
+  }
+  return undefined;
+}
+
+function isRunning(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: it exists, it's just not ours to signal.
+    return error instanceof Error && 'code' in error && error.code === 'EPERM';
   }
 }
 
