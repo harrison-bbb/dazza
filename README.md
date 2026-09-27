@@ -40,6 +40,8 @@ Just type to talk to Dazza. `/status`, `/board`, `/approve` and `/help` are shor
 
 While Dazza runs, a project board is served at `http://localhost:4777`: a dashboard, the scope document, the task list, and a page for every task and subtask with a comment thread shared with Dazza. It opens when your first plan is ready and updates live. Tasks move through backlog → planned → building → in review (or blocked). Only you close or cancel them, so nothing is done until you say so. Run `dazza board` to open it without starting a chat.
 
+You can also run the project from the chat: "close T4", "unblock T5, tags are case-insensitive", "add a subtask to T3 for X", "move T8 to the backlog". Changes you ask for apply straight away and show up on the board.
+
 ## Development
 
 Requires Node 22 and pnpm.

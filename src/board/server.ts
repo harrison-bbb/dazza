@@ -1,12 +1,21 @@
 import { unwatchFile, watchFile } from 'node:fs';
-import { basename, join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { basename, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
-import { addComment, approvePlan, cancelTask, closeTask, requestChanges } from '../core/actions.js';
+import {
+  addComment,
+  approvePlan,
+  cancelTask,
+  closeTask,
+  REQUESTABLE_STATUSES,
+  requestChanges,
+  setStatus,
+} from '../core/actions.js';
 import type { Store } from '../core/store.js';
 import { CSRF_HEADER, type ProjectSnapshot } from './api.js';
 
@@ -15,8 +24,16 @@ const PORT_ATTEMPTS = 10;
 const POLL_INTERVAL_MS = 500;
 const DEBOUNCE_MS = 100;
 const WATCHED_FILES = ['tasks.json', 'scope.md', 'events.jsonl'];
+const IMAGE_TYPES: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+};
 
 const CommentBody = z.object({ body: z.string() });
+const StatusBody = z.object({ status: z.enum(REQUESTABLE_STATUSES), note: z.string().optional() });
 
 export function createBoardApp(store: Store, projectRoot: string, webRoot: string): Hono {
   const app = new Hono();
@@ -63,11 +80,31 @@ export function createBoardApp(store: Store, projectRoot: string, webRoot: strin
     return c.json(result, result.ok ? 200 : 409);
   });
 
+  app.post('/api/tasks/:id/status', async (c) => {
+    const parsed = StatusBody.safeParse(await c.req.json().catch(() => undefined));
+    if (!parsed.success) return c.json({ ok: false, message: 'Expected { status, note? }' }, 400);
+    const result = await setStatus(store, c.req.param('id'), parsed.data.status, parsed.data.note);
+    return c.json(result, result.ok ? 200 : 409);
+  });
+
   app.post('/api/tasks/:id/request-changes', async (c) => {
     const body = await readBody(c.req.raw);
     if (body === undefined) return c.json({ ok: false, message: 'Expected { body }' }, 400);
     const result = await requestChanges(store, c.req.param('id'), body);
     return c.json(result, result.ok ? 200 : 409);
+  });
+
+  // Handoff screenshots. Names are validated so nothing outside .dazza/handoffs is reachable.
+  app.get('/api/handoffs/:task/:file', async (c) => {
+    const { task, file } = c.req.param();
+    const type = IMAGE_TYPES[extname(file).toLowerCase()];
+    if (!/^T\d+$/.test(task) || !/^[\w-][\w.-]*$/.test(file) || !type) return c.notFound();
+    try {
+      const image = await readFile(join(store.dir, 'handoffs', task, file));
+      return c.body(image, 200, { 'content-type': type, 'cache-control': 'no-cache' });
+    } catch {
+      return c.notFound();
+    }
   });
 
   // Pushes a `change` event whenever project files change, from any process
@@ -88,6 +125,9 @@ export function createBoardApp(store: Store, projectRoot: string, webRoot: strin
       for (const path of paths) unwatchFile(path, onChange);
     }),
   );
+
+  // Unknown API paths are errors, not app pages.
+  app.all('/api/*', (c) => c.notFound());
 
   app.use('/*', serveStatic({ root: webRoot }));
   app.get('*', serveStatic({ root: webRoot, path: 'index.html' }));

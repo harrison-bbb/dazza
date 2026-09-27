@@ -87,11 +87,53 @@ export async function cancelTask(
   });
 }
 
+/** Statuses the user can ask for. Building, review and blocked are Dazza's to set. */
+export const REQUESTABLE_STATUSES = ['backlog', 'planned', 'closed', 'cancelled'] as const;
+export type RequestableStatus = (typeof REQUESTABLE_STATUSES)[number];
+
+/**
+ * Move a task where the user wants it, with the same rules as the board:
+ * close only reviewed work, send reviewed work back with a note, and move
+ * work between backlog and planned (which also unblocks it).
+ */
+export async function setStatus(
+  store: Store,
+  taskId: string,
+  status: RequestableStatus,
+  note = '',
+  now = new Date(),
+): Promise<ActionResult> {
+  if (status === 'closed') return closeTask(store, taskId, now);
+  if (status === 'cancelled') return cancelTask(store, taskId, now);
+
+  const plan = await store.readPlan();
+  const current = plan && findItem(plan, taskId);
+  if (current && !current.subtask && current.task.status === 'review' && status === 'planned') {
+    return requestChanges(store, taskId, note, now);
+  }
+
+  const result = await transition(store, taskId, now, (plan, task) => {
+    const movable = status === 'planned' ? ['backlog', 'blocked'] : ['planned', 'blocked'];
+    if (!movable.includes(task.status)) {
+      return fail(`${taskId} is ${task.status}; it can't move to ${status}.`);
+    }
+    return {
+      plan: withStatus(plan, taskId, status),
+      event: { type: 'task_moved', message: `Moved from ${task.status} to ${status}` },
+    };
+  });
+  if (result.ok && note.trim()) await addComment(store, taskId, note, 'user', now);
+  return result;
+}
+
 type Transition =
   | ActionResult
   | {
       plan: Plan;
-      event: { type: 'task_approved' | 'task_rejected' | 'task_cancelled'; message: string };
+      event: {
+        type: 'task_approved' | 'task_rejected' | 'task_cancelled' | 'task_moved';
+        message: string;
+      };
     };
 
 async function transition(

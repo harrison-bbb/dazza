@@ -67,6 +67,7 @@ export function carryOverProgress(current: Plan | undefined, revised: Task[]): T
     const subtaskStatus = new Map(before?.subtasks.map((s) => [s.id, s.status]));
     return {
       ...task,
+      ...(before?.handoff && { handoff: before.handoff }),
       status: before?.status ?? initialStatus(task.status),
       subtasks: task.subtasks.map((s) => ({
         ...s,

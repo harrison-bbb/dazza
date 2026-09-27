@@ -1,6 +1,6 @@
 import { type ActionResponse, CSRF_HEADER, type ProjectSnapshot } from '../../../src/board/api.js';
 
-export type { Event, Plan, Subtask, Task, TaskStatus } from '../../../src/core/schema.js';
+export type { Event, Handoff, Plan, Subtask, Task, TaskStatus } from '../../../src/core/schema.js';
 export type { ProjectSnapshot };
 
 export async function fetchProject(): Promise<ProjectSnapshot> {
@@ -15,6 +15,8 @@ export const cancelTask = (id: string) => post(`${task(id)}/cancel`);
 export const requestChanges = (id: string, body: string) =>
   post(`${task(id)}/request-changes`, { body });
 export const addComment = (id: string, body: string) => post(`${task(id)}/comments`, { body });
+export const setStatus = (id: string, status: 'backlog' | 'planned', note?: string) =>
+  post(`${task(id)}/status`, { status, ...(note && { note }) });
 
 const task = (id: string) => `/api/tasks/${encodeURIComponent(id)}`;
 

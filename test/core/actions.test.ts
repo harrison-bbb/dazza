@@ -5,6 +5,7 @@ import {
   cancelTask,
   closeTask,
   requestChanges,
+  setStatus,
 } from '../../src/core/actions.js';
 import type { Task } from '../../src/core/schema.js';
 import { makePlan, makeTask } from '../fixtures.js';
@@ -109,6 +110,39 @@ describe('actions', () => {
       expect(await cancelTask(project.store, 'T1')).toMatchObject({ ok: true });
       expect(await status('T1')).toBe('cancelled');
       expect(await cancelTask(project.store, 'T2')).toMatchObject({ ok: false });
+    });
+  });
+
+  describe('setStatus', () => {
+    it('unblocks and defers work, recording the reason', async () => {
+      await seed(makeTask({ id: 'T1', status: 'blocked' }), makeTask({ id: 'T2' }));
+      expect(
+        await setStatus(project.store, 'T1', 'planned', 'Tags are case-insensitive'),
+      ).toMatchObject({
+        ok: true,
+      });
+      expect(await setStatus(project.store, 'T2', 'backlog')).toMatchObject({ ok: true });
+      expect([await status('T1'), await status('T2')]).toEqual(['planned', 'backlog']);
+      expect(await lastEvent()).toMatchObject({ type: 'task_moved', taskId: 'T2' });
+    });
+
+    it('routes review work through the review rules', async () => {
+      await seed(
+        makeTask({ id: 'T1', status: 'review' }),
+        makeTask({ id: 'T2', status: 'review' }),
+      );
+      expect(await setStatus(project.store, 'T1', 'planned')).toMatchObject({ ok: false });
+      expect(await setStatus(project.store, 'T1', 'planned', 'Bigger button')).toMatchObject({
+        ok: true,
+      });
+      expect(await setStatus(project.store, 'T2', 'closed')).toMatchObject({ ok: true });
+      expect([await status('T1'), await status('T2')]).toEqual(['planned', 'closed']);
+    });
+
+    it('refuses moves that skip the workflow', async () => {
+      await seed(makeTask({ id: 'T1', status: 'building' }));
+      expect(await setStatus(project.store, 'T1', 'backlog')).toMatchObject({ ok: false });
+      expect(await status('T1')).toBe('building');
     });
   });
 });

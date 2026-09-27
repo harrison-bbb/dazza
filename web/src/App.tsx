@@ -35,9 +35,13 @@ export function App() {
       <TopBar crumbs={crumbs(name, route, found)} live={live} />
       <main className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         {route.view === 'doc' ? (
-          <DocView scope={project.scope} />
+          <DocView scope={project.scope} events={events} />
         ) : route.view === 'tasks' ? (
-          <TaskList tasks={plan?.tasks ?? []} events={events} />
+          plan ? (
+            <TaskList plan={plan} events={events} />
+          ) : (
+            <p className="p-10 text-center text-muted">No plan yet.</p>
+          )
         ) : route.view === 'item' && found && plan ? (
           <ItemView
             task={found.task}

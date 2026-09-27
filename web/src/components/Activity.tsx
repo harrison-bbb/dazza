@@ -1,9 +1,9 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
-import { addComment, type Event, requestChanges } from '../lib/api';
+import { addComment, type Event, requestChanges, setStatus } from '../lib/api';
 import { cn, timeAgo } from '../lib/format';
 import { Button, InlineText } from './ui';
 
-export type ComposerMode = 'comment' | 'changes';
+export type ComposerMode = 'comment' | 'changes' | 'unblock';
 
 interface ActivityProps {
   itemId: string;
@@ -107,22 +107,47 @@ interface ComposerProps {
   onSent(): void;
 }
 
+/** How the composer behaves for each mode: what it says and what sending does. */
+const MODES = {
+  comment: { banner: '', placeholder: 'Comment…', label: 'Comment', button: 'Comment', tone: '' },
+  changes: {
+    banner: 'Requesting changes: this goes back to Dazza',
+    placeholder: 'What should change?',
+    label: 'Requested changes',
+    button: 'Send back',
+    tone: 'amber',
+  },
+  unblock: {
+    banner: 'Answering: Dazza picks this back up',
+    placeholder: 'Your answer…',
+    label: 'Answer for Dazza',
+    button: 'Answer & unblock',
+    tone: 'red',
+  },
+} as const;
+
+function send(mode: ComposerMode, itemId: string, body: string) {
+  if (mode === 'changes') return requestChanges(itemId, body);
+  if (mode === 'unblock') return setStatus(itemId, 'planned', body);
+  return addComment(itemId, body);
+}
+
 function Composer({ itemId, mode, onModeChange, onSent }: ComposerProps) {
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const input = useRef<HTMLTextAreaElement>(null);
-  const changes = mode === 'changes';
+  const config = MODES[mode];
 
   useEffect(() => {
-    if (changes) input.current?.focus();
-  }, [changes]);
+    if (mode !== 'comment') input.current?.focus();
+  }, [mode]);
 
   const submit = async (e?: FormEvent) => {
     e?.preventDefault();
     if (!body.trim() || busy) return;
     setBusy(true);
-    const result = changes ? await requestChanges(itemId, body) : await addComment(itemId, body);
+    const result = await send(mode, itemId, body);
     setBusy(false);
     if (!result.ok) return setError(result.message);
     setBody('');
@@ -133,9 +158,14 @@ function Composer({ itemId, mode, onModeChange, onSent }: ComposerProps) {
 
   return (
     <form onSubmit={submit} className="shrink-0 border-t border-line p-3">
-      {changes && (
-        <div className="mb-2 flex items-center justify-between px-1 text-[12px] text-amber">
-          Requesting changes: this goes back to Dazza
+      {config.banner && (
+        <div
+          className={cn(
+            'mb-2 flex items-center justify-between px-1 text-[12px]',
+            config.tone === 'red' ? 'text-red' : 'text-amber',
+          )}
+        >
+          {config.banner}
           <button
             type="button"
             onClick={() => onModeChange('comment')}
@@ -148,7 +178,9 @@ function Composer({ itemId, mode, onModeChange, onSent }: ComposerProps) {
       <div
         className={cn(
           'rounded-lg border bg-bg transition-colors focus-within:border-line-strong',
-          changes ? 'border-amber/50' : 'border-line',
+          config.tone === 'amber' && 'border-amber/50',
+          config.tone === 'red' && 'border-red/50',
+          !config.tone && 'border-line',
         )}
       >
         <textarea
@@ -159,19 +191,19 @@ function Composer({ itemId, mode, onModeChange, onSent }: ComposerProps) {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void submit();
           }}
           rows={3}
-          placeholder={changes ? 'What should change?' : 'Comment…'}
-          aria-label={changes ? 'Requested changes' : 'Comment'}
+          placeholder={config.placeholder}
+          aria-label={config.label}
           className="block w-full resize-none bg-transparent px-3 pt-2.5 text-[13px] leading-6 outline-none placeholder:text-faint"
         />
         <div className="flex items-center justify-between px-2 pb-2">
           <span className="px-1 text-[11px] text-faint">{error ?? '⌘ Enter'}</span>
           <Button
             type="submit"
-            variant={changes ? 'secondary' : 'primary'}
+            variant={mode === 'comment' ? 'primary' : 'secondary'}
             disabled={!body.trim() || busy}
             className="h-7"
           >
-            {changes ? 'Send back' : 'Comment'}
+            {config.button}
           </Button>
         </div>
       </div>

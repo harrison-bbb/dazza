@@ -56,7 +56,7 @@ describe('Manager', () => {
     expect(provider.runs[1]?.resumeSessionId).toBe('session-1');
   });
 
-  it('gives the agent current project state and only planning tools', async () => {
+  it('gives the agent current project state and no tools that edit code', async () => {
     const { provider, manager } = setup();
     await project.store.writePlan(makePlan([makeTask({ id: 'T1', title: 'Scaffold' })]));
     await drain(manager.send('status?'));
@@ -66,7 +66,12 @@ describe('Manager', () => {
     expect(run?.prompt).toMatch(
       /^<project-state>\n[\s\S]*T1 \[planned\] Scaffold[\s\S]*<\/project-state>\n\nstatus\?$/,
     );
-    expect(run?.allowedTools).toEqual(['Read', 'Glob', 'Grep', 'mcp__dazza__save_plan']);
+    expect(run?.allowedTools).toEqual(
+      expect.arrayContaining(['Read', 'mcp__dazza__save_plan', 'mcp__dazza__set_status']),
+    );
+    for (const tool of ['Edit', 'Write', 'Bash', 'NotebookEdit']) {
+      expect(run?.allowedTools).not.toContain(tool);
+    }
     expect(run?.mcpServers).toEqual({ dazza: { command: 'node', args: ['dazza', 'mcp'] } });
   });
 });

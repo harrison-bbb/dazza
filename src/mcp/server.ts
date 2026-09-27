@@ -3,6 +3,16 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import pkg from '../../package.json' with { type: 'json' };
+import { type ActionResult, addComment, REQUESTABLE_STATUSES, setStatus } from '../core/actions.js';
+import {
+  addSubtask,
+  addTask,
+  editSubtask,
+  editTask,
+  NewTask,
+  type SubtaskChanges,
+  TaskChanges,
+} from '../core/edits.js';
 import { carryOverProgress } from '../core/plan.js';
 import { Plan, SCHEMA_VERSION, Task } from '../core/schema.js';
 import { Store } from '../core/store.js';
@@ -11,12 +21,25 @@ export const MCP_SERVER_NAME = 'dazza';
 
 /** Fully-qualified tool names as agents see them, for allow-listing. */
 export const McpTools = {
-  savePlan: `mcp__${MCP_SERVER_NAME}__save_plan`,
+  savePlan: tool('save_plan'),
+  updateItem: tool('update_item'),
+  addTask: tool('add_task'),
+  addSubtask: tool('add_subtask'),
+  setStatus: tool('set_status'),
+  comment: tool('comment'),
 } as const;
+
+function tool(name: string): string {
+  return `mcp__${MCP_SERVER_NAME}__${name}`;
+}
 
 export const SavePlanInput = z.object({
   scope: z.string().min(1).describe('The scope of work as Markdown.'),
   tasks: z.array(Task).min(1).describe('Ordered tasks with acceptance criteria and subtasks.'),
+  summary: z
+    .string()
+    .optional()
+    .describe('When revising, one line on what changed and why. Shown in the scope history.'),
 });
 export type SavePlanInput = z.infer<typeof SavePlanInput>;
 
@@ -39,7 +62,9 @@ export async function savePlan(store: Store, input: SavePlanInput): Promise<Call
   await store.appendEvent({
     at: new Date().toISOString(),
     type: rescoped ? 'scope_change_proposed' : 'plan_created',
-    message: `${rescoped ? 'Revised the approved plan' : 'Drafted a plan'}: ${tasks.length} tasks`,
+    message:
+      input.summary ??
+      `${rescoped ? 'Revised the approved plan' : 'Drafted a plan'}: ${tasks.length} tasks`,
   });
 
   const count = `${tasks.length} tasks`;
@@ -71,12 +96,91 @@ export function createMcpServer(store: Store): McpServer {
     (input) => savePlan(store, input),
   );
 
+  // Direct edits the user asks for in conversation. These apply immediately and
+  // don't need re-approval, because the user asked for them.
+  server.registerTool(
+    'update_item',
+    {
+      description:
+        'Change a task or subtask the user asked you to change. Subtasks only have a title ' +
+        'and description. Pass only the fields that change.',
+      inputSchema: { id: z.string(), ...TaskChanges.shape },
+    },
+    async ({ id, ...changes }) =>
+      toResult(
+        id.includes('.')
+          ? await editSubtask(store, id, pickSubtaskChanges(changes))
+          : await editTask(store, id, changes),
+      ),
+  );
+
+  server.registerTool(
+    'add_task',
+    {
+      description: 'Add a new task the user asked for. It gets the next task id.',
+      inputSchema: NewTask.shape,
+    },
+    async (input) => toResult(await addTask(store, input)),
+  );
+
+  server.registerTool(
+    'add_subtask',
+    {
+      description: "Add a subtask to an existing task at the user's request.",
+      inputSchema: {
+        taskId: z.string(),
+        title: z.string().min(1),
+        description: z.string().optional(),
+      },
+    },
+    async ({ taskId, title, description }) =>
+      toResult(await addSubtask(store, taskId, { title, ...(description && { description }) })),
+  );
+
+  server.registerTool(
+    'set_status',
+    {
+      description:
+        'Move a task where the user asked: closed (accept reviewed work), cancelled (drop it), ' +
+        'planned (queue it, unblock it, or send reviewed work back, which needs a note), or ' +
+        'backlog (defer it). Only do this when the user asked.',
+      inputSchema: {
+        id: z.string(),
+        status: z.enum(REQUESTABLE_STATUSES),
+        note: z.string().optional().describe('Why, or what to change. Saved as their comment.'),
+      },
+    },
+    async ({ id, status, note }) => toResult(await setStatus(store, id, status, note)),
+  );
+
+  server.registerTool(
+    'comment',
+    {
+      description: "Post a comment from Dazza on a task or subtask's thread on the board.",
+      inputSchema: { id: z.string(), body: z.string().min(1) },
+    },
+    async ({ id, body }) => toResult(await addComment(store, id, body, 'dazza')),
+  );
+
   return server;
 }
 
 /** Entry point for `dazza mcp`, spawned by the agent CLI over stdio. */
 export async function serveMcp(projectRoot: string): Promise<void> {
   await createMcpServer(new Store(projectRoot)).connect(new StdioServerTransport());
+}
+
+function toResult(result: ActionResult): CallToolResult {
+  return result.ok
+    ? { content: [{ type: 'text', text: result.message }] }
+    : failure(result.message);
+}
+
+function pickSubtaskChanges(changes: TaskChanges): SubtaskChanges {
+  return {
+    ...(changes.title && { title: changes.title }),
+    ...(changes.description && { description: changes.description }),
+  };
 }
 
 function failure(text: string): CallToolResult {

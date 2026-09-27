@@ -21,9 +21,6 @@ export const TaskStatus = z.enum([
   'closed',
 ]);
 
-/** Statuses only the user can set. */
-export const USER_STATUSES: readonly TaskStatus[] = ['closed', 'cancelled'];
-
 /** Work that is finished one way or another. */
 export const FINAL_STATUSES: readonly TaskStatus[] = ['closed', 'cancelled'];
 
@@ -32,6 +29,20 @@ export const Subtask = z.object({
   title: z.string().min(1),
   description: z.string().default(''),
   status: TaskStatus.default('planned'),
+});
+
+/** What Dazza hands over when it submits a task for review. */
+export const Handoff = z.object({
+  summary: z.string().min(1),
+  /** Steps the user can follow to check the work themselves. */
+  howToVerify: z.array(z.string().min(1)).default([]),
+  branch: z.string().optional(),
+  filesChanged: z.number().int().nonnegative().optional(),
+  /** Automated checks Dazza ran, e.g. tests, lint, build. */
+  checks: z.array(z.object({ name: z.string().min(1), passed: z.boolean() })).default([]),
+  /** Image files in `.dazza/handoffs/<task id>/`. */
+  screenshots: z.array(z.string().regex(/^[\w.-]+$/, 'Plain file names only')).default([]),
+  submittedAt: Timestamp,
 });
 
 export const Task = z
@@ -43,6 +54,7 @@ export const Task = z
     subtasks: z.array(Subtask).default([]),
     dependsOn: z.array(TaskId).default([]),
     status: TaskStatus.default('planned'),
+    handoff: Handoff.optional(),
   })
   .refine((task) => task.subtasks.every((s) => s.id.startsWith(`${task.id}.`)), {
     message: 'Subtask ids must be prefixed by their parent task id',
@@ -86,6 +98,9 @@ export const EventType = z.enum([
   'task_approved',
   'task_rejected',
   'task_cancelled',
+  'task_edited',
+  'task_added',
+  'task_moved',
   'scope_change_proposed',
   'comment',
 ]);
@@ -106,6 +121,7 @@ export type TaskStatus = z.infer<typeof TaskStatus>;
 export type Actor = z.infer<typeof Actor>;
 export type Subtask = z.infer<typeof Subtask>;
 export type Task = z.infer<typeof Task>;
+export type Handoff = z.infer<typeof Handoff>;
 export type Plan = z.infer<typeof Plan>;
 export type EventType = z.infer<typeof EventType>;
 export type Event = z.infer<typeof Event>;

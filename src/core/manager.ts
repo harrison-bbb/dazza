@@ -5,8 +5,11 @@ import { progress } from './plan.js';
 import type { Event, Plan } from './schema.js';
 import type { Store } from './store.js';
 
-/** Read-only tools let the manager inspect an existing codebase while scoping. */
-const MANAGER_TOOLS = ['Read', 'Glob', 'Grep', McpTools.savePlan];
+/**
+ * Read-only tools to inspect the codebase, plus Dazza's own tools to plan and to
+ * change the project when the user asks. No tools that edit code.
+ */
+const MANAGER_TOOLS = ['Read', 'Glob', 'Grep', ...Object.values(McpTools)];
 
 export interface ManagerOptions {
   store: Store;

@@ -9,7 +9,9 @@ export function timeAgo(iso: string, now = Date.now()): string {
   // Clamp to the past: a timestamp slightly ahead (clock skew) still reads "just now".
   const diff = Math.min(0, new Date(iso).getTime() - now);
   for (const [unit, ms] of UNITS) {
-    if (Math.abs(diff) >= ms) return rtf.format(Math.round(diff / ms), unit);
+    // Round first, so 59.6 minutes reads "1 hr ago" rather than "60 min ago".
+    const value = Math.round(diff / ms);
+    if (value <= -1) return rtf.format(value, unit);
   }
   return 'just now';
 }

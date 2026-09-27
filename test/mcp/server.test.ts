@@ -1,6 +1,8 @@
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it } from 'vitest';
-import { savePlan } from '../../src/mcp/server.js';
-import { makeTask } from '../fixtures.js';
+import { createMcpServer, savePlan } from '../../src/mcp/server.js';
+import { makePlan, makeTask } from '../fixtures.js';
 import { useTempProject } from '../helpers.js';
 
 describe('savePlan', () => {
@@ -58,5 +60,75 @@ describe('savePlan', () => {
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result.content)).toContain('T1 (building)');
     expect((await project.store.readPlan())?.tasks[0]?.id).toBe('T1');
+  });
+});
+
+describe('MCP tools, called through a real client', () => {
+  const project = useTempProject();
+
+  const connect = async () => {
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    await createMcpServer(project.store).connect(serverSide);
+    const client = new Client({ name: 'test', version: '1.0.0' });
+    await client.connect(clientSide);
+    return client;
+  };
+  const text = (result: Awaited<ReturnType<Client['callTool']>>) => JSON.stringify(result.content);
+
+  it('exposes the planning and project tools', async () => {
+    const { tools } = await (await connect()).listTools();
+    expect(tools.map((t) => t.name).sort()).toEqual([
+      'add_subtask',
+      'add_task',
+      'comment',
+      'save_plan',
+      'set_status',
+      'update_item',
+    ]);
+  });
+
+  it('edits, adds, moves and comments on work', async () => {
+    await project.store.writePlan(
+      makePlan([makeTask({ id: 'T1', status: 'review' }), makeTask({ id: 'T2' })]),
+    );
+    const client = await connect();
+
+    await client.callTool({ name: 'update_item', arguments: { id: 'T2', title: 'Renamed' } });
+    await client.callTool({
+      name: 'add_subtask',
+      arguments: { taskId: 'T2', title: 'Extra step' },
+    });
+    await client.callTool({ name: 'set_status', arguments: { id: 'T1', status: 'closed' } });
+    await client.callTool({ name: 'comment', arguments: { id: 'T2', body: 'Noted.' } });
+
+    const plan = await project.store.readPlan();
+    expect(plan?.tasks.map((t) => [t.id, t.title, t.status])).toEqual([
+      ['T1', 'Task T1', 'closed'],
+      ['T2', 'Renamed', 'planned'],
+    ]);
+    expect(plan?.tasks[1]?.subtasks.map((s) => s.title)).toEqual(['Extra step']);
+    expect((await project.store.readEvents()).at(-1)).toMatchObject({
+      actor: 'dazza',
+      message: 'Noted.',
+    });
+  });
+
+  it('reports rule violations as tool errors', async () => {
+    await project.store.writePlan(makePlan([makeTask({ id: 'T1' })]));
+    const result = await (await connect()).callTool({
+      name: 'set_status',
+      arguments: { id: 'T1', status: 'closed' },
+    });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain("isn't in review");
+  });
+
+  it('records the revision summary in the scope history', async () => {
+    const client = await connect();
+    await client.callTool({
+      name: 'save_plan',
+      arguments: { scope: '# x', tasks: [makeTask({ id: 'T1' })], summary: 'First cut' },
+    });
+    expect((await project.store.readEvents()).at(-1)?.message).toBe('First cut');
   });
 });

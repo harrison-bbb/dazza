@@ -14,7 +14,7 @@ export function Button({ variant = 'secondary', className, ...props }: ButtonPro
           'bg-accent text-accent-ink hover:bg-accent/90 disabled:bg-hover disabled:text-faint',
         variant !== 'primary' && 'disabled:opacity-40',
         variant === 'secondary' && 'border border-line-strong text-ink hover:bg-hover',
-        variant === 'quiet' && 'px-2 text-muted hover:text-ink',
+        variant === 'quiet' && 'px-1 text-muted hover:text-ink',
         className,
       )}
       {...props}

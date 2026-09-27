@@ -6,6 +6,7 @@ import { startBoard } from '../board/server.js';
 import { approvePlan } from '../core/actions.js';
 import { Manager } from '../core/manager.js';
 import { Store } from '../core/store.js';
+import { McpTools } from '../mcp/server.js';
 import { ClaudeProvider } from '../providers/claude.js';
 import { openInBrowser } from '../util/open.js';
 import { BRAND, banner } from './banner.js';
@@ -85,6 +86,7 @@ async function converse(
 ) {
   const before = await store.readPlan();
   const spinner = new Spinner();
+  let rewrotePlan = false;
   spinner.start('Thinking');
 
   try {
@@ -94,6 +96,7 @@ async function converse(
         say(renderInline(event.text));
         spinner.start('Thinking');
       } else if (event.type === 'tool_use') {
+        rewrotePlan ||= event.tool === McpTools.savePlan;
         spinner.update(describeTool(event.tool, event.input));
       } else if (event.type === 'finished' && !event.ok) {
         spinner.stop();
@@ -107,8 +110,9 @@ async function converse(
     spinner.stop();
   }
 
+  // Small edits are confirmed in Dazza's own reply; a rewritten plan gets the full card.
   const after = await store.readPlan();
-  if (after && JSON.stringify(after) !== JSON.stringify(before)) {
+  if (rewrotePlan && after && JSON.stringify(after) !== JSON.stringify(before)) {
     console.log(`${planCard(after, Boolean(before?.approvedAt), boardUrl)}\n`);
     // The first plan is the moment to show the board; after that the tab is already open.
     if (!before) openInBrowser(boardUrl);

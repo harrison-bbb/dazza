@@ -2,24 +2,26 @@ import { ChevronDown, MessageSquare } from 'lucide-react';
 import { useState } from 'react';
 import { StatusIcon } from '../components/StatusIcon';
 import { Id, InlineText } from '../components/ui';
-import type { Event, Task, TaskStatus } from '../lib/api';
-import { cn } from '../lib/format';
+import type { Event, Plan, Task, TaskStatus } from '../lib/api';
+import { cn, timeAgo } from '../lib/format';
 import { paths } from '../lib/router';
 import { STATUS_LABEL, STATUS_ORDER } from '../lib/status';
+import { nextUp, statusSince } from '../lib/timeline';
 
 /** Every task, grouped by status. Finished groups start collapsed. */
-export function TaskList({ tasks, events }: { tasks: Task[]; events: Event[] }) {
+export function TaskList({ plan, events }: { plan: Plan; events: Event[] }) {
+  const next = nextUp(plan)?.id;
   return (
     <div className="mx-auto w-full max-w-4xl px-5 py-10">
       <div className="mb-8 flex items-baseline justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
-        <span className="text-[13px] text-muted">{tasks.length} total</span>
+        <span className="text-[13px] text-muted">{plan.tasks.length} total</span>
       </div>
       <div className="space-y-6">
         {STATUS_ORDER.map((status) => {
-          const group = tasks.filter((t) => t.status === status);
+          const group = plan.tasks.filter((t) => t.status === status);
           return group.length > 0 ? (
-            <Group key={status} status={status} tasks={group} events={events} />
+            <Group key={status} status={status} tasks={group} events={events} next={next} />
           ) : null;
         })}
       </div>
@@ -27,7 +29,14 @@ export function TaskList({ tasks, events }: { tasks: Task[]; events: Event[] }) 
   );
 }
 
-function Group({ status, tasks, events }: { status: TaskStatus; tasks: Task[]; events: Event[] }) {
+interface GroupProps {
+  status: TaskStatus;
+  tasks: Task[];
+  events: Event[];
+  next: string | undefined;
+}
+
+function Group({ status, tasks, events, next }: GroupProps) {
   const [open, setOpen] = useState(status !== 'closed' && status !== 'cancelled');
   return (
     <section>
@@ -46,7 +55,11 @@ function Group({ status, tasks, events }: { status: TaskStatus; tasks: Task[]; e
         <ul className="divide-y divide-line border-y border-line">
           {tasks.map((task) => (
             <li key={task.id}>
-              <Row task={task} comments={countComments(events, task)} />
+              <Row
+                task={task}
+                context={context(task, events, next)}
+                comments={countComments(events, task)}
+              />
             </li>
           ))}
         </ul>
@@ -55,7 +68,7 @@ function Group({ status, tasks, events }: { status: TaskStatus; tasks: Task[]; e
   );
 }
 
-function Row({ task, comments }: { task: Task; comments: number }) {
+function Row({ task, context, comments }: { task: Task; context: string; comments: number }) {
   const closed = task.subtasks.filter((s) => s.status === 'closed').length;
   return (
     <a
@@ -74,19 +87,48 @@ function Row({ task, comments }: { task: Task; comments: number }) {
       >
         <InlineText>{task.title}</InlineText>
       </span>
-      {comments > 0 && (
-        <span className="flex items-center gap-1 text-[12px] text-muted">
-          <MessageSquare className="size-3.5" />
-          {comments}
-        </span>
-      )}
-      {task.subtasks.length > 0 && (
-        <span className="w-10 text-right font-mono text-[12px] text-muted tabular-nums">
-          {closed}/{task.subtasks.length}
-        </span>
-      )}
+      <span
+        className={cn(
+          'hidden shrink-0 text-[12px] sm:block',
+          context === 'Next' ? 'text-accent' : 'text-muted',
+        )}
+      >
+        {context}
+      </span>
+      <span className="flex w-8 shrink-0 items-center justify-end gap-1 text-[12px] text-muted">
+        {comments > 0 && (
+          <>
+            <MessageSquare className="size-3.5" />
+            {comments}
+          </>
+        )}
+      </span>
+      <span className="w-10 shrink-0 text-right font-mono text-[12px] text-muted tabular-nums">
+        {task.subtasks.length > 0 && `${closed}/${task.subtasks.length}`}
+      </span>
     </a>
   );
+}
+
+/** A few words on where the task stands, beyond its status. */
+function context(task: Task, events: Event[], next: string | undefined): string {
+  const since = statusSince(events, task);
+  const ago = since ? timeAgo(since) : '';
+  switch (task.status) {
+    case 'building':
+      return ago && `Started ${ago}`;
+    case 'review':
+      return ago && `Ready ${ago}`;
+    case 'blocked':
+      return 'Waiting on you';
+    case 'planned':
+      if (task.id === next) return 'Next';
+      return task.dependsOn.length > 0 ? `After ${task.dependsOn.join(', ')}` : '';
+    case 'closed':
+      return ago && `Closed ${ago}`;
+    default:
+      return '';
+  }
 }
 
 function countComments(events: Event[], task: Task): number {

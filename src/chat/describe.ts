@@ -41,6 +41,13 @@ export function describeTool(tool: string, input: unknown): string {
   switch (tool) {
     case McpTools.savePlan:
       return 'Writing up the plan';
+    case McpTools.updateItem:
+    case McpTools.addTask:
+    case McpTools.addSubtask:
+    case McpTools.setStatus:
+      return 'Updating the board';
+    case McpTools.comment:
+      return 'Leaving a comment';
     case 'Read':
       return path ? `Reading ${basename(path)}` : 'Reading';
     case 'Glob':

@@ -1,25 +1,37 @@
 import { ChevronRight, FileText, ListTodo } from 'lucide-react';
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { StatusIcon } from '../components/StatusIcon';
-import { Button, Heading, Id } from '../components/ui';
-import { approvePlan, type ProjectSnapshot, type Task } from '../lib/api';
+import { Button, Heading, Id, InlineText } from '../components/ui';
+import { approvePlan, type Event, type ProjectSnapshot, type Task } from '../lib/api';
+import { timeAgo } from '../lib/format';
 import { paths } from '../lib/router';
 import { scopeSummary } from '../lib/scope';
-import { STATUS_LABEL } from '../lib/status';
+import { blockerFor, latestUpdate, nextUp, statusSince } from '../lib/timeline';
 
-/** The hub: what's happening now, what needs you, and the way into the doc and the list. */
+const RECENT_LIMIT = 6;
+
+/**
+ * The manager's inbox. Top to bottom: what needs you, what's happening now,
+ * the way into the plan, and what happened recently.
+ */
 export function Dashboard({ project, onChange }: { project: ProjectSnapshot; onChange(): void }) {
-  const { plan, scope } = project;
+  const { plan, scope, events } = project;
   const tasks = plan?.tasks ?? [];
   const inScope = tasks.filter((t) => t.status !== 'cancelled');
   const closed = inScope.filter((t) => t.status === 'closed').length;
   const building = tasks.find((t) => t.status === 'building');
-  const waiting = tasks.filter((t) => t.status === 'review' || t.status === 'blocked');
+  const review = tasks.filter((t) => t.status === 'review');
+  const blocked = tasks.filter((t) => t.status === 'blocked');
+  const next = plan && !building ? nextUp(plan) : undefined;
 
   return (
     <div className="mx-auto w-full max-w-2xl px-5 py-14">
       <h1 className="text-2xl font-semibold tracking-tight">{project.name}</h1>
-      <p className="mt-1.5 text-ink-2">{summary(project, building)}</p>
+      {scope && (
+        <p className="mt-1.5 text-ink-2">
+          <InlineText>{scopeSummary(scope) ?? ''}</InlineText>
+        </p>
+      )}
 
       {inScope.length > 0 && (
         <div className="mt-6 flex items-center gap-3">
@@ -35,65 +47,174 @@ export function Dashboard({ project, onChange }: { project: ProjectSnapshot; onC
         </div>
       )}
 
-      {plan && !plan.approvedAt && <ApprovalRow count={tasks.length} onApproved={onChange} />}
-
-      <nav className="mt-10 divide-y divide-line border-y border-line" aria-label="Project">
-        <HubLink
-          href={paths.doc}
-          icon={<FileText className="size-4" />}
-          title="Scope of work"
-          detail={(scope && scopeSummary(scope)) || 'Not written yet'}
-        />
-        <HubLink
-          href={paths.tasks}
-          icon={<ListTodo className="size-4" />}
-          title="Tasks"
-          detail={taskSummary(tasks)}
-        />
-      </nav>
-
-      {building && (
-        <section className="mt-10">
-          <Heading>Building now</Heading>
-          <TaskRow task={building} />
-        </section>
+      {!plan && (
+        <p className="mt-10 text-ink-2">
+          No plan yet. Tell Dazza what you’re building in your terminal, and the plan will show up
+          here.
+        </p>
       )}
 
-      {waiting.length > 0 && (
-        <section className="mt-10">
-          <Heading>Waiting on you</Heading>
-          <div className="divide-y divide-line border-y border-line">
-            {waiting.map((task) => (
-              <TaskRow key={task.id} task={task} note={STATUS_LABEL[task.status]} />
-            ))}
-          </div>
-        </section>
+      {plan && !plan.approvedAt && <ApprovalRow count={tasks.length} onApproved={onChange} />}
+
+      {(review.length > 0 || blocked.length > 0) && (
+        <Section title="Needs you" count={review.length + blocked.length}>
+          {blocked.map((task) => (
+            <InboxRow
+              key={task.id}
+              task={task}
+              detail={<span className="text-ink-2">“{blockerFor(events, task)}”</span>}
+              action="Answer"
+            />
+          ))}
+          {review.map((task) => (
+            <InboxRow
+              key={task.id}
+              task={task}
+              detail={<Since label="Ready for review" at={statusSince(events, task)} />}
+              action="Review"
+            />
+          ))}
+        </Section>
+      )}
+
+      {plan?.approvedAt && (
+        <Section title="Now">
+          {building ? (
+            <NowRow task={building} events={events} />
+          ) : (
+            <p className="py-3 text-[13px] text-muted">
+              Dazza is idle.{' '}
+              {next
+                ? `Start \`dazza\` in your terminal and it picks up ${next.id} next.`
+                : 'Nothing is ready to build.'}
+            </p>
+          )}
+        </Section>
+      )}
+
+      <nav className="mt-10 divide-y divide-line border-y border-line" aria-label="Project">
+        <HubLink href={paths.doc} icon={<FileText className="size-4" />} title="Scope of work">
+          {scope ? 'What we’re building, and what we’re not' : 'Not written yet'}
+        </HubLink>
+        <HubLink href={paths.tasks} icon={<ListTodo className="size-4" />} title="Tasks">
+          {taskSummary(tasks)}
+        </HubLink>
+      </nav>
+
+      {events.length > 0 && (
+        <Section title="Recent">
+          <RecentList events={events.slice(-RECENT_LIMIT).reverse()} tasks={tasks} />
+        </Section>
       )}
     </div>
   );
 }
 
-function summary(project: ProjectSnapshot, building: Task | undefined): string {
-  if (!project.plan) return 'No plan yet. Tell Dazza what you’re building in your terminal.';
-  if (!project.plan.approvedAt) return 'The plan is ready for your review.';
-  if (building) return `Dazza is building ${building.id}: ${building.title}.`;
-  if (project.plan.tasks.every((t) => t.status === 'closed' || t.status === 'cancelled')) {
-    return 'Everything is closed.';
-  }
-  return 'Dazza is idle. Start `dazza` in your terminal to pick up the next task.';
+function Section({
+  title,
+  count,
+  children,
+}: {
+  title: string;
+  count?: number;
+  children: ReactNode;
+}) {
+  return (
+    <section className="mt-10">
+      <Heading aside={count}>{title}</Heading>
+      <div className="divide-y divide-line border-y border-line">{children}</div>
+    </section>
+  );
 }
 
-function taskSummary(tasks: Task[]): string {
-  if (tasks.length === 0) return 'None yet';
-  const count = (status: Task['status']) => tasks.filter((t) => t.status === status).length;
-  return [
-    `${tasks.length} tasks`,
-    count('review') && `${count('review')} in review`,
-    count('blocked') && `${count('blocked')} blocked`,
-    count('closed') && `${count('closed')} closed`,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+function InboxRow({ task, detail, action }: { task: Task; detail: ReactNode; action: string }) {
+  return (
+    <a
+      href={paths.item(task.id)}
+      className="group flex items-start gap-3 px-1 py-3 hover:bg-hover/50"
+    >
+      <StatusIcon status={task.status} className="mt-[5px]" />
+      <span className="min-w-0 flex-1">
+        <span className="flex items-baseline gap-2">
+          <Id>{task.id}</Id>
+          <span className="truncate">
+            <InlineText>{task.title}</InlineText>
+          </span>
+        </span>
+        <span className="mt-0.5 line-clamp-2 block text-[13px] text-muted">{detail}</span>
+      </span>
+      <span className="mt-0.5 flex items-center gap-1 text-[13px] text-muted group-hover:text-ink">
+        {action}
+        <ChevronRight className="size-4" />
+      </span>
+    </a>
+  );
+}
+
+function NowRow({ task, events }: { task: Task; events: Event[] }) {
+  const update = latestUpdate(events, task);
+  const done = task.subtasks.filter((s) => s.status === 'closed').length;
+  return (
+    <a href={paths.item(task.id)} className="group block px-1 py-3 hover:bg-hover/50">
+      <span className="flex items-center gap-3">
+        <StatusIcon status={task.status} />
+        <Id>{task.id}</Id>
+        <span className="min-w-0 flex-1 truncate">
+          <InlineText>{task.title}</InlineText>
+        </span>
+        <ChevronRight className="size-4 text-faint group-hover:text-ink" />
+      </span>
+      <span className="mt-1 block pl-[26px] text-[13px] text-muted">
+        <Since label="Building" at={statusSince(events, task)} />
+        {task.subtasks.length > 0 && ` · ${done} of ${task.subtasks.length} subtasks`}
+      </span>
+      {update && (
+        <span className="mt-1.5 line-clamp-2 block pl-[26px] text-[13px] text-ink-2">
+          <InlineText>{update.message}</InlineText>{' '}
+          <span className="text-faint">· {timeAgo(update.at)}</span>
+        </span>
+      )}
+    </a>
+  );
+}
+
+function RecentList({ events, tasks }: { events: Event[]; tasks: Task[] }) {
+  return (
+    <ul className="py-1">
+      {events.map((event) => {
+        const task = tasks.find((t) => t.id === event.taskId?.split('.')[0]);
+        return (
+          <li
+            key={`${event.at}-${event.type}-${event.message}`}
+            className="flex gap-3 py-2 text-[13px]"
+          >
+            <span className="w-16 shrink-0 text-faint">{timeAgo(event.at)}</span>
+            <span className="min-w-0 flex-1 truncate text-muted">
+              <span className="text-ink-2">{event.actor === 'dazza' ? 'Dazza' : 'You'}</span>{' '}
+              {event.type === 'comment' ? 'commented' : lowerFirst(event.message)}
+              {event.taskId && task && (
+                <>
+                  {' on '}
+                  <a href={paths.item(event.taskId)} className="text-ink-2 hover:text-ink">
+                    {event.taskId}
+                  </a>
+                </>
+              )}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function Since({ label, at }: { label: string; at: string | undefined }) {
+  return (
+    <>
+      {label}
+      {at && ` · ${timeAgo(at)}`}
+    </>
+  );
 }
 
 function ApprovalRow({ count, onApproved }: { count: number; onApproved(): void }) {
@@ -101,8 +222,8 @@ function ApprovalRow({ count, onApproved }: { count: number; onApproved(): void 
   return (
     <div className="mt-8 flex items-center gap-4 rounded-lg border border-line-strong px-4 py-3">
       <p className="flex-1 text-[13px] text-ink-2">
-        Read the scope and the {count} tasks. Approve when you’re happy, or tell Dazza what to
-        change.
+        The plan is ready: {count} tasks. Read the scope and the tasks, then approve. Want changes?
+        Tell Dazza in your terminal.
       </p>
       <Button
         variant="primary"
@@ -120,30 +241,32 @@ function ApprovalRow({ count, onApproved }: { count: number; onApproved(): void 
   );
 }
 
-function HubLink(props: { href: string; icon: React.ReactNode; title: string; detail: string }) {
+function HubLink(props: { href: string; icon: ReactNode; title: string; children: ReactNode }) {
   return (
     <a href={props.href} className="group flex items-center gap-3 px-1 py-4 hover:bg-hover/50">
       <span className="text-muted group-hover:text-ink">{props.icon}</span>
       <span className="min-w-0 flex-1">
         <span className="block font-medium">{props.title}</span>
-        <span className="block truncate text-[13px] text-muted">{props.detail}</span>
+        <span className="block truncate text-[13px] text-muted">{props.children}</span>
       </span>
       <ChevronRight className="size-4 text-faint group-hover:text-ink" />
     </a>
   );
 }
 
-function TaskRow({ task, note }: { task: Task; note?: string }) {
-  return (
-    <a
-      href={paths.item(task.id)}
-      className="group flex items-center gap-3 px-1 py-3 hover:bg-hover/50"
-    >
-      <StatusIcon status={task.status} />
-      <Id>{task.id}</Id>
-      <span className="min-w-0 flex-1 truncate">{task.title}</span>
-      {note && <span className="text-[12px] text-muted">{note}</span>}
-      <ChevronRight className="size-4 text-faint group-hover:text-ink" />
-    </a>
-  );
+function taskSummary(tasks: Task[]): string {
+  if (tasks.length === 0) return 'None yet';
+  const count = (status: Task['status']) => tasks.filter((t) => t.status === status).length;
+  return [
+    `${tasks.length} tasks`,
+    count('planned') && `${count('planned')} planned`,
+    count('backlog') && `${count('backlog')} in backlog`,
+    count('closed') && `${count('closed')} closed`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function lowerFirst(text: string): string {
+  return text.charAt(0).toLowerCase() + text.slice(1);
 }
