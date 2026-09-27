@@ -12,6 +12,8 @@ import { z } from 'zod';
 export const Settings = z.object({
   /** Model id passed to the agent CLI; unset means the provider's default. */
   model: z.string().optional(),
+  /** The user chose not to set up Telegram during onboarding; don't ask again. */
+  telegramSkipped: z.boolean().optional(),
 });
 export type Settings = z.infer<typeof Settings>;
 
@@ -25,6 +27,14 @@ export const Connection = z.discriminatedUnion('method', [
   }),
 ]);
 export type Connection = z.infer<typeof Connection>;
+
+/** The Telegram bot Dazza messages the user through. The token is a secret, hence 0600. */
+export const TelegramLink = z.object({
+  botToken: z.string().min(1),
+  botUsername: z.string(),
+  chatId: z.string().min(1),
+});
+export type TelegramLink = z.infer<typeof TelegramLink>;
 
 export const Limits = z.object({
   checkedAt: z.iso.datetime(),
@@ -58,6 +68,18 @@ export class Config {
   /** Sign out of Dazza. Leaves the agent CLI's own sign-in alone. */
   async clearConnection(): Promise<void> {
     await rm(join(this.dir, 'connection.json'), { force: true });
+  }
+
+  readTelegram(): Promise<TelegramLink | undefined> {
+    return this.read('telegram.json', TelegramLink);
+  }
+
+  writeTelegram(link: TelegramLink): Promise<void> {
+    return this.write('telegram.json', link);
+  }
+
+  async clearTelegram(): Promise<void> {
+    await rm(join(this.dir, 'telegram.json'), { force: true });
   }
 
   readLimits(): Promise<Limits | undefined> {

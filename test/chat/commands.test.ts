@@ -101,6 +101,7 @@ describe('running commands', () => {
 
   const context = () => {
     const said: string[] = [];
+    let linked = 0;
     const provider = new FakeProvider(undefined, models);
     let exited = false;
     const ctx: CommandContext = {
@@ -112,12 +113,18 @@ describe('running commands', () => {
       boardUrl: 'http://localhost:4777',
       startBuild: async () => {},
       status: () => {},
+      linkTelegram: async () => {
+        linked++;
+      },
+      unlinkTelegram: async () => {
+        await project.config.clearTelegram();
+      },
       say: (text) => said.push(text),
       exit: () => {
         exited = true;
       },
     };
-    return { ctx, said, provider, exited: () => exited };
+    return { ctx, said, provider, exited: () => exited, linked: () => linked };
   };
   const run = (ctx: CommandContext, line: string) => {
     const { command, args } = parseCommand(line);
@@ -157,6 +164,26 @@ describe('running commands', () => {
     expect(said[0]).toContain('pay as you go');
     await run(ctx, '/usage');
     expect(said[1]).toContain('Claude Max');
+  });
+
+  it('/telegram links when unlinked, and reports the link otherwise', async () => {
+    const { ctx, said, linked } = context();
+    await run(ctx, '/telegram');
+    expect(linked()).toBe(1);
+
+    await project.config.writeTelegram({ botToken: 't', botUsername: 'dazza_bot', chatId: '1' });
+    await run(ctx, '/telegram');
+    expect(said.at(-1)).toContain('Connected to @dazza_bot');
+    expect(linked()).toBe(1);
+  });
+
+  it('/telegram-disconnect unlinks, then walks through linking a new bot', async () => {
+    const { ctx, said, linked } = context();
+    await project.config.writeTelegram({ botToken: 't', botUsername: 'old_bot', chatId: '1' });
+    await run(ctx, '/telegram-disconnect');
+    expect(await project.config.readTelegram()).toBeUndefined();
+    expect(said.at(-1)).toContain('Disconnected @old_bot');
+    expect(linked()).toBe(1);
   });
 
   it('/exit ends the chat', async () => {

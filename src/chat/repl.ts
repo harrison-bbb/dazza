@@ -1,18 +1,20 @@
 import { homedir } from 'node:os';
 import pkg from '../../package.json' with { type: 'json' };
 import { startBoard } from '../board/server.js';
-import { Config, type Connection } from '../core/config.js';
+import { Config, type Connection, type TelegramLink } from '../core/config.js';
 import { describeCodebase, inspectCodebase } from '../core/inspect.js';
 import { Manager } from '../core/manager.js';
 import { Store } from '../core/store.js';
 import { ClaudeProvider } from '../providers/claude.js';
 import { checkApiKey } from '../setup/anthropic.js';
 import { connect } from '../setup/connect.js';
+import { connectTelegram } from '../setup/telegram.js';
+import { notificationFor, TelegramBridge } from '../telegram/bridge.js';
 import { BRAND, logo, sessionInfo } from './banner.js';
 import { type CommandContext, commandMenu, parseCommand, suggest } from './commands.js';
 import { greeting } from './describe.js';
 import { ChatSession } from './session.js';
-import { paint } from './style.js';
+import { paint, stripAnsi } from './style.js';
 import { Terminal } from './terminal.js';
 
 const PROMPT = `${paint.hex(BRAND, '›')} `;
@@ -74,7 +76,9 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
   const hasConversation = (await store.readManagerSession()) !== undefined;
   say(greeting(await store.readPlan(), { hasConversation, ...(codebase && { codebase }) }));
 
-  const session = new ChatSession({
+  // Telegram: notifications out, the user's replies in, same conversation.
+  let bridge: TelegramBridge | undefined;
+  const session: ChatSession = new ChatSession({
     store,
     config,
     provider,
@@ -89,7 +93,55 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
       print: (text) => terminal.print(text),
       status: (key, text) => terminal.setStatus(key, text),
     },
+    onReply: (reply, origin) => {
+      if (origin === 'telegram') void bridge?.send(reply);
+    },
+    onBuildEvent: (event) => {
+      if (!bridge) return;
+      void notificationFor(event, store).then((text) => {
+        if (text) void bridge?.send(text);
+      });
+    },
   });
+
+  const openBridge = async () => {
+    const link = await config.readTelegram();
+    if (!link) return;
+    bridge = new TelegramBridge(link, {
+      onMessage: (text) => {
+        terminal.print(`\n${paint.dim(`📱 You, on Telegram: ${text}`)}`);
+        void fromTelegram(text);
+      },
+      onProblem: (text) => say(paint.dim(text)),
+    });
+    bridge.start();
+  };
+  const closeBridge = async () => {
+    await bridge?.stop();
+    bridge = undefined;
+  };
+  /** A few commands work from the phone; everything else is conversation. */
+  const fromTelegram = async (text: string) => {
+    const command = text.trim().toLowerCase();
+    if (command === '/status') {
+      await bridge?.send(stripAnsi(greeting(await store.readPlan(), { hasConversation: true })));
+    } else if (command === '/build') {
+      await startBuild(session, provider, config);
+      await bridge?.send(
+        session.isBuilding
+          ? 'Building. I’ll message you as tasks are ready.'
+          : 'I couldn’t start the build; check the terminal.',
+      );
+    } else if (command === '/stop') {
+      await session.stopBuild();
+      await bridge?.send(
+        'Stopped the build. The current task picks up where it left off next time.',
+      );
+    } else {
+      session.send(text, 'telegram');
+    }
+  };
+  await openBridge();
 
   let exiting = false;
   const context: CommandContext = {
@@ -101,6 +153,17 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
     boardUrl: board.url,
     startBuild: () => startBuild(session, provider, config),
     status: (text) => terminal.setStatus('chat', text),
+    linkTelegram: async () => {
+      const link = await setUpTelegram(terminal, config, false);
+      if (link) {
+        await closeBridge();
+        await openBridge();
+      }
+    },
+    unlinkTelegram: async () => {
+      await closeBridge();
+      await config.clearTelegram();
+    },
     say,
     exit: () => {
       exiting = true;
@@ -132,6 +195,7 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
 
   await session.stopBuild();
   await session.stopChat();
+  await closeBridge();
   board.close();
 }
 
@@ -178,8 +242,34 @@ async function firstConnect(terminal: Terminal, config: Config): Promise<Connect
       checkApiKey,
     },
   );
-  if (connection) await config.writeConnection(connection);
+  if (connection) {
+    await config.writeConnection(connection);
+    // First run: offer Telegram right after connecting, once.
+    const { telegramSkipped } = await config.readSettings();
+    if (!telegramSkipped && !(await config.readTelegram())) {
+      const link = await setUpTelegram(terminal, config, true);
+      if (!link) await config.updateSettings({ telegramSkipped: true });
+    }
+  }
   return connection;
+}
+
+/** Link a Telegram bot through the terminal, and save it. */
+async function setUpTelegram(
+  terminal: Terminal,
+  config: Config,
+  optional: boolean,
+): Promise<TelegramLink | undefined> {
+  const link = await connectTelegram(
+    {
+      say,
+      select: (question, choices) => terminal.select(question, choices),
+      readLine: (options) => terminal.readLine(options),
+    },
+    { optional },
+  );
+  if (link) await config.writeTelegram(link);
+  return link;
 }
 
 async function runCommand(line: string, context: CommandContext): Promise<void> {

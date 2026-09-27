@@ -48,6 +48,8 @@ Just type to talk to Dazza. Type `/` for commands:
 | `/approve` | Approve the drafted plan |
 | `/model [name or number]` | List the models your account can use, or switch |
 | `/usage` | Session and weekly limits on a subscription, or dollars spent on an API key |
+| `/telegram` | See your Telegram link, or connect Telegram |
+| `/telegram-disconnect` | Unlink your bot and link a new one |
 | `/logout` | Sign out of Dazza; your Claude Code sign-in is untouched |
 | `/help`, `/exit` | |
 
@@ -56,6 +58,12 @@ While Dazza runs, a project board is served at `http://localhost:4777`: a dashbo
 ### Building
 
 `/build` works through the plan in dependency order. Each task is built on its own branch (`dazza/T3-…`) by Claude Code in [auto mode](https://docs.claude.com/en/docs/claude-code), which runs edits and commands without asking while its safety checks block risky actions. You see the narration, every edit (with a short diff) and every command as they happen. When a task is done Dazza commits it and moves it to **in review**. If Claude needs a decision or a credential, the task goes to **blocked** with the question, and Dazza moves on to the next task. Approving a task merges it into your branch, in order. Requesting changes sends it back, and the next `/build` picks it up with your note. Ctrl-C stops cleanly, and the task resumes next time.
+
+While it builds you can keep talking to Dazza in the terminal. Comments you leave on the board, or instructions you give in the chat, reach the build at its next check-in.
+
+### Telegram
+
+Onboarding offers to link a Telegram bot (or run `/telegram` later). Create a bot with [@BotFather](https://t.me/BotFather), paste its token, and message the bot once so Dazza can find your chat. While Dazza is open it messages you when a task is ready for review or blocked, and when a build finishes. You can reply from your phone: it's the same conversation as the terminal. `/status`, `/build` and `/stop` also work there. Dazza only accepts messages from your own chat.
 
 You can also run the project from the chat: "close T4", "unblock T5, tags are case-insensitive", "add a subtask to T3 for X", "move T8 to the backlog". Changes you ask for apply straight away and show up on the board.
 

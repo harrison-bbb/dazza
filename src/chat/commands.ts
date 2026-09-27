@@ -21,6 +21,10 @@ export interface CommandContext {
   startBuild(): Promise<void>;
   /** Show (or clear) an activity in the status line while a command works. */
   status(text: string | undefined): void;
+  /** Walk through linking a Telegram bot. */
+  linkTelegram(): Promise<void>;
+  /** Unlink the current bot. */
+  unlinkTelegram(): Promise<void>;
   /** Print Dazza's reply. */
   say(text: string): void;
   /** End the chat after this command. */
@@ -112,6 +116,33 @@ export const COMMANDS: Command[] = [
       await config.clearConnection();
       say('Signed out of Dazza. Run `dazza` again to reconnect with a subscription or an API key.');
       exit();
+    },
+  },
+  {
+    name: 'telegram',
+    description: 'See your Telegram link, or connect Telegram',
+    async run({ config, say, linkTelegram }) {
+      const link = await config.readTelegram();
+      if (!link) return linkTelegram();
+      say(
+        `Connected to @${link.botUsername}. I message you there about reviews and blockers, ` +
+          'and you can reply from your phone.\n' +
+          paint.dim('Run /telegram-disconnect to link a different bot.'),
+      );
+    },
+  },
+  {
+    name: 'telegram-disconnect',
+    description: 'Unlink your Telegram bot and link a new one',
+    async run({ config, say, linkTelegram, unlinkTelegram }) {
+      const link = await config.readTelegram();
+      if (link) {
+        await unlinkTelegram();
+        say(
+          `Disconnected @${link.botUsername}. Let’s link a new one, or press Ctrl-C to stay unlinked.`,
+        );
+      }
+      await linkTelegram();
     },
   },
   {

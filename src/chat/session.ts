@@ -31,7 +31,12 @@ export interface SessionOptions {
   output: SessionOutput;
   /** Called with every build event, e.g. to send notifications. */
   onBuildEvent?: (event: BuildEvent) => void;
+  /** Called with Dazza's full reply to a message, e.g. to answer on Telegram. */
+  onReply?: (reply: string, origin: MessageOrigin) => void;
 }
+
+/** Where a message came from, so the reply can go back the same way. */
+export type MessageOrigin = 'terminal' | 'telegram';
 
 /**
  * Everything running behind the prompt: the conversation with Dazza and the
@@ -40,7 +45,7 @@ export interface SessionOptions {
  */
 export class ChatSession {
   readonly usage: Usage = { runs: 0, tokens: 0, costUsd: 0 };
-  private readonly queue: string[] = [];
+  private readonly queue: { text: string; origin: MessageOrigin }[] = [];
   private chat: { controller: AbortController; done: Promise<void> } | undefined;
   private building: { controller: AbortController; done: Promise<void> } | undefined;
 
@@ -55,8 +60,8 @@ export class ChatSession {
   }
 
   /** Queue a message for Dazza; it's answered after any earlier ones. */
-  send(message: string): void {
-    this.queue.push(message);
+  send(message: string, origin: MessageOrigin = 'terminal'): void {
+    this.queue.push({ text: message, origin });
     if (!this.chat) {
       const controller = new AbortController();
       this.chat = { controller, done: this.drain(controller.signal) };
@@ -99,7 +104,7 @@ export class ChatSession {
         message !== undefined && !signal.aborted;
         message = this.queue.shift()
       ) {
-        await this.converse(message, signal);
+        await this.converse(message.text, message.origin, signal);
       }
     } finally {
       this.chat = undefined;
@@ -107,17 +112,24 @@ export class ChatSession {
     }
   }
 
-  private async converse(message: string, signal: AbortSignal): Promise<void> {
-    const { store, manager, boardUrl, output } = this.options;
+  private async converse(
+    message: string,
+    origin: MessageOrigin,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const { store, manager, boardUrl, output, onReply } = this.options;
     const before = await store.readPlan();
+    const reply: string[] = [];
     let rewrotePlan = false;
     output.status('chat', 'Thinking');
 
     try {
       for await (const event of manager.send(message, signal)) {
         this.countUsage(event);
-        if (event.type === 'text') output.say(renderInline(event.text));
-        else if (event.type === 'tool_use') {
+        if (event.type === 'text') {
+          reply.push(event.text);
+          output.say(renderInline(event.text));
+        } else if (event.type === 'tool_use') {
           rewrotePlan ||= event.tool === McpTools.savePlan;
           output.status('chat', describeTool(event.tool, event.input));
         } else if (event.type === 'finished' && !event.ok) {
@@ -129,6 +141,7 @@ export class ChatSession {
         signal.aborted ? paint.dim('Stopped.') : paint.red(`Error: ${errorMessage(error)}`),
       );
     }
+    if (reply.length > 0) onReply?.(reply.join('\n\n'), origin);
 
     // Small edits are confirmed in Dazza's own reply; a rewritten plan gets the full card.
     const after = await store.readPlan();

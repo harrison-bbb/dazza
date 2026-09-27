@@ -13,7 +13,13 @@ const MIN_NODE_MAJOR = 20;
 
 /** `dazza doctor`: verify everything Dazza depends on. Exits non-zero if anything is missing. */
 export async function doctor(): Promise<void> {
-  const checks = await Promise.all([checkNode(), checkGit(), checkClaude(), checkConnection()]);
+  const checks = await Promise.all([
+    checkNode(),
+    checkGit(),
+    checkClaude(),
+    checkConnection(),
+    checkTelegram(),
+  ]);
 
   for (const check of checks) {
     const mark = check.ok ? styleText('green', '✔') : styleText('red', '✖');
@@ -51,6 +57,18 @@ async function checkConnection(): Promise<Check> {
       : connection.method === 'api-key'
         ? 'connected with an Anthropic API key'
         : 'connected through your Claude subscription',
+  };
+}
+
+async function checkTelegram(): Promise<Check> {
+  const link = await new Config().readTelegram();
+  return {
+    label: 'Telegram',
+    // Optional, so being unlinked isn't a failure.
+    ok: true,
+    detail: link
+      ? `linked to @${link.botUsername}`
+      : 'not linked (optional; /telegram in the chat)',
   };
 }
 

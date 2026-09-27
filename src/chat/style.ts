@@ -24,3 +24,9 @@ export function renderInline(text: string): string {
     .replace(/\*\*(.+?)\*\*/g, (_, bold: string) => paint.bold(bold))
     .replace(/`([^`]+)`/g, (_, code: string) => paint.cyan(code));
 }
+
+/** Plain text for places that can't show colour, e.g. Telegram. */
+export function stripAnsi(text: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching ANSI escape codes.
+  return text.replace(/\x1b\[[0-9;]*m/g, '');
+}
