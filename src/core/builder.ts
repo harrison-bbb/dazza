@@ -306,6 +306,14 @@ export function taskBrief(
     .filter((e) => e.type === 'comment' && e.taskId && ids.has(e.taskId))
     .map((e) => `- ${e.actor === 'user' ? 'User' : 'You (Dazza)'} on ${e.taskId}: ${e.message}`);
   const done = plan.tasks.filter((t) => t.status === 'closed').map((t) => `${t.id} ${t.title}`);
+  // What this task builds on, as its builder described it at handoff.
+  const foundations = plan.tasks
+    .filter((t) => task.dependsOn.includes(t.id) && t.handoff)
+    .map((t) => `### ${t.id}: ${t.title}\n${t.handoff?.summary}`);
+  // Work that belongs to other tasks, so this one stays in its lane.
+  const later = plan.tasks
+    .filter((t) => t.id !== task.id && ['planned', 'backlog', 'blocked'].includes(t.status))
+    .map((t) => `- ${t.id} ${t.title}`);
 
   return [
     resumed
@@ -324,6 +332,8 @@ export function taskBrief(
     ),
     ...(thread.length > 0 ? ['', '## Comments on this task (newest last)', ...thread] : []),
     ...(done.length > 0 ? ['', '## Already built and approved', ...done.map((d) => `- ${d}`)] : []),
+    ...(foundations.length > 0 ? ['', '## What this builds on', ...foundations] : []),
+    ...(later.length > 0 ? ['', '## Coming in other tasks (leave these alone)', ...later] : []),
     ...(scope ? ['', '## Project scope', scope] : []),
   ].join('\n');
 }

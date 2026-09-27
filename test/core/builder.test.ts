@@ -141,4 +141,28 @@ describe('taskBrief', () => {
     expect(brief).toContain('- T1 Setup');
     expect(brief).toContain('An app');
   });
+
+  it('says what the task builds on, and which work belongs to other tasks', () => {
+    const task = makeTask({ id: 'T3', title: 'Leaderboard', dependsOn: ['T1'] });
+    const plan = makePlan([
+      makeTask({
+        id: 'T1',
+        title: 'Sign-in',
+        status: 'review',
+        handoff: {
+          summary: 'Magic links via Auth.js; `getUser()` in lib/auth.ts.',
+          howToVerify: [],
+          checks: [],
+          screenshots: [],
+          submittedAt: '2026-09-27T10:00:00Z',
+        },
+      }),
+      task,
+      makeTask({ id: 'T4', title: 'Month close' }),
+    ]);
+    const brief = taskBrief(plan, task, undefined, [], false);
+    expect(brief).toContain('## What this builds on\n### T1: Sign-in\nMagic links via Auth.js');
+    expect(brief).toContain('## Coming in other tasks (leave these alone)\n- T4 Month close');
+    expect(brief).not.toContain('- T3 Leaderboard');
+  });
 });

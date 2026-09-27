@@ -5,7 +5,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it } from 'vitest';
 import { addComment } from '../../src/core/actions.js';
 import { createMcpServer, type McpRole, savePlan } from '../../src/mcp/server.js';
-import { makePlan, makeTask } from '../fixtures.js';
+import { makePlan, makeTask, plannedTask, SCOPE } from '../fixtures.js';
 import { useTempProject } from '../helpers.js';
 
 describe('savePlan', () => {
@@ -13,20 +13,33 @@ describe('savePlan', () => {
 
   it('writes scope, tasks and an event', async () => {
     const result = await savePlan(project.store, {
-      scope: '# Todo app\n',
-      tasks: [makeTask({ id: 'T1' }), makeTask({ id: 'T2', dependsOn: ['T1'] })],
+      scope: SCOPE,
+      tasks: [plannedTask({ id: 'T1' }), plannedTask({ id: 'T2', dependsOn: ['T1'] })],
     });
 
     expect(result.isError).toBeUndefined();
-    expect(await project.store.readScope()).toBe('# Todo app\n');
+    expect(await project.store.readScope()).toBe(SCOPE);
     expect((await project.store.readPlan())?.tasks).toHaveLength(2);
     expect((await project.store.readEvents()).map((e) => e.type)).toEqual(['plan_created']);
   });
 
+  it('sends a thin plan back with what it’s missing', async () => {
+    const result = await savePlan(project.store, {
+      scope: '# Todo app\n\n## Overview\nTodos.',
+      tasks: [makeTask({ id: 'T1', description: 'Set it up.' })],
+    });
+    const text = JSON.stringify(result.content);
+    expect(result.isError).toBe(true);
+    expect(text).toContain('missing sections: ## Users');
+    expect(text).toContain('T1: the description is 10 characters');
+    expect(text).toContain('T1: has 0 subtasks');
+    expect(await project.store.readPlan()).toBeUndefined();
+  });
+
   it('returns validation problems to the agent instead of saving', async () => {
     const result = await savePlan(project.store, {
-      scope: '# Broken\n',
-      tasks: [makeTask({ id: 'T1', dependsOn: ['T7'] })],
+      scope: SCOPE,
+      tasks: [plannedTask({ id: 'T1', dependsOn: ['T7'] })],
     });
 
     expect(result.isError).toBe(true);
@@ -38,11 +51,11 @@ describe('savePlan', () => {
     await project.store.writePlan({
       version: 1,
       approvedAt: '2026-09-27T10:00:00Z',
-      tasks: [makeTask({ id: 'T1', status: 'closed' }), makeTask({ id: 'T2' })],
+      tasks: [plannedTask({ id: 'T1', status: 'closed' }), plannedTask({ id: 'T2' })],
     });
     const result = await savePlan(project.store, {
-      scope: '# Bigger\n',
-      tasks: [makeTask({ id: 'T1' }), makeTask({ id: 'T2' }), makeTask({ id: 'T3' })],
+      scope: SCOPE,
+      tasks: [plannedTask({ id: 'T1' }), plannedTask({ id: 'T2' }), plannedTask({ id: 'T3' })],
     });
 
     const plan = await project.store.readPlan();
@@ -56,9 +69,12 @@ describe('savePlan', () => {
     await project.store.writePlan({
       version: 1,
       approvedAt: '2026-09-27T10:00:00Z',
-      tasks: [makeTask({ id: 'T1', status: 'building' })],
+      tasks: [plannedTask({ id: 'T1', status: 'building' })],
     });
-    const result = await savePlan(project.store, { scope: 'x', tasks: [makeTask({ id: 'T9' })] });
+    const result = await savePlan(project.store, {
+      scope: SCOPE,
+      tasks: [plannedTask({ id: 'T9' })],
+    });
 
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result.content)).toContain('T1 (building)');
@@ -237,7 +253,7 @@ describe('MCP tools, called through a real client', () => {
     const client = await connect();
     await client.callTool({
       name: 'save_plan',
-      arguments: { scope: '# x', tasks: [makeTask({ id: 'T1' })], summary: 'First cut' },
+      arguments: { scope: SCOPE, tasks: [plannedTask({ id: 'T1' })], summary: 'First cut' },
     });
     expect((await project.store.readEvents()).at(-1)?.message).toBe('First cut');
   });

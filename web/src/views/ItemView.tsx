@@ -1,6 +1,7 @@
 import { Check, ChevronLeft, ChevronRight, CircleAlert, X } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { Activity, type ComposerMode } from '../components/Activity';
+import { Markdown } from '../components/Markdown';
 import { Screenshots } from '../components/Screenshots';
 import { StatusIcon, StatusLabel } from '../components/StatusIcon';
 import { Button, Heading, Id, InlineText } from '../components/ui';
@@ -67,9 +68,10 @@ export function ItemView({ task, subtask, tasks, events, onChange }: ItemViewPro
           {blocker && <BlockerNote question={blocker} onReply={() => setMode('unblock')} />}
 
           {item.description && (
-            <p className="mt-6 leading-7 text-ink-2">
-              <InlineText>{item.description}</InlineText>
-            </p>
+            // Descriptions are Markdown: the scope of a task, with details and boundaries.
+            <div className="mt-6">
+              <Markdown>{item.description}</Markdown>
+            </div>
           )}
 
           {!subtask && task.handoff && <HandoffSection handoff={task.handoff} />}

@@ -14,6 +14,7 @@ import {
   TaskChanges,
 } from '../core/edits.js';
 import { carryOverProgress } from '../core/plan.js';
+import { reviewPlan } from '../core/review.js';
 import { MediaPath, Plan, SCHEMA_VERSION, Task } from '../core/schema.js';
 import { Store } from '../core/store.js';
 import {
@@ -84,6 +85,14 @@ export type SavePlanInput = z.infer<typeof SavePlanInput>;
  * as tool errors so it can correct the plan and try again.
  */
 export async function savePlan(store: Store, input: SavePlanInput): Promise<CallToolResult> {
+  const problems = reviewPlan(input.scope, input.tasks);
+  if (problems.length > 0) {
+    return failure(
+      `Not saved. The builder works from the plan alone, and it's missing detail:\n${problems
+        .map((p) => `- ${p}`)
+        .join('\n')}\nFix these and call save_plan again with the whole plan.`,
+    );
+  }
   const outcome = await store.updatePlan(
     (current): [Plan | undefined, { error: string } | { count: number; rescoped: boolean }] => {
       const tasks = carryOverProgress(current, input.tasks);
