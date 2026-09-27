@@ -55,6 +55,8 @@ export function describeTool(tool: string, input: unknown): string {
       return 'Updating the board';
     case McpTools.comment:
       return 'Leaving a comment';
+    case McpTools.screenshot:
+      return 'Taking a screenshot';
     case 'Read':
       return path ? `Reading ${basename(path)}` : 'Reading';
     case 'Glob':

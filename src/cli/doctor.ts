@@ -1,5 +1,7 @@
+import { basename } from 'node:path';
 import { styleText } from 'node:util';
 import { Config } from '../core/config.js';
+import { findBrowser } from '../preview/capture.js';
 import { ClaudeProvider } from '../providers/claude.js';
 import { execCommand } from '../util/process.js';
 
@@ -19,6 +21,7 @@ export async function doctor(): Promise<void> {
     checkClaude(),
     checkConnection(),
     checkTelegram(),
+    checkBrowser(),
   ]);
 
   for (const check of checks) {
@@ -69,6 +72,18 @@ async function checkTelegram(): Promise<Check> {
     detail: link
       ? `linked to @${link.botUsername}`
       : 'not linked (optional; /telegram in the chat)',
+  };
+}
+
+async function checkBrowser(): Promise<Check> {
+  const browser = findBrowser();
+  return {
+    label: 'Screenshots',
+    // Optional: only needed to show the user UI.
+    ok: true,
+    detail: browser
+      ? `using ${basename(browser)}`
+      : 'no Chrome found (optional; install Chrome to enable)',
   };
 }
 

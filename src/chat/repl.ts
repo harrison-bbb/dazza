@@ -98,9 +98,15 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
     },
     onBuildEvent: (event) => {
       if (!bridge) return;
-      void notificationFor(event, store).then((text) => {
-        if (text) void bridge?.send(text);
+      void notificationFor(event, store).then((note) => {
+        if (note) void bridge?.send(note.text, note.images);
       });
+    },
+    onShare: ({ taskId, text, images }) => {
+      void bridge?.send(
+        `📸 ${taskId ? `${taskId}: ` : ''}${text}`,
+        images.map((path) => store.mediaFile(path)),
+      );
     },
   });
 

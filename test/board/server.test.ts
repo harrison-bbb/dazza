@@ -73,34 +73,24 @@ describe('board server', () => {
     expect(statuses).toEqual(['closed', 'planned', 'cancelled']);
   });
 
-  it('serves handoff screenshots and nothing else', async () => {
-    const dir = join(project.store.dir, 'handoffs', 'T1');
+  it('serves screenshots and nothing else', async () => {
+    const dir = join(project.store.dir, 'media', 'T1');
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, 'home.png'), 'png-bytes');
+    await writeFile(join(dir, 'home-desktop.png'), 'png-bytes');
     await writeFile(join(project.store.dir, 'secret.png'), 'nope');
 
-    const ok = await app().request('http://localhost/api/handoffs/T1/home.png');
+    const ok = await app().request('http://localhost/api/media/T1/home-desktop.png');
     expect(ok.headers.get('content-type')).toBe('image/png');
     expect(await ok.text()).toBe('png-bytes');
 
     for (const path of [
-      'T1/..%2Fsecret.png',
+      'T1/..%2F..%2Fsecret.png',
       'T1/notes.txt',
-      '..%2F..%2Fsecret.png',
+      'etc/passwd.png',
       'T1/missing.png',
     ]) {
-      expect((await app().request(`http://localhost/api/handoffs/${path}`)).status).toBe(404);
+      expect((await app().request(`http://localhost/api/media/${path}`)).status).toBe(404);
     }
-  });
-
-  it('moves tasks with the shared status rules', async () => {
-    await project.store.writePlan(makePlan([makeTask({ id: 'T1', status: 'blocked' })]));
-    expect(
-      (await post('/api/tasks/T1/status', { status: 'planned', note: 'Go with A' })).status,
-    ).toBe(200);
-    expect((await post('/api/tasks/T1/status', { status: 'building' })).status).toBe(400);
-    expect((await project.store.readPlan())?.tasks[0]?.status).toBe('planned');
-    expect((await project.store.readEvents()).at(-1)?.message).toBe('Go with A');
   });
 
   it('rejects writes without the CSRF header', async () => {

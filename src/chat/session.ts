@@ -33,7 +33,24 @@ export interface SessionOptions {
   onBuildEvent?: (event: BuildEvent) => void;
   /** Called with Dazza's full reply to a message, e.g. to answer on Telegram. */
   onReply?: (reply: string, origin: MessageOrigin) => void;
+  /** Called when Dazza shares screenshots in a comment, e.g. to send them to Telegram. */
+  onShare?: (share: Share) => void;
 }
+
+/** Screenshots Dazza posted in a comment, with what it said about them. */
+export interface Share {
+  taskId?: string;
+  text: string;
+  /** Media paths, e.g. "T3/home-desktop.png". */
+  images: string[];
+}
+
+/** Tools that can carry screenshots, and where their caption lives. */
+const SHARING_TOOLS: Record<string, string> = {
+  [McpTools.comment]: 'body',
+  [McpTools.block]: 'question',
+  [McpTools.submit]: 'summary',
+};
 
 /** Where a message came from, so the reply can go back the same way. */
 export type MessageOrigin = 'terminal' | 'telegram';
@@ -46,6 +63,11 @@ export type MessageOrigin = 'terminal' | 'telegram';
 export class ChatSession {
   readonly usage: Usage = { runs: 0, tokens: 0, costUsd: 0 };
   private readonly queue: { text: string; origin: MessageOrigin }[] = [];
+  /** Tool calls that may share screenshots, waiting for their result. */
+  private readonly pendingShares = new Map<
+    string,
+    { tool: string; input: Record<string, unknown> }
+  >();
   private chat: { controller: AbortController; done: Promise<void> } | undefined;
   private building: { controller: AbortController; done: Promise<void> } | undefined;
 
@@ -126,6 +148,7 @@ export class ChatSession {
     try {
       for await (const event of manager.send(message, signal)) {
         this.countUsage(event);
+        this.noticeShares(event);
         if (event.type === 'text') {
           reply.push(event.text);
           output.say(renderInline(event.text));
@@ -158,7 +181,10 @@ export class ChatSession {
     output.status('build', 'Getting ready to build');
     try {
       for await (const event of build({ store, config, provider, mcpServer: workerMcp, signal })) {
-        if (event.type === 'agent') this.countUsage(event.event);
+        if (event.type === 'agent') {
+          this.countUsage(event.event);
+          this.noticeShares(event.event);
+        }
         if (event.type === 'task_started') output.status('build', `Building ${event.task.id}`);
         const text = render(event, await store.readPlan());
         if (text) output.print(text);
@@ -172,6 +198,33 @@ export class ChatSession {
     }
   }
 
+  /**
+   * Show links to screenshots once the call sharing them succeeds. Comments are
+   * also passed on (e.g. to Telegram); questions and handoffs are sent there
+   * with their own notifications.
+   */
+  private noticeShares(event: AgentEvent): void {
+    if (event.type === 'tool_use' && event.tool in SHARING_TOOLS && isRecord(event.input)) {
+      this.pendingShares.set(event.id, { tool: event.tool, input: event.input });
+      return;
+    }
+    if (event.type !== 'tool_result') return;
+    const call = this.pendingShares.get(event.id);
+    this.pendingShares.delete(event.id);
+    const images = stringList(call?.input.screenshots);
+    if (!call || !event.ok || images.length === 0) return;
+
+    const { boardUrl, output, onShare } = this.options;
+    output.print(
+      images.map((path) => `  ${paint.dim(`📸 ${boardUrl}/api/media/${path}`)}`).join('\n'),
+    );
+    if (call.tool === McpTools.comment) {
+      const taskId = typeof call.input.id === 'string' ? call.input.id : undefined;
+      const text = String(call.input[SHARING_TOOLS[call.tool] ?? 'body'] ?? '');
+      onShare?.({ text, images, ...(taskId && { taskId }) });
+    }
+  }
+
   private countUsage(event: AgentEvent): void {
     if (event.type === 'finished' && event.usage) {
       this.usage.runs++;
@@ -179,6 +232,14 @@ export class ChatSession {
       this.usage.costUsd += event.usage.costUsd;
     }
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
 }
 
 function errorMessage(error: unknown): string {

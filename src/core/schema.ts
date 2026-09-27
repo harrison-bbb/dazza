@@ -7,6 +7,14 @@ const TaskId = z.string().regex(/^T\d+$/, 'Task ids look like "T1"');
 const SubtaskId = z.string().regex(/^T\d+\.\d+$/, 'Subtask ids look like "T1.2"');
 const Timestamp = z.iso.datetime();
 
+/** A screenshot in `.dazza/media/`, e.g. "T3/login-desktop.png" or "project/home.png". */
+export const MediaPath = z
+  .string()
+  .regex(
+    /^(T\d+|project)\/[\w.-]+\.png$/,
+    'Screenshots are referenced like "T3/login-desktop.png"',
+  );
+
 /**
  * Work item lifecycle. Dazza moves items through planned → building → review (or
  * blocked); only the user moves them to closed or cancelled.
@@ -44,8 +52,8 @@ export const Handoff = z.object({
   filesChanged: z.number().int().nonnegative().optional(),
   /** Automated checks Dazza ran, e.g. tests, lint, build. */
   checks: z.array(z.object({ name: z.string().min(1), passed: z.boolean() })).default([]),
-  /** Image files in `.dazza/handoffs/<task id>/`. */
-  screenshots: z.array(z.string().regex(/^[\w.-]+$/, 'Plain file names only')).default([]),
+  /** Screenshots of the finished work, when it has a UI worth showing. */
+  screenshots: z.array(MediaPath).default([]),
   submittedAt: Timestamp,
 });
 
@@ -119,6 +127,8 @@ export const Event = z.object({
   /** The task or subtask this is about. */
   taskId: z.union([TaskId, SubtaskId]).optional(),
   message: z.string(),
+  /** Screenshots shared with this event, e.g. on a comment or a question. */
+  images: z.array(MediaPath).optional(),
 });
 
 export type TaskStatus = z.infer<typeof TaskStatus>;

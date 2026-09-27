@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
 import { z } from 'zod';
 
 /**
@@ -38,17 +40,36 @@ export class TelegramApi {
     );
   }
 
+  /** Send an image file, with an optional caption (Telegram allows 1024 characters). */
+  async sendPhoto(chatId: string, file: string, caption?: string): Promise<void> {
+    const form = new FormData();
+    form.set('chat_id', chatId);
+    form.set('photo', new Blob([await readFile(file)], { type: 'image/png' }), basename(file));
+    if (caption) form.set('caption', caption.slice(0, 1024));
+    await this.request('sendPhoto', { body: form }, z.unknown());
+  }
+
   private async call<T>(
     method: string,
     body: object,
     result: z.ZodType<T>,
     signal?: AbortSignal,
   ): Promise<T> {
+    return this.request(
+      method,
+      {
+        body: JSON.stringify(body),
+        headers: { 'content-type': 'application/json' },
+        ...(signal && { signal }),
+      },
+      result,
+    );
+  }
+
+  private async request<T>(method: string, init: RequestInit, result: z.ZodType<T>): Promise<T> {
     const res = await this.fetchImpl(`https://api.telegram.org/bot${this.token}/${method}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-      ...(signal && { signal }),
+      ...init,
     });
     const parsed = Envelope.safeParse(await res.json().catch(() => undefined));
     if (!parsed.success)

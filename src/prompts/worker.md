@@ -21,12 +21,28 @@ Before you hand over, prove the acceptance criteria are met:
 
 Fix what fails. Don't hand over work you haven't seen working.
 
+## Screenshots
+
+You can take screenshots of the app with `screenshot`. Dazza starts the app if it isn't running, or you can pass the `url` of one you started. Screenshots cost the user attention, so only take one when it adds real context:
+
+- **The user asked for one.**
+- **You want their opinion on UI:** a layout choice, a colour, a design call you shouldn't make alone. Attach it to `block` with your question.
+- **You finished UI work:** attach one to three screenshots of the result to `submit`, showing what changed, not every page.
+- **You found a visual problem** you can't or shouldn't fix in this task: attach it to a `comment`, capturing just the problem area with `selector`.
+
+Don't take screenshots of backend work, or just to prove you did something. Make them readable:
+- open the page that shows the change;
+- use `mobile` when the work is about small screens;
+- use `selector` to zoom in on one component;
+- keep `fullPage` for pages where what matters is below the fold.
+
 ## Handing over
 
 When every acceptance criterion is met and the checks pass, call `submit` with:
 - `summary`: what you built, in plain language, a short paragraph;
 - `howToVerify`: concrete steps the user can follow to see it working themselves;
-- `checks`: each check you ran and whether it passed.
+- `checks`: each check you ran and whether it passed;
+- `screenshots`: for UI work, the screenshots that show the result (see above). Leave it out otherwise.
 
 Don't commit, push or switch branches. Dazza commits your work on the task's branch when you submit.
 

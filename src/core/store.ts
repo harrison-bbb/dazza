@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { access, appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { withLock } from '../util/lock.js';
@@ -9,7 +9,7 @@ export const STATE_DIR = '.dazza';
 const MANAGER_SESSION_FILE = 'session.json';
 const USAGE_FILE = 'usage.json';
 const BUILD_FILE = 'build.json';
-const LOCAL_FILES = [MANAGER_SESSION_FILE, USAGE_FILE, BUILD_FILE, '*.lock'];
+const LOCAL_FILES = [MANAGER_SESSION_FILE, USAGE_FILE, BUILD_FILE, '*.lock', 'media/'];
 
 /** Machine-local bookkeeping for a task being built. */
 export const TaskBuild = z.object({
@@ -93,6 +93,18 @@ export class Store {
 
   async writeManagerSession(sessionId: string): Promise<void> {
     await this.writeAtomic(MANAGER_SESSION_FILE, `${JSON.stringify({ sessionId }, null, 2)}\n`);
+  }
+
+  /** Where a screenshot lives on disk, from its media path (e.g. "T3/home.png"). */
+  mediaFile(path: string): string {
+    return join(this.dir, 'media', path);
+  }
+
+  async mediaExists(path: string): Promise<boolean> {
+    return access(this.mediaFile(path)).then(
+      () => true,
+      () => false,
+    );
   }
 
   async readUsage(): Promise<ProjectUsage> {

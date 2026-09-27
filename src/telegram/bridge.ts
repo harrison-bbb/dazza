@@ -14,7 +14,7 @@ export interface BridgeOptions {
   onMessage(text: string): void;
   /** Something the user should know, e.g. another Dazza window is reading the bot. */
   onProblem(text: string): void;
-  api?: Pick<TelegramApi, 'getUpdates' | 'sendMessage'>;
+  api?: Pick<TelegramApi, 'getUpdates' | 'sendMessage' | 'sendPhoto'>;
 }
 
 /**
@@ -22,7 +22,7 @@ export interface BridgeOptions {
  * replies, and passes on messages from the user's own chat (and no one else's).
  */
 export class TelegramBridge {
-  private readonly api: Pick<TelegramApi, 'getUpdates' | 'sendMessage'>;
+  private readonly api: Pick<TelegramApi, 'getUpdates' | 'sendMessage' | 'sendPhoto'>;
   private readonly controller = new AbortController();
   private polling: Promise<void> | undefined;
   private reportedSendFailure = false;
@@ -43,10 +43,14 @@ export class TelegramBridge {
     await this.polling;
   }
 
-  /** Send a message to the user. Failures are reported once, not thrown: Telegram is a side channel. */
-  async send(text: string): Promise<void> {
+  /**
+   * Send a message, then any screenshots with it. Failures are reported once,
+   * not thrown: Telegram is a side channel.
+   */
+  async send(text: string, images: string[] = []): Promise<void> {
     try {
       for (const part of split(text)) await this.api.sendMessage(this.link.chatId, part);
+      for (const image of images) await this.api.sendPhoto(this.link.chatId, image);
     } catch (error) {
       if (!this.reportedSendFailure) {
         this.reportedSendFailure = true;
@@ -82,12 +86,18 @@ export class TelegramBridge {
   }
 }
 
+/** A message for the user's phone, with screenshot files to send after it. */
+export interface Notification {
+  text: string;
+  images: string[];
+}
+
 /** What to tell the user on Telegram about a build event, if anything. */
 export async function notificationFor(
   event: BuildEvent,
   store: Store,
-): Promise<string | undefined> {
-  if (event.type === 'stopped') return `Build finished. ${event.reason}`;
+): Promise<Notification | undefined> {
+  if (event.type === 'stopped') return { text: `Build finished. ${event.reason}`, images: [] };
   if (event.type !== 'task_finished' || event.outcome === 'paused') return undefined;
 
   const plan = await store.readPlan();
@@ -96,14 +106,17 @@ export async function notificationFor(
   if (event.outcome === 'blocked') {
     const question = (await store.readEvents())
       .filter((e) => e.type === 'comment' && e.actor === 'dazza' && e.taskId === task.id)
-      .at(-1)?.message;
-    return [
-      `❓ ${task.id} needs you: ${task.title}`,
-      question,
-      'Reply here with your answer, and I’ll pick it back up next build.',
-    ]
-      .filter(Boolean)
-      .join('\n\n');
+      .at(-1);
+    return {
+      text: [
+        `❓ ${task.id} needs you: ${task.title}`,
+        question?.message,
+        'Reply here with your answer, and I’ll pick it back up next build.',
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
+      images: (question?.images ?? []).map((path) => store.mediaFile(path)),
+    };
   }
 
   const handoff = task.handoff;
@@ -117,14 +130,17 @@ export async function notificationFor(
         ? `${failing} failing ${failing === 1 ? 'check' : 'checks'}`
         : `${checks.length} ${checks.length === 1 ? 'check' : 'checks'} passed`),
   ].filter(Boolean);
-  return [
-    `✅ ${task.id} is ready for your review: ${task.title}`,
-    handoff?.summary,
-    facts.join(' · '),
-    `Reply "close ${task.id}" to approve it, or tell me what to change.`,
-  ]
-    .filter(Boolean)
-    .join('\n\n');
+  return {
+    text: [
+      `✅ ${task.id} is ready for your review: ${task.title}`,
+      handoff?.summary,
+      facts.join(' · '),
+      `Reply "close ${task.id}" to approve it, or tell me what to change.`,
+    ]
+      .filter(Boolean)
+      .join('\n\n'),
+    images: (handoff?.screenshots ?? []).map((path) => store.mediaFile(path)),
+  };
 }
 
 function split(text: string): string[] {

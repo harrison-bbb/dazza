@@ -61,6 +61,16 @@ While Dazza runs, a project board is served at `http://localhost:4777`: a dashbo
 
 While it builds you can keep talking to Dazza in the terminal. Comments you leave on the board, or instructions you give in the chat, reach the build at its next check-in.
 
+### Screenshots
+
+Dazza takes screenshots when a picture helps, not for everything:
+- when you ask for one;
+- when it wants your opinion on UI it's building;
+- when it finishes UI work (they go in the handoff);
+- when it spots a visual problem.
+
+It starts your app if it isn't running (your `dev`, `start` or `preview` script, or plain HTML), and captures crisp desktop or phone views with the Chrome you already have. Screenshots show up on the board and arrive on Telegram as photos.
+
 ### Telegram
 
 Onboarding offers to link a Telegram bot (or run `/telegram` later). Create a bot with [@BotFather](https://t.me/BotFather), paste its token, and message the bot once so Dazza can find your chat. While Dazza is open it messages you when a task is ready for review or blocked, and when a build finishes. You can reply from your phone: it's the same conversation as the terminal. `/status`, `/build` and `/stop` also work there. Dazza only accepts messages from your own chat.

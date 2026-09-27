@@ -10,6 +10,7 @@ import { useTempProject } from '../helpers.js';
 /** A stand-in for the Bot API: a queue of updates, a record of sent messages. */
 class FakeBot {
   sent: { chatId: string; text: string }[] = [];
+  photos: { chatId: string; file: string }[] = [];
   updates: Update[] = [];
   goodToken = '123:good';
   conflict = false;
@@ -30,6 +31,9 @@ class FakeBot {
       },
       sendMessage: async (chatId: string, text: string) => {
         this.sent.push({ chatId, text });
+      },
+      sendPhoto: async (chatId: string, file: string) => {
+        this.photos.push({ chatId, file });
       },
     };
   }
@@ -134,8 +138,9 @@ describe('TelegramBridge', () => {
       onProblem: () => {},
       api: bot.api('t'),
     });
-    await bridge.send('hello');
+    await bridge.send('hello', ['/shots/a.png']);
     expect(bot.sent).toEqual([{ chatId: '42', text: 'hello' }]);
+    expect(bot.photos).toEqual([{ chatId: '42', file: '/shots/a.png' }]);
   });
 
   it('backs off when another Dazza is reading the same bot', async () => {
@@ -166,16 +171,18 @@ describe('notificationFor', () => {
         summary: 'Built the editor.',
         howToVerify: [],
         checks: [{ name: 'Tests', passed: true }],
-        screenshots: [],
+        screenshots: ['T3/editor-desktop.png'],
         filesChanged: 5,
         submittedAt: '2026-09-27T10:00:00Z',
       },
     });
     await project.store.writePlan(makePlan([task]));
-    const text = await notificationFor(
+    const note = await notificationFor(
       { type: 'task_finished', task, outcome: 'review' },
       project.store,
     );
+    const text = note?.text;
+    expect(note?.images).toEqual([project.store.mediaFile('T3/editor-desktop.png')]);
     expect(text).toContain('T3 is ready for your review: Editor');
     expect(text).toContain('Built the editor.');
     expect(text).toContain('5 files changed · 1 check passed');
@@ -185,12 +192,12 @@ describe('notificationFor', () => {
   it('carries the question when blocked, and stays quiet when paused', async () => {
     const task = makeTask({ id: 'T5', title: 'Tags', status: 'blocked' });
     await project.store.writePlan(makePlan([task]));
-    await addComment(project.store, 'T5', 'Should tags be case-sensitive?', 'dazza');
-    const text = await notificationFor(
+    await addComment(project.store, 'T5', 'Should tags be case-sensitive?', { actor: 'dazza' });
+    const note = await notificationFor(
       { type: 'task_finished', task, outcome: 'blocked' },
       project.store,
     );
-    expect(text).toContain('Should tags be case-sensitive?');
+    expect(note?.text).toContain('Should tags be case-sensitive?');
     expect(
       await notificationFor({ type: 'task_finished', task, outcome: 'paused' }, project.store),
     ).toBeUndefined();

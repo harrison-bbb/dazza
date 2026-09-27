@@ -62,7 +62,7 @@ export function Dashboard({ project, onChange }: { project: ProjectSnapshot; onC
             <InboxRow
               key={task.id}
               task={task}
-              detail={<span className="text-ink-2">“{blockerFor(events, task)}”</span>}
+              detail={<span className="text-ink-2">“{blockerFor(events, task)?.message}”</span>}
               action="Answer"
             />
           ))}

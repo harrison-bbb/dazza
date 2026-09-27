@@ -34,15 +34,17 @@ export function latestUpdate(events: Event[], task: Task): Event | undefined {
 }
 
 /** What a blocked task is waiting on: Dazza's latest word since it got blocked. */
-export function blockerFor(events: Event[], task: Task): string | undefined {
+export function blockerFor(
+  events: Event[],
+  task: Task,
+): { message: string; images: string[] } | undefined {
   if (task.status !== 'blocked') return undefined;
   const blockedAt = findLastIndex(events, (e) => e.type === 'task_blocked' && e.taskId === task.id);
   const since = blockedAt >= 0 ? events.slice(blockedAt) : events;
-  const question = findLast(
-    since,
-    (e) => e.type === 'comment' && e.actor === 'dazza' && e.taskId === task.id,
-  );
-  return question?.message ?? events[blockedAt]?.message;
+  const question =
+    findLast(since, (e) => e.type === 'comment' && e.actor === 'dazza' && e.taskId === task.id) ??
+    events[blockedAt];
+  return question && { message: question.message, images: question.images ?? [] };
 }
 
 /** Milestones for one task, oldest first. */

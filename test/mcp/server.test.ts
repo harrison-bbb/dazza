@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it } from 'vitest';
@@ -67,9 +69,19 @@ describe('savePlan', () => {
 describe('MCP tools, called through a real client', () => {
   const project = useTempProject();
 
+  /** Stands in for the camera: writes a placeholder file where the screenshot would go. */
+  const fakeScreenshots = {
+    take: async (request: { name: string; taskId?: string }) => {
+      const path = `${request.taskId ?? 'project'}/${request.name}-desktop.png`;
+      await mkdir(dirname(project.store.mediaFile(path)), { recursive: true });
+      await writeFile(project.store.mediaFile(path), 'png');
+      return { path, width: 1280, height: 800 };
+    },
+  };
+
   const connect = async (role: McpRole = 'manager') => {
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-    await createMcpServer(project.store, role).connect(serverSide);
+    await createMcpServer(project.store, role, fakeScreenshots).connect(serverSide);
     const client = new Client({ name: 'test', version: '1.0.0' });
     await client.connect(clientSide);
     return client;
@@ -84,6 +96,7 @@ describe('MCP tools, called through a real client', () => {
       'add_task',
       'comment',
       'save_plan',
+      'screenshot',
       'set_status',
       'update_item',
     ]);
@@ -91,9 +104,46 @@ describe('MCP tools, called through a real client', () => {
       'block',
       'check_messages',
       'comment',
+      'screenshot',
       'submit',
       'update_subtask',
     ]);
+  });
+
+  it('takes a screenshot and shares it on a comment, or on the project', async () => {
+    await project.store.writePlan(makePlan([makeTask({ id: 'T1' })]));
+    const manager = await connect();
+    const shot = text(await manager.callTool({ name: 'screenshot', arguments: { name: 'home' } }));
+    expect(shot).toContain('project/home-desktop.png');
+
+    await manager.callTool({
+      name: 'comment',
+      arguments: { body: 'Here’s the homepage', screenshots: ['project/home-desktop.png'] },
+    });
+    expect((await project.store.readEvents()).at(-1)).toMatchObject({
+      actor: 'dazza',
+      message: 'Here’s the homepage',
+      images: ['project/home-desktop.png'],
+    });
+    expect((await project.store.readEvents()).at(-1)?.taskId).toBeUndefined();
+  });
+
+  it("files the builder's screenshots under the task it's building", async () => {
+    await project.store.writePlan(makePlan([makeTask({ id: 'T4', status: 'building' })]));
+    const shot = text(
+      await (await connect('worker')).callTool({ name: 'screenshot', arguments: { name: 'form' } }),
+    );
+    expect(shot).toContain('T4/form-desktop.png');
+  });
+
+  it('refuses to attach screenshots that were never taken', async () => {
+    await project.store.writePlan(makePlan([makeTask({ id: 'T1' })]));
+    const result = await (await connect()).callTool({
+      name: 'comment',
+      arguments: { id: 'T1', body: 'Look', screenshots: ['T1/made-up.png'] },
+    });
+    expect(result.isError).toBe(true);
+    expect(await project.store.readEvents()).toEqual([]);
   });
 
   it('lets the manager relay an instruction as the user', async () => {
@@ -128,7 +178,7 @@ describe('MCP tools, called through a real client', () => {
     });
     await addComment(project.store, 'T1.1', 'Make it blue');
     await addComment(project.store, 'T2', 'Not for this task');
-    await addComment(project.store, 'T1', 'Dazza talking to itself', 'dazza');
+    await addComment(project.store, 'T1', 'Dazza talking to itself', { actor: 'dazza' });
 
     const worker = await connect('worker');
     const first = text(

@@ -24,20 +24,40 @@ export async function approvePlan(store: Store, now = new Date()): Promise<Actio
   return result;
 }
 
-/** Comment on a task or subtask. Dazza comments through the same path. */
+export interface CommentOptions {
+  /** Who is speaking; the user unless Dazza is. */
+  actor?: Actor;
+  /** Screenshots to share with the comment (media paths). */
+  images?: string[];
+  now?: Date;
+}
+
+/**
+ * Comment on a task or subtask, or on the project as a whole when there's no
+ * id. Dazza comments through the same path, sometimes with screenshots.
+ */
 export async function addComment(
   store: Store,
-  itemId: string,
+  itemId: string | undefined,
   body: string,
-  actor: Actor = 'user',
-  now = new Date(),
+  { actor = 'user', images = [], now = new Date() }: CommentOptions = {},
 ): Promise<ActionResult> {
   const text = body.trim();
   if (!text) return fail('Comment is empty.');
   const plan = await store.readPlan();
-  if (!plan || !findItem(plan, itemId)) return fail(`No task ${itemId}.`);
+  if (itemId !== undefined && (!plan || !findItem(plan, itemId))) return fail(`No task ${itemId}.`);
+  for (const image of images) {
+    if (!(await store.mediaExists(image)))
+      return fail(`No screenshot ${image}. Take it with screenshot first.`);
+  }
 
-  await log(store, now, { type: 'comment', actor, taskId: itemId, message: text });
+  await log(store, now, {
+    type: 'comment',
+    actor,
+    message: text,
+    ...(itemId && { taskId: itemId }),
+    ...(images.length > 0 && { images }),
+  });
   return { ok: true, message: 'Comment added.' };
 }
 
@@ -86,7 +106,7 @@ export async function requestChanges(
       event: { type: 'task_rejected', message: `Requested changes to ${task.title}` },
     };
   });
-  if (result.ok) await addComment(store, taskId, note, 'user', now);
+  if (result.ok) await addComment(store, taskId, note, { now });
   return result;
 }
 
@@ -142,7 +162,7 @@ export async function setStatus(
       event: { type: 'task_moved', message: `Moved from ${task.status} to ${status}` },
     };
   });
-  if (result.ok && note.trim()) await addComment(store, taskId, note, 'user', now);
+  if (result.ok && note.trim()) await addComment(store, taskId, note, { now });
   return result;
 }
 
@@ -182,6 +202,7 @@ function log(
     message: string;
     taskId?: string;
     actor?: Actor;
+    images?: string[];
   },
 ): Promise<void> {
   return store.appendEvent({ at: now.toISOString(), actor: 'user', ...event });

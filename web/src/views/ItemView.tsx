@@ -1,6 +1,7 @@
 import { Check, ChevronLeft, ChevronRight, CircleAlert, X } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { Activity, type ComposerMode } from '../components/Activity';
+import { Screenshots } from '../components/Screenshots';
 import { StatusIcon, StatusLabel } from '../components/StatusIcon';
 import { Button, Heading, Id, InlineText } from '../components/ui';
 import {
@@ -71,7 +72,7 @@ export function ItemView({ task, subtask, tasks, events, onChange }: ItemViewPro
             </p>
           )}
 
-          {!subtask && task.handoff && <HandoffSection taskId={task.id} handoff={task.handoff} />}
+          {!subtask && task.handoff && <HandoffSection handoff={task.handoff} />}
 
           <dl className="mt-8 divide-y divide-line border-y border-line text-[13px]">
             {subtask ? (
@@ -218,7 +219,13 @@ function TaskActions(props: { task: Task; onRequestChanges(): void; onChange(): 
   );
 }
 
-function BlockerNote({ question, onReply }: { question: string; onReply(): void }) {
+function BlockerNote({
+  question,
+  onReply,
+}: {
+  question: { message: string; images: string[] };
+  onReply(): void;
+}) {
   return (
     <div className="mt-6 rounded-lg border border-red/30 px-4 py-3">
       <div className="flex items-center gap-2 text-[13px] font-medium text-red">
@@ -226,8 +233,9 @@ function BlockerNote({ question, onReply }: { question: string; onReply(): void 
         Dazza is waiting on you
       </div>
       <p className="mt-1.5 text-ink-2">
-        <InlineText>{question}</InlineText>
+        <InlineText>{question.message}</InlineText>
       </p>
+      <Screenshots paths={question.images} className="mt-3" />
       <Button className="mt-3" onClick={onReply}>
         Answer
       </Button>
@@ -236,7 +244,7 @@ function BlockerNote({ question, onReply }: { question: string; onReply(): void 
 }
 
 /** What Dazza delivered: the summary, how to check it, and the evidence. */
-function HandoffSection({ taskId, handoff }: { taskId: string; handoff: Handoff }) {
+function HandoffSection({ handoff }: { handoff: Handoff }) {
   return (
     <section className="mt-10">
       <Heading aside={`Submitted ${timeAgo(handoff.submittedAt)}`}>Handoff</Heading>
@@ -249,7 +257,9 @@ function HandoffSection({ taskId, handoff }: { taskId: string; handoff: Handoff 
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 border-t border-line px-4 py-2.5 text-[12px] text-muted">
             {handoff.branch && <span className="font-mono text-ink-2">{handoff.branch}</span>}
             {handoff.filesChanged !== undefined && (
-              <span>{handoff.filesChanged} files changed</span>
+              <span>
+                {handoff.filesChanged} {handoff.filesChanged === 1 ? 'file' : 'files'} changed
+              </span>
             )}
             {handoff.checks.map((check) => (
               <span key={check.name} className="flex items-center gap-1">
@@ -278,25 +288,7 @@ function HandoffSection({ taskId, handoff }: { taskId: string; handoff: Handoff 
         )}
 
         {handoff.screenshots.length > 0 && (
-          <div
-            className={cn(
-              'grid gap-2 border-t border-line p-2',
-              handoff.screenshots.length > 1 && 'grid-cols-2',
-            )}
-          >
-            {handoff.screenshots.map((file) => {
-              const src = `/api/handoffs/${taskId}/${encodeURIComponent(file)}`;
-              return (
-                <a key={file} href={src} target="_blank" rel="noreferrer" className="group block">
-                  <img
-                    src={src}
-                    alt={`Screenshot: ${file}`}
-                    className="aspect-video w-full rounded-md border border-line object-cover object-top transition group-hover:border-line-strong"
-                  />
-                </a>
-              );
-            })}
-          </div>
+          <Screenshots paths={handoff.screenshots} className="border-t border-line p-2" />
         )}
       </div>
     </section>

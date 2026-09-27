@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { closeTask } from '../../src/core/actions.js';
@@ -85,6 +85,32 @@ describe('building tasks', () => {
       filesChanged: 1,
     });
     expect(await git.isClean()).toBe(true);
+  });
+
+  it('attaches screenshots to a question and to the handoff', async () => {
+    await git.init();
+    const shot = 'T1/home-desktop.png';
+    await mkdir(join(project.store.dir, 'media', 'T1'), { recursive: true });
+    await writeFile(project.store.mediaFile(shot), 'png');
+    const t1 = await task('T1');
+    if (!t1) throw new Error('missing');
+    await startTask(project.store, git, t1);
+
+    await blockTask(project.store, 'T1', 'Blue or green?', { images: [shot] });
+    expect((await project.store.readEvents()).at(-1)).toMatchObject({
+      message: 'Blue or green?',
+      images: [shot],
+    });
+
+    await startTask(project.store, git, t1);
+    await write('ui.html');
+    await submitTask(project.store, git, 'T1', { ...report, screenshots: [shot] });
+    expect((await task('T1'))?.handoff?.screenshots).toEqual([shot]);
+    expect(
+      await submitTask(project.store, git, 'T1', { ...report, screenshots: ['T1/nope.png'] }),
+    ).toMatchObject({
+      ok: false,
+    });
   });
 
   it('blocks with a question and pauses interrupted work', async () => {

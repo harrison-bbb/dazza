@@ -14,7 +14,7 @@ import {
   TaskChanges,
 } from '../core/edits.js';
 import { carryOverProgress } from '../core/plan.js';
-import { Plan, SCHEMA_VERSION, Task } from '../core/schema.js';
+import { MediaPath, Plan, SCHEMA_VERSION, Task } from '../core/schema.js';
 import { Store } from '../core/store.js';
 import {
   blockTask,
@@ -24,6 +24,7 @@ import {
   WorkReport,
 } from '../core/work.js';
 import { Git } from '../git/git.js';
+import { ScreenshotRequest, Screenshots } from '../preview/screenshots.js';
 
 export const MCP_SERVER_NAME = 'dazza';
 
@@ -39,6 +40,7 @@ export const McpTools = {
   block: tool('block'),
   submit: tool('submit'),
   checkMessages: tool('check_messages'),
+  screenshot: tool('screenshot'),
 } as const;
 
 /** Tools for the conversation: planning, and changing the project when the user asks. */
@@ -49,6 +51,7 @@ export const MANAGER_TOOLS = [
   McpTools.addSubtask,
   McpTools.setStatus,
   McpTools.comment,
+  McpTools.screenshot,
 ];
 
 /** Tools for building a task: report progress, ask the user, hand work over. */
@@ -58,6 +61,7 @@ export const WORKER_TOOLS = [
   McpTools.checkMessages,
   McpTools.block,
   McpTools.submit,
+  McpTools.screenshot,
 ];
 
 function tool(name: string): string {
@@ -116,12 +120,60 @@ export type McpRole = 'manager' | 'worker';
  * project; the builder (worker) reports progress and hands work over. Each
  * gets only its own tools.
  */
-export function createMcpServer(store: Store, role: McpRole): McpServer {
+export function createMcpServer(
+  store: Store,
+  role: McpRole,
+  screenshots: Pick<Screenshots, 'take'> = new Screenshots(store),
+): McpServer {
   const server = new McpServer({ name: MCP_SERVER_NAME, version: pkg.version });
   if (role === 'manager') registerManagerTools(server, store);
   else registerWorkerTools(server, store);
+  // The builder's screenshots belong to the task it's building unless it says otherwise.
+  const defaultTask = async () =>
+    role === 'worker'
+      ? (await store.readPlan())?.tasks.find((t) => t.status === 'building')?.id
+      : undefined;
+  registerScreenshotTool(server, screenshots, defaultTask);
   return server;
 }
+
+/** Both roles can look at the app; what they do with the picture differs. */
+function registerScreenshotTool(
+  server: McpServer,
+  screenshots: Pick<Screenshots, 'take'>,
+  defaultTask: () => Promise<string | undefined>,
+): void {
+  server.registerTool(
+    'screenshot',
+    {
+      description:
+        'Take a screenshot of the project’s app, to show the user something visual. Dazza starts the ' +
+        'app if needed. It returns a path to attach with the screenshots field of comment, block or ' +
+        'submit. Only take one when it adds real context: the user asked for it, you want their ' +
+        'opinion on UI, you finished UI work, or you found a visual problem.',
+      inputSchema: ScreenshotRequest.shape,
+    },
+    async (request) => {
+      try {
+        const taskId = request.taskId ?? (await defaultTask());
+        const shot = await screenshots.take({ ...request, ...(taskId && { taskId }) });
+        return toResult({
+          ok: true,
+          message: `Saved ${shot.path} (${shot.width}×${shot.height}). Attach it with screenshots: ["${shot.path}"].`,
+        });
+      } catch (error) {
+        return failure(
+          `Couldn’t take the screenshot: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    },
+  );
+}
+
+const Attachments = z
+  .array(MediaPath)
+  .default([])
+  .describe('Screenshots to show with it, from the screenshot tool.');
 
 function registerManagerTools(server: McpServer, store: Store): void {
   server.registerTool(
@@ -198,16 +250,19 @@ function registerManagerTools(server: McpServer, store: Store): void {
     'comment',
     {
       description:
-        "Post on a task or subtask's thread on the board. Use as: 'user' to pass on something " +
-        'the user told you, e.g. an instruction for the task being built; the build picks it up ' +
-        'at its next check-in. Otherwise it posts as Dazza.',
+        "Post on a task or subtask's thread on the board, or on the project when there's no id. " +
+        "Use as: 'user' to pass on something the user told you, e.g. an instruction for the task " +
+        'being built; the build picks it up at its next check-in. Otherwise it posts as Dazza. ' +
+        'To send the user a screenshot, attach it here: it reaches them on the board and on Telegram.',
       inputSchema: {
-        id: z.string(),
+        id: z.string().optional(),
         body: z.string().min(1),
         as: z.enum(['dazza', 'user']).default('dazza'),
+        screenshots: Attachments,
       },
     },
-    async ({ id, body, as }) => toResult(await addComment(store, id, body, as)),
+    async ({ id, body, as, screenshots }) =>
+      toResult(await addComment(store, id, body, { actor: as, images: screenshots })),
   );
 }
 
@@ -234,10 +289,12 @@ function registerWorkerTools(server: McpServer, store: Store): void {
     'comment',
     {
       description:
-        "Post a note on a task or subtask's thread, e.g. a decision the user would want to know.",
-      inputSchema: { id: z.string(), body: z.string().min(1) },
+        "Post a note on a task or subtask's thread, e.g. a decision the user would want to know, " +
+        'or a screenshot of a visual problem you found. Screenshots reach the user on Telegram.',
+      inputSchema: { id: z.string(), body: z.string().min(1), screenshots: Attachments },
     },
-    async ({ id, body }) => withNews(id, await addComment(store, id, body, 'dazza')),
+    async ({ id, body, screenshots }) =>
+      withNews(id, await addComment(store, id, body, { actor: 'dazza', images: screenshots })),
   );
 
   server.registerTool(
@@ -254,10 +311,12 @@ function registerWorkerTools(server: McpServer, store: Store): void {
     {
       description:
         'Stop and ask the user for something you cannot decide or get yourself: a decision, ' +
-        'a credential, access, or permission. Ask one clear question. Then stop working.',
-      inputSchema: { taskId: z.string(), question: z.string().min(1) },
+        'a credential, access, or permission, or their opinion on UI you built (attach a ' +
+        'screenshot). Ask one clear question. Then stop working.',
+      inputSchema: { taskId: z.string(), question: z.string().min(1), screenshots: Attachments },
     },
-    async ({ taskId, question }) => withNews(taskId, await blockTask(store, taskId, question)),
+    async ({ taskId, question, screenshots }) =>
+      withNews(taskId, await blockTask(store, taskId, question, { images: screenshots })),
   );
 
   server.registerTool(

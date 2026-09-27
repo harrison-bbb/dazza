@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { addComment, type Event, requestChanges, setStatus } from '../lib/api';
 import { cn, timeAgo } from '../lib/format';
+import { Screenshots } from './Screenshots';
 import { Button, InlineText } from './ui';
 
 export type ComposerMode = 'comment' | 'changes' | 'unblock';
@@ -67,6 +68,7 @@ function Comment({ event }: { event: Event }) {
         <p className="mt-0.5 whitespace-pre-wrap text-[13px] leading-6 text-ink-2">
           <InlineText>{event.message}</InlineText>
         </p>
+        <Screenshots paths={event.images ?? []} className="mt-2" />
       </div>
     </div>
   );

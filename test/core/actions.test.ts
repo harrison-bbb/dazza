@@ -40,7 +40,7 @@ describe('actions', () => {
     it('records comments on tasks and subtasks, by user or Dazza', async () => {
       await seed(withSubtask);
       await addComment(project.store, 'T1', '  Use Postgres  ');
-      await addComment(project.store, 'T1.1', 'On it', 'dazza');
+      await addComment(project.store, 'T1.1', 'On it', { actor: 'dazza' });
       expect(await project.store.readEvents()).toMatchObject([
         { type: 'comment', actor: 'user', taskId: 'T1', message: 'Use Postgres' },
         { type: 'comment', actor: 'dazza', taskId: 'T1.1', message: 'On it' },

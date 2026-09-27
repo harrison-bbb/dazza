@@ -2,7 +2,14 @@ import { z } from 'zod';
 import { type Git, taskBranch } from '../git/git.js';
 import type { ActionResult } from './actions.js';
 import { findItem, withStatus } from './plan.js';
-import type { EventType, Handoff, Plan, Task, TaskStatus } from './schema.js';
+import {
+  type EventType,
+  type Handoff,
+  MediaPath,
+  type Plan,
+  type Task,
+  type TaskStatus,
+} from './schema.js';
 import type { Store, TaskBuild } from './store.js';
 
 /**
@@ -24,6 +31,10 @@ export const WorkReport = z.object({
     .array(z.object({ name: z.string().min(1), passed: z.boolean() }))
     .default([])
     .describe('Automated checks you ran, e.g. { name: "Tests (24 passed)", passed: true }.'),
+  screenshots: z
+    .array(MediaPath)
+    .default([])
+    .describe('Screenshots of finished UI work, from the screenshot tool. Leave empty otherwise.'),
 });
 export type WorkReport = z.input<typeof WorkReport>;
 
@@ -106,13 +117,16 @@ export async function blockTask(
   store: Store,
   taskId: string,
   question: string,
-  now = new Date(),
+  { images = [], now = new Date() }: { images?: string[]; now?: Date } = {},
 ): Promise<ActionResult> {
+  for (const image of images) {
+    if (!(await store.mediaExists(image))) return { ok: false, message: `No screenshot ${image}.` };
+  }
   const result = await setStatus(store, taskId, 'blocked', now, {
     type: 'task_blocked',
     message: 'Blocked: waiting on you',
   });
-  if (result.ok) await log(store, now, 'comment', taskId, question);
+  if (result.ok) await log(store, now, 'comment', taskId, question, images);
   return result;
 }
 
@@ -126,6 +140,9 @@ export async function submitTask(
 ): Promise<ActionResult> {
   const parsed = WorkReport.safeParse(report);
   if (!parsed.success) return { ok: false, message: z.prettifyError(parsed.error) };
+  for (const image of parsed.data.screenshots) {
+    if (!(await store.mediaExists(image))) return { ok: false, message: `No screenshot ${image}.` };
+  }
   const build = await store.readTaskBuild(taskId);
   const branch = await store.updatePlan(
     async (plan): Promise<[Plan | undefined, string | undefined]> => {
@@ -140,7 +157,7 @@ export async function submitTask(
         baseBranch: build.baseBranch,
         commit,
         filesChanged: await git.filesChanged(build.startCommit, commit),
-        screenshots: [],
+        // The report's screenshots, which were checked to exist above.
         submittedAt: now.toISOString(),
       };
       const next = withStatus(plan, taskId, 'review');
@@ -225,8 +242,16 @@ function log(
   type: EventType,
   taskId: string,
   message: string,
+  images: string[] = [],
 ): Promise<void> {
-  return store.appendEvent({ at: now.toISOString(), actor: 'dazza', type, taskId, message });
+  return store.appendEvent({
+    at: now.toISOString(),
+    actor: 'dazza',
+    type,
+    taskId,
+    message,
+    ...(images.length > 0 && { images }),
+  });
 }
 
 /**

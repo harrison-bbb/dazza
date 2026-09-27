@@ -1,6 +1,6 @@
 import { unwatchFile, watchFile } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { basename, extname, join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
@@ -16,6 +16,7 @@ import {
   requestChanges,
   setStatus,
 } from '../core/actions.js';
+import { MediaPath } from '../core/schema.js';
 import type { Store } from '../core/store.js';
 import { CSRF_HEADER, type ProjectSnapshot } from './api.js';
 
@@ -24,13 +25,6 @@ const PORT_ATTEMPTS = 10;
 const POLL_INTERVAL_MS = 500;
 const DEBOUNCE_MS = 100;
 const WATCHED_FILES = ['tasks.json', 'scope.md', 'events.jsonl'];
-const IMAGE_TYPES: Record<string, string> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.webp': 'image/webp',
-  '.gif': 'image/gif',
-};
 
 const CommentBody = z.object({ body: z.string() });
 const StatusBody = z.object({ status: z.enum(REQUESTABLE_STATUSES), note: z.string().optional() });
@@ -94,14 +88,14 @@ export function createBoardApp(store: Store, projectRoot: string, webRoot: strin
     return c.json(result, result.ok ? 200 : 409);
   });
 
-  // Handoff screenshots. Names are validated so nothing outside .dazza/handoffs is reachable.
-  app.get('/api/handoffs/:task/:file', async (c) => {
-    const { task, file } = c.req.param();
-    const type = IMAGE_TYPES[extname(file).toLowerCase()];
-    if (!/^T\d+$/.test(task) || !/^[\w-][\w.-]*$/.test(file) || !type) return c.notFound();
+  // Screenshots. Paths are validated against the media path format, so nothing
+  // outside .dazza/media is reachable.
+  app.get('/api/media/:scope/:file', async (c) => {
+    const path = `${c.req.param('scope')}/${c.req.param('file')}`;
+    if (!MediaPath.safeParse(path).success) return c.notFound();
     try {
-      const image = await readFile(join(store.dir, 'handoffs', task, file));
-      return c.body(image, 200, { 'content-type': type, 'cache-control': 'no-cache' });
+      const image = await readFile(store.mediaFile(path));
+      return c.body(image, 200, { 'content-type': 'image/png', 'cache-control': 'no-cache' });
     } catch {
       return c.notFound();
     }

@@ -131,6 +131,10 @@ export function toolLine(
         ? `  ${paint.green('✔')} ${paint.dim(id)} ${title}`
         : `  ${paint.dim('○')} ${paint.dim(`${id} ${title}`)}`;
     }
+    case McpTools.screenshot: {
+      const target = field('selector') ?? field('path') ?? field('url') ?? '/';
+      return step('Screenshot', paint.dim(`${target} (${field('device') ?? 'desktop'})`));
+    }
     case McpTools.comment:
       return step('Note', paint.dim(truncate(field('body') ?? '', 90)));
     case McpTools.block:
