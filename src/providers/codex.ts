@@ -204,13 +204,9 @@ export function buildCodexArgs(options: Omit<AgentRunOptions, 'prompt'>): string
   const args = ['exec', '--json', '--skip-git-repo-check'];
   if (options.model) args.push('-m', options.model);
   if (options.autonomous) {
-    args.push(
-      '-s',
-      'workspace-write',
-      '--approve-for-me',
-      '-c',
-      'sandbox_workspace_write.network_access=true',
-    );
+    // --approve-for-me implies the workspace-write sandbox (and Codex rejects an
+    // explicit --sandbox alongside it); network access is switched on separately.
+    args.push('--approve-for-me', '-c', 'sandbox_workspace_write.network_access=true');
   } else {
     args.push('-s', 'read-only', '-c', 'approval_policy="never"');
   }
@@ -306,7 +302,14 @@ export class CodexStream {
 function itemStarted(item: CodexItem): AgentEvent[] {
   switch (item.type) {
     case 'command_execution':
-      return [{ type: 'tool_use', id: item.id, tool: 'Bash', input: { command: item.command } }];
+      return [
+        {
+          type: 'tool_use',
+          id: item.id,
+          tool: 'Bash',
+          input: { command: unwrapShell(item.command) },
+        },
+      ];
     case 'mcp_tool_call':
       return [
         {
@@ -422,6 +425,12 @@ const RateWindow = z
 const RateLimitsResponse = z.object({
   rateLimits: z.object({ primary: RateWindow, secondary: RateWindow }).nullable(),
 });
+
+/** Codex runs commands through a login shell; show the command itself. */
+export function unwrapShell(command: string): string {
+  const wrapped = /^(?:\/\S+\/)?(?:ba|z)?sh -l?c '([\s\S]*)'$/.exec(command);
+  return wrapped?.[1] ? wrapped[1].replace(/'\\''/g, "'") : command;
+}
 
 /** Name a limit window the way Dazza shows it. */
 function windowId(minutes: number | null): string {

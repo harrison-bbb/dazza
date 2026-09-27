@@ -34,7 +34,8 @@ export function classifyError(
       text,
     )
   ) {
-    return { kind: 'usage_limit', message: text, ...(resetsAt && { resetsAt }) };
+    const when = resetsAt ?? resetTimeFromMessage(text);
+    return { kind: 'usage_limit', message: text, ...(when && { resetsAt: when }) };
   }
   if (
     (status !== undefined && status !== null && status >= 500) ||
@@ -51,4 +52,35 @@ export function classifyError(
  */
 export function isHopeless(error: AgentError): boolean {
   return error.kind === 'auth' || error.kind === 'credits';
+}
+
+/**
+ * The reset time a limit message spells out, e.g. Codex's "try again at 9:08 PM"
+ * or "try again in 2 hours 5 minutes". Undefined when it doesn't say.
+ */
+export function resetTimeFromMessage(message: string, now = new Date()): string | undefined {
+  const at = /try again at (\d{1,2}):(\d{2})\s*([AP]M)?/i.exec(message);
+  if (at) {
+    let hours = Number(at[1]) % 12;
+    if (at[3]?.toUpperCase() === 'PM') hours += 12;
+    if (!at[3] && Number(at[1]) === 12) hours = 12;
+    const reset = new Date(now);
+    reset.setHours(hours, Number(at[2]), 0, 0);
+    // A time that has already passed today means tomorrow.
+    if (reset.getTime() <= now.getTime()) reset.setDate(reset.getDate() + 1);
+    return reset.toISOString();
+  }
+  const within =
+    /try again in ((?:\d+\s*(?:days?|hours?|minutes?|mins?|seconds?|secs?)[\s,]*(?:and\s*)?)+)/i.exec(
+      message,
+    );
+  if (within?.[1]) {
+    const units: Record<string, number> = { d: 86_400_000, h: 3_600_000, m: 60_000, s: 1000 };
+    let ms = 0;
+    for (const [, amount, unit] of within[1].matchAll(/(\d+)\s*([dhms])/gi)) {
+      ms += Number(amount) * (units[unit?.toLowerCase() ?? ''] ?? 0);
+    }
+    if (ms > 0) return new Date(now.getTime() + ms).toISOString();
+  }
+  return undefined;
 }

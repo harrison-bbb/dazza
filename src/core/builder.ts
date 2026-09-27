@@ -133,7 +133,7 @@ export async function* build(options: BuilderOptions): AsyncGenerator<BuildEvent
           yield {
             type: 'retrying',
             task,
-            reason: `Claude Code crashed (${attempt.message}). Trying again.`,
+            reason: `${options.provider.name} crashed (${attempt.message}). Trying again.`,
           };
           continue;
         }
@@ -141,7 +141,7 @@ export async function* build(options: BuilderOptions): AsyncGenerator<BuildEvent
         await blockTask(
           store,
           task.id,
-          `Claude Code kept crashing on this task: ${attempt.message}`,
+          `${options.provider.name} kept crashing on this task: ${attempt.message}`,
         );
         yield { type: 'task_finished', task, outcome: 'blocked' };
         break;

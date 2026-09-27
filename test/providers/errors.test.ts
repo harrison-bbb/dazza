@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseClaudeLine } from '../../src/providers/claude.js';
-import { classifyError } from '../../src/providers/errors.js';
+import { classifyError, resetTimeFromMessage } from '../../src/providers/errors.js';
 
 describe('classifyError', () => {
   it('recognises Claude Code’s own messages', () => {
@@ -74,5 +74,31 @@ describe('parsing failures from the stream', () => {
       }),
     );
     expect(event).not.toHaveProperty('error');
+  });
+});
+
+describe('resetTimeFromMessage', () => {
+  const now = new Date(2026, 8, 27, 19, 0); // 7:00 PM local
+
+  it('reads a clock time, rolling to tomorrow when it has passed', () => {
+    expect(resetTimeFromMessage('…or try again at 9:08 PM.', now)).toBe(
+      new Date(2026, 8, 27, 21, 8).toISOString(),
+    );
+    expect(resetTimeFromMessage('try again at 6:30 AM', now)).toBe(
+      new Date(2026, 8, 28, 6, 30).toISOString(),
+    );
+  });
+
+  it('reads a duration', () => {
+    expect(resetTimeFromMessage('try again in 2 hours 5 minutes', now)).toBe(
+      new Date(now.getTime() + (2 * 60 + 5) * 60_000).toISOString(),
+    );
+    expect(resetTimeFromMessage('try again in 1 day', now)).toBe(
+      new Date(now.getTime() + 86_400_000).toISOString(),
+    );
+  });
+
+  it('says nothing when the message has no time', () => {
+    expect(resetTimeFromMessage('usage limit reached', now)).toBeUndefined();
   });
 });

@@ -67,7 +67,7 @@ export function renderBuildEvent(
     case 'waiting':
       return event.reason === 'usage_limit'
         ? `\n${marker()} ${paint.bold('Usage limit reached.')} ${event.task.id} is paused; I’ll pick it back up at ${clock(event.until)}. Keep Dazza open, or Ctrl-C to stop.`
-        : `  ${paint.dim(`Anthropic is busy; trying again at ${clock(event.until)}.`)}`;
+        : `  ${paint.dim(`The model is overloaded; trying again at ${clock(event.until)}.`)}`;
     case 'retrying':
       return `  ${paint.dim(`↻ ${event.reason}`)}`;
     case 'agent':

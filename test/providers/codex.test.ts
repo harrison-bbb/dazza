@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { buildCodexArgs, CodexProvider, CodexStream } from '../../src/providers/codex.js';
+import {
+  buildCodexArgs,
+  CodexProvider,
+  CodexStream,
+  unwrapShell,
+} from '../../src/providers/codex.js';
 import type { AgentEvent } from '../../src/providers/types.js';
 
 const fixture = (path: string) => fileURLToPath(new URL(`../fixtures/${path}`, import.meta.url));
@@ -41,10 +46,29 @@ describe('CodexStream', () => {
     expect(events.at(-1)).toMatchObject({ type: 'finished', ok: true, usage: { tokens: 2750 } });
   });
 
+  it('reads the real usage-limit stream, with the reset time from the message', () => {
+    const { events } = parse('usage-limit.jsonl');
+    const finished = events.at(-1);
+    expect(finished).toMatchObject({ type: 'finished', ok: false, error: { kind: 'usage_limit' } });
+    const resetsAt =
+      finished?.type === 'finished'
+        ? finished.error?.kind === 'usage_limit' && finished.error.resetsAt
+        : undefined;
+    expect(resetsAt && new Date(resetsAt).getMinutes()).toBe(8); // "try again at 9:08 PM"
+  });
+
   it('reads the real stream from a rejected sign-in: retries, then a classified failure', () => {
     const { events } = parse('unauthorized.jsonl');
     expect(events[1]).toMatchObject({ type: 'retry', attempt: 2, maxRetries: 5 });
     expect(events.at(-1)).toMatchObject({ type: 'finished', ok: false, error: { kind: 'auth' } });
+  });
+});
+
+describe('unwrapShell', () => {
+  it('shows the command, not the shell Codex wraps it in', () => {
+    expect(unwrapShell(`/bin/zsh -lc 'echo "hi" > a.js && ls'`)).toBe('echo "hi" > a.js && ls');
+    expect(unwrapShell(`bash -lc 'echo '\\''quoted'\\'''`)).toBe("echo 'quoted'");
+    expect(unwrapShell('npm test')).toBe('npm test');
   });
 });
 
@@ -72,9 +96,9 @@ describe('buildCodexArgs', () => {
       model: 'gpt-6-sol',
       resumeSessionId: 'abc',
     });
-    expect(args).toEqual(
-      expect.arrayContaining(['-m', 'gpt-6-sol', '-s', 'workspace-write', '--approve-for-me']),
-    );
+    expect(args).toEqual(expect.arrayContaining(['-m', 'gpt-6-sol', '--approve-for-me']));
+    // Codex refuses --sandbox alongside --approve-for-me (it implies workspace-write).
+    expect(args).not.toContain('-s');
     expect(args).toContain('sandbox_workspace_write.network_access=true');
     expect(args.slice(-3)).toEqual(['resume', 'abc', '-']);
   });
