@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -137,11 +138,11 @@ export class Config {
     }
   }
 
-  /** Owner-only permissions: this directory will also hold tokens later. */
+  /** Owner-only permissions: this directory holds API keys and bot tokens. */
   private async write(file: string, value: unknown): Promise<void> {
     await mkdir(this.dir, { recursive: true, mode: 0o700 });
     const target = join(this.dir, file);
-    const temp = `${target}.${process.pid}.tmp`;
+    const temp = `${target}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
     await rename(temp, target);
   }

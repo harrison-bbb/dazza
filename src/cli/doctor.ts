@@ -13,7 +13,7 @@ interface Check {
   detail: string;
 }
 
-const MIN_NODE_MAJOR = 20;
+const MIN_NODE_MAJOR = 22;
 
 /** `dazza doctor`: verify everything Dazza depends on. Exits non-zero if anything is missing. */
 export async function doctor(): Promise<void> {

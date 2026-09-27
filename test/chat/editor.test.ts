@@ -115,4 +115,26 @@ describe('layout', () => {
   it('masks secrets', () => {
     expect(layout('Key: ', state('sk-123'), [], true, 40).lines[0]).toBe('Key: ••••••');
   });
+
+  it('takes a pasted line as typed text', () => {
+    expect(press(['say ', key('paste', { sequence: 'hello' }), key('return')])).toEqual({
+      type: 'submit',
+      value: 'say hello',
+    });
+  });
+
+  it('shows a multi-line paste as a placeholder, and submits all of it', () => {
+    const log = 'Error: boom\n  at a.js:1\n  at b.js:2';
+    const typed = press(['look: ', key('paste', { sequence: log })]);
+    expect(typed).toMatchObject({ state: { text: 'look: [Pasted text #1 · 3 lines]' } });
+    expect(press([key('return')], (typed as { state: EditorState }).state)).toEqual({
+      type: 'submit',
+      value: `look: ${log}`,
+    });
+  });
+
+  it('deletes a paste’s placeholder in one backspace', () => {
+    const result = press(['a ', key('paste', { sequence: 'x\ny' }), key('backspace')]);
+    expect(result).toMatchObject({ state: { text: 'a ', cursor: 2 } });
+  });
 });

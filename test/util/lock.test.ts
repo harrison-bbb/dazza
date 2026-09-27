@@ -1,5 +1,7 @@
+import { readFile, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { withLock } from '../../src/util/lock.js';
 import { makePlan, makeTask } from '../fixtures.js';
 import { useTempProject } from '../helpers.js';
 
@@ -38,5 +40,20 @@ describe('concurrent plan updates', () => {
     expect((await readdir(join(project.root, '.dazza'))).some((f) => f.endsWith('.lock'))).toBe(
       false,
     );
+  });
+
+  it('takes over a stale lock, and never removes a lock it doesn’t hold', async () => {
+    const path = join(project.root, 'x.lock');
+    await writeFile(path, 'someone else');
+    const old = new Date(Date.now() - 60_000);
+    await utimes(path, old, old); // left behind by a crashed process
+
+    let during = '';
+    await withLock(path, async () => {
+      during = await readFile(path, 'utf8');
+      await writeFile(path, 'taken over'); // as if ours went stale and another took it
+    });
+    expect(during).not.toBe('someone else');
+    expect(await readFile(path, 'utf8')).toBe('taken over');
   });
 });

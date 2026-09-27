@@ -40,6 +40,45 @@ describe('Manager', () => {
     expect(provider.runs[1]?.resumeSessionId).toBe('session-1');
   });
 
+  it('starts a fresh conversation when the old one can’t be resumed', async () => {
+    const { provider, manager } = setup();
+    await project.store.writeManagerSession('deleted-session', 'claude');
+    const gone: AgentEvent = {
+      type: 'finished',
+      ok: false,
+      output: 'No conversation found with session ID: deleted-session',
+      sessionId: 'deleted-session',
+      durationMs: 0,
+    };
+    const fresh = [...provider.events];
+    provider.events.splice(0, provider.events.length, gone);
+    provider.onRun = async () => {
+      // The retry, without the stale session, works as normal.
+      if (provider.runs.length === 2) provider.events.splice(0, provider.events.length, ...fresh);
+    };
+
+    const events = await drain(manager.send('hi'));
+    expect(provider.runs.map((r) => r.resumeSessionId)).toEqual(['deleted-session', undefined]);
+    expect(events.find((e) => e.type === 'text')).toMatchObject({
+      text: expect.stringContaining('started a fresh one'),
+    });
+    expect(await project.store.readManagerSession('claude')).toBe('session-1');
+  });
+
+  it('doesn’t keep the id of a run that failed', async () => {
+    const { provider, manager } = setup();
+    provider.events.splice(0, provider.events.length, {
+      type: 'finished',
+      ok: false,
+      output: 'Credit balance is too low',
+      sessionId: '',
+      durationMs: 0,
+      error: { kind: 'credits', message: 'Credit balance is too low' },
+    });
+    await drain(manager.send('hi'));
+    expect(await project.store.readManagerSession('claude')).toBeUndefined();
+  });
+
   it('gives the agent current project state and no tools that edit code', async () => {
     const { provider, manager } = setup();
     await project.store.writePlan(makePlan([makeTask({ id: 'T1', title: 'Scaffold' })]));

@@ -27,7 +27,7 @@ you ──chat──▶ dazza ──scopes──▶ .dazza/ (scope + tasks) ─�
 
 ## Try it
 
-Dazza drives [Claude Code](https://docs.claude.com/en/docs/claude-code) or [Codex](https://github.com/openai/codex), whichever you use. Install at least one. The first run asks how to connect:
+You need Node 22 or later. Dazza drives [Claude Code](https://docs.claude.com/en/docs/claude-code) or [Codex](https://github.com/openai/codex), whichever you use. Install at least one. The first run asks how to connect:
 
 | Connection | Agent | Pays through |
 |---|---|---|
@@ -61,6 +61,7 @@ Just type to talk to Dazza. Type `/` for commands:
 | `/slack-disconnect` | Unlink Slack, then link it again if you like |
 | `/telegram` | See your Telegram link, or connect Telegram |
 | `/telegram-disconnect` | Unlink your bot and link a new one |
+| `/new` | Start a fresh conversation; the plan and board stay as they are |
 | `/logout` | Sign out of Dazza; your Claude Code or Codex sign-in is untouched |
 | `/help`, `/exit` | |
 

@@ -1,8 +1,9 @@
-import { createHash } from 'node:crypto';
-import { access, appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { access, appendFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { z } from 'zod';
+import type { ProviderId } from '../providers/types.js';
 import { withLock } from '../util/lock.js';
 import { Event, type EventInput, Plan } from './schema.js';
 
@@ -29,7 +30,10 @@ export const TaskBuild = z.object({
 export type TaskBuild = z.infer<typeof TaskBuild>;
 const BuildState = z.record(z.string(), TaskBuild);
 
-const ManagerSession = z.object({ sessionId: z.string() });
+const ManagerSession = z.object({
+  sessionId: z.string().min(1),
+  provider: z.enum(['claude', 'codex']).optional(),
+});
 
 /** Running totals of what Dazza has used on this project. */
 export const ProjectUsage = z.object({
@@ -73,7 +77,7 @@ export class Store {
 
   async readPlan(): Promise<Plan | undefined> {
     const raw = await this.readOptional('tasks.json');
-    return raw === undefined ? undefined : Plan.parse(JSON.parse(raw));
+    return raw === undefined ? undefined : parseState('tasks.json', raw, Plan);
   }
 
   /**
@@ -104,14 +108,28 @@ export class Store {
     await this.writeAtomic('scope.md', markdown);
   }
 
-  /** The manager conversation's agent session, so `dazza` picks up where it left off. */
-  async readManagerSession(): Promise<string | undefined> {
+  /**
+   * The manager conversation's agent session, so `dazza` picks up where it left
+   * off. A session belongs to one agent CLI: after switching, there's none.
+   */
+  async readManagerSession(provider?: ProviderId): Promise<string | undefined> {
     const raw = await this.readOptional(MANAGER_SESSION_FILE);
-    return raw === undefined ? undefined : ManagerSession.parse(JSON.parse(raw)).sessionId;
+    const parsed = ManagerSession.safeParse(safeJson(raw));
+    if (!parsed.success) return undefined;
+    const { sessionId, provider: owner } = parsed.data;
+    return provider && owner && owner !== provider ? undefined : sessionId;
   }
 
-  async writeManagerSession(sessionId: string): Promise<void> {
-    await this.writeAtomic(MANAGER_SESSION_FILE, `${JSON.stringify({ sessionId }, null, 2)}\n`);
+  async writeManagerSession(sessionId: string, provider: ProviderId): Promise<void> {
+    await this.writeAtomic(
+      MANAGER_SESSION_FILE,
+      `${JSON.stringify({ sessionId, provider }, null, 2)}\n`,
+    );
+  }
+
+  /** Forget the conversation, e.g. to start fresh. The plan and board stay. */
+  async clearManagerSession(): Promise<void> {
+    await rm(this.path(MANAGER_SESSION_FILE), { force: true });
   }
 
   /** Where a screenshot lives on disk, from its media path (e.g. "T3/home.png"). */
@@ -127,13 +145,18 @@ export class Store {
   }
 
   async readUsage(): Promise<ProjectUsage> {
-    const raw = await this.readOptional(USAGE_FILE);
-    return raw === undefined
-      ? { runs: 0, tokens: 0, costUsd: 0 }
-      : ProjectUsage.parse(JSON.parse(raw));
+    // A running total: if the file is damaged, starting again from zero is fine.
+    const parsed = ProjectUsage.safeParse(safeJson(await this.readOptional(USAGE_FILE)));
+    return parsed.success ? parsed.data : { runs: 0, tokens: 0, costUsd: 0 };
   }
 
   async recordUsage(run: { tokens: number; costUsd: number }): Promise<void> {
+    await this.init();
+    // The chat and the build record usage side by side; don't lose either.
+    await withLock(this.path('usage.lock'), () => this.addUsage(run));
+  }
+
+  private async addUsage(run: { tokens: number; costUsd: number }): Promise<void> {
     const total = await this.readUsage();
     const next = {
       runs: total.runs + 1,
@@ -149,7 +172,7 @@ export class Store {
 
   async readTaskBuilds(): Promise<Record<string, TaskBuild>> {
     const raw = await this.readOptional(BUILD_FILE);
-    return raw === undefined ? {} : BuildState.parse(JSON.parse(raw));
+    return raw === undefined ? {} : parseState(BUILD_FILE, raw, BuildState);
   }
 
   async writeTaskBuild(taskId: string, build: TaskBuild): Promise<void> {
@@ -171,10 +194,11 @@ export class Store {
   async readEvents(): Promise<Event[]> {
     const raw = await this.readOptional('events.jsonl');
     if (raw === undefined) return [];
-    return raw
-      .split('\n')
-      .filter((line) => line.trim() !== '')
-      .map((line) => Event.parse(JSON.parse(line)));
+    // One damaged line (say, from a crash mid-write) mustn't hide the rest.
+    return raw.split('\n').flatMap((line) => {
+      const parsed = Event.safeParse(safeJson(line));
+      return parsed.success ? [parsed.data] : [];
+    });
   }
 
   private path(file: string): string {
@@ -194,9 +218,35 @@ export class Store {
   private async writeAtomic(file: string, contents: string): Promise<void> {
     await this.init();
     const target = this.path(file);
-    const temp = `${target}.${process.pid}.tmp`;
+    // Unique per write: the chat and the build can write the same file at once.
+    const temp = `${target}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temp, contents, 'utf8');
     await rename(temp, target);
+  }
+}
+
+/** A file Dazza can't work without, and can't safely guess at when it's damaged. */
+export class StateError extends Error {
+  override name = 'StateError';
+}
+
+function parseState<T>(file: string, raw: string, schema: z.ZodType<T>): T {
+  const parsed = schema.safeParse(safeJson(raw));
+  if (parsed.success) return parsed.data;
+  const issue = parsed.error.issues[0];
+  const where = issue?.path.length ? ` at ${issue.path.join('.')}` : '';
+  throw new StateError(
+    `.dazza/${file} is damaged${where}${issue ? `: ${issue.message}` : ''}. ` +
+      'Fix it by hand, or undo whatever last changed it.',
+  );
+}
+
+function safeJson(text: string | undefined): unknown {
+  if (text === undefined) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
   }
 }
 

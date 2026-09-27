@@ -7,7 +7,7 @@ import { recoverAbandonedBuild } from '../core/builder.js';
 import { Config, type Connection } from '../core/config.js';
 import { describeCodebase, inspectCodebase } from '../core/inspect.js';
 import { Manager } from '../core/manager.js';
-import { Store } from '../core/store.js';
+import { StateError, Store } from '../core/store.js';
 import {
   type Channel,
   type ChannelId,
@@ -36,9 +36,18 @@ const PROMPT = `${paint.hex(BRAND, '›')} `;
 /** `dazza`: the conversation with your developer. */
 export async function startChat(projectRoot: string): Promise<void> {
   const terminal = new Terminal();
+  // A long-running chat shouldn't die over one failed background task: say so and carry on.
+  const onRejection = (error: unknown) =>
+    say(paint.red(`Something went wrong: ${errorMessage(error)}`));
+  process.on('unhandledRejection', onRejection);
   try {
     await chat(projectRoot, terminal);
+  } catch (error) {
+    if (!(error instanceof StateError)) throw error;
+    say(paint.red(error.message));
+    process.exitCode = 1;
   } finally {
+    process.off('unhandledRejection', onRejection);
     terminal.close();
   }
 }
@@ -90,7 +99,7 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
       board: board.url,
     })}`,
   );
-  const hasConversation = (await store.readManagerSession()) !== undefined;
+  const hasConversation = (await store.readManagerSession(provider.id)) !== undefined;
   say(greeting(await store.readPlan(), { hasConversation, ...(codebase && { codebase }) }));
 
   // Slack and Telegram: notifications out, the user's messages in, same conversation.
@@ -128,7 +137,9 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
         waitingForLimit = false;
         notify(info(`▶ Your limit has reset. Back on ${event.task.id}: ${event.task.title}.`));
       }
-      void notificationFor(event, store).then((note) => note && notify(note));
+      notificationFor(event, store)
+        .then((note) => note && notify(note))
+        .catch(() => {}); // a notification is a nicety; the terminal shows the event anyway
     },
     onBuildEnd: refresh,
     onShare: ({ taskId, text, images }) => {
@@ -177,7 +188,9 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
         onMessage: (text) => {
           const command = text.trim().toLowerCase().replace(/^\//, '');
           if (text.trim().startsWith('/') && isRemoteCommand(command)) {
-            void remoteCommand(command).then((reply) => bridge.send(reply));
+            void remoteCommand(command)
+              .catch((error: unknown) => `That didn’t work: ${errorMessage(error)}`)
+              .then((reply) => bridge.send(reply));
           } else {
             fromRemote(text, { channel: 'telegram' });
           }
@@ -263,9 +276,10 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
       break;
     }
     const line = input.trim();
-    if (line && line !== history.at(-1)) history.push(line);
+    // Pastes expand to many lines; the one-line editor can't show those again.
+    if (line && !line.includes('\n') && line !== history.at(-1)) history.push(line);
 
-    if (line.startsWith('/')) await runCommand(line, context);
+    if (isCommand(line)) await runCommand(line, context);
     else if (line) session.send(line);
   }
 
@@ -374,6 +388,11 @@ async function runCommand(line: string, context: CommandContext): Promise<void> 
   } catch (error) {
     say(paint.red(`/${command.name} failed: ${errorMessage(error)}`));
   }
+}
+
+/** "/model sonnet" is a command; "/Users/sam/app is broken" is a message. */
+function isCommand(line: string): boolean {
+  return /^\/[\w-]+(\s|$)/.test(line);
 }
 
 /** Where Dazza's words go: the terminal once the chat starts, so they print around the input. */

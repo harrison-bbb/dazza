@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { appendFile, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { makePlan, makeTask } from '../fixtures.js';
@@ -20,6 +20,24 @@ describe('Store', () => {
     expect((await readdir(project.store.dir)).sort()).toEqual(['.gitignore', 'tasks.json']);
   });
 
+  it('skips a damaged event line instead of failing every read', async () => {
+    await project.store.appendEvent({
+      at: '2026-09-27T10:00:00.000Z',
+      type: 'comment',
+      message: 'one',
+    });
+    await appendFile(join(project.store.dir, 'events.jsonl'), '{"at":"2026-09-27T10:0');
+    expect((await project.store.readEvents()).map((e) => e.message)).toEqual(['one']);
+  });
+
+  it('explains a damaged plan instead of crashing on it', async () => {
+    await project.store.init();
+    await writeFile(join(project.store.dir, 'tasks.json'), '{"version":1,"tasks":[{"id":"oops"}]}');
+    await expect(project.store.readPlan()).rejects.toThrow(
+      /\.dazza\/tasks\.json is damaged at tasks\.0/,
+    );
+  });
+
   it('refuses to write an invalid plan', async () => {
     const invalid = makePlan([makeTask({ id: 'T1', dependsOn: ['T2'] })]);
     await expect(project.store.writePlan(invalid)).rejects.toThrow();
@@ -33,8 +51,12 @@ describe('Store', () => {
 
   it('round-trips the manager session and keeps it out of git', async () => {
     expect(await project.store.readManagerSession()).toBeUndefined();
-    await project.store.writeManagerSession('session-1');
-    expect(await project.store.readManagerSession()).toBe('session-1');
+    await project.store.writeManagerSession('session-1', 'claude');
+    expect(await project.store.readManagerSession('claude')).toBe('session-1');
+    // A Claude conversation can't be resumed by Codex.
+    expect(await project.store.readManagerSession('codex')).toBeUndefined();
+    await project.store.clearManagerSession();
+    expect(await project.store.readManagerSession('claude')).toBeUndefined();
     expect(await readFile(join(project.store.dir, '.gitignore'), 'utf8')).toContain('session.json');
   });
 

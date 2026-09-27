@@ -12,7 +12,7 @@ export class FakeProvider implements AgentProvider {
   readonly runs: AgentRunOptions[] = [];
 
   constructor(
-    private readonly events: AgentEvent[] = [
+    readonly events: AgentEvent[] = [
       { type: 'started', sessionId: 'session-1', model: 'fake' },
       { type: 'text', text: 'What are we building?' },
       { type: 'finished', ok: true, output: '', sessionId: 'session-1', durationMs: 1 },

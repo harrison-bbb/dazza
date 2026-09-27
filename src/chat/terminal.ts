@@ -14,6 +14,9 @@ import { paint } from './style.js';
 const MAX_MENU_ITEMS = 8;
 const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const STATUS_INTERVAL_MS = 100;
+/** Ask the terminal to mark pastes, so a pasted newline isn't Enter. */
+const PASTE_MODE_ON = '\x1b[?2004h';
+const PASTE_MODE_OFF = '\x1b[?2004l';
 
 export interface ReadOptions {
   prompt: string;
@@ -39,7 +42,6 @@ export interface Choice<T> {
 export class Terminal {
   readonly interactive = Boolean(stdin.isTTY && stdout.isTTY);
   private onKey: ((key: Key) => void) | undefined;
-  private onInterrupt: (() => void) | undefined;
   private lines: AsyncIterator<string> | undefined;
   private rl: Interface | undefined;
   private drawnCursorRow = 0;
@@ -48,18 +50,14 @@ export class Terminal {
   private readonly statuses = new Map<string, { text: string; since: number }>();
   private statusTimer: NodeJS.Timeout | undefined;
   private frame = 0;
+  /** What's been pasted so far, while a paste is arriving. */
+  private pasting: string | undefined;
 
   constructor() {
     if (this.interactive) {
       emitKeypressEvents(stdin);
-      stdin.setRawMode(true);
-      stdin.on('keypress', this.handleKey);
+      this.takeInput();
     }
-  }
-
-  /** Called on Ctrl-C while nothing is being read, e.g. while Dazza is working. */
-  interrupt(handler: (() => void) | undefined): void {
-    this.onInterrupt = handler;
   }
 
   /**
@@ -212,35 +210,74 @@ export class Terminal {
     });
   }
 
-  /** Give the terminal to a child process (e.g. an interactive sign-in), then take it back. */
+  /**
+   * Give the terminal to a child process (e.g. an interactive sign-in), then
+   * take it back. Dazza stops reading stdin meanwhile, so it can't swallow what
+   * the user types into the child.
+   */
   async handOver<T>(work: () => Promise<T>): Promise<T> {
     if (!this.interactive) return work();
-    stdin.off('keypress', this.handleKey);
-    stdin.setRawMode(false);
+    this.releaseInput();
     try {
       return await work();
     } finally {
-      stdin.setRawMode(true);
-      stdin.on('keypress', this.handleKey);
-      stdin.resume();
+      this.takeInput();
     }
   }
 
   close(): void {
     if (this.statusTimer) clearInterval(this.statusTimer);
-    if (this.interactive) {
-      stdin.off('keypress', this.handleKey);
-      stdin.setRawMode(false);
-      stdin.pause();
-    }
+    if (this.interactive) this.releaseInput();
     this.rl?.close();
+  }
+
+  private takeInput(): void {
+    stdin.setRawMode(true);
+    stdin.on('keypress', this.handleKey);
+    stdin.resume();
+    stdout.write(PASTE_MODE_ON);
+  }
+
+  private releaseInput(): void {
+    stdout.write(PASTE_MODE_OFF);
+    stdin.off('keypress', this.handleKey);
+    stdin.setRawMode(false);
+    stdin.pause();
   }
 
   private handleKey = (_: string | undefined, key: Key | undefined) => {
     const pressed = key ?? {};
+    // A paste arrives as keys between two markers: gather it, then hand it over whole.
+    if (pressed.name === 'paste-start') {
+      this.pasting = '';
+      return;
+    }
+    if (this.pasting !== undefined) {
+      if (pressed.name !== 'paste-end') {
+        this.pasting +=
+          pressed.name === 'return' || pressed.name === 'enter' ? '\n' : (pressed.sequence ?? '');
+        return;
+      }
+      const text = this.pasting;
+      this.pasting = undefined;
+      this.onKey?.({ name: 'paste', sequence: text });
+      return;
+    }
     if (this.onKey) this.onKey(pressed);
-    else if (pressed.ctrl && pressed.name === 'c') this.onInterrupt?.();
+    // Nothing is being read (starting up, or running a command): Ctrl-C quits.
+    else if (pressed.ctrl && pressed.name === 'c') this.quit();
   };
+
+  /**
+   * Stop Dazza and everything it started, as Ctrl-C would outside raw mode
+   * (raw mode means the terminal won't send the signal itself).
+   */
+  private quit(): void {
+    this.close();
+    stdout.write('\x1b[?25h\n');
+    // The whole process group, so agent CLIs Dazza started stop too.
+    process.kill(0, 'SIGINT');
+  }
 
   private async nextLine(prompt: string): Promise<string | undefined> {
     if (!this.rl) {

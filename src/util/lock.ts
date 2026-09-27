@@ -1,4 +1,5 @@
-import { mkdir, open, readFile, rm, stat } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -12,16 +13,23 @@ const STALE_MS = 30_000;
  * builder, each agent's MCP server) never interleave a read-modify-write.
  */
 export async function withLock<T>(path: string, work: () => Promise<T>): Promise<T> {
+  const token = randomUUID();
   const deadline = Date.now() + TIMEOUT_MS;
   for (;;) {
     try {
       const handle = await open(path, 'wx');
+      await handle.writeFile(token);
       await handle.close();
       break;
     } catch (error) {
       if (!isExists(error)) throw error;
       if (await isStale(path)) {
-        await rm(path, { force: true });
+        // Rename rather than delete: only one waiter can move a given file, so
+        // two can't both decide it's stale and both take the lock.
+        await rename(path, `${path}.${token}.stale`).then(
+          () => rm(`${path}.${token}.stale`, { force: true }),
+          () => {},
+        );
         continue;
       }
       if (Date.now() > deadline) throw new Error(`Timed out waiting for ${path}`);
@@ -31,7 +39,8 @@ export async function withLock<T>(path: string, work: () => Promise<T>): Promise
   try {
     return await work();
   } finally {
-    await rm(path, { force: true });
+    // Only release our own lock, not one taken over after ours went stale.
+    if ((await readFile(path, 'utf8').catch(() => '')) === token) await rm(path, { force: true });
   }
 }
 

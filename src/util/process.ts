@@ -3,6 +3,7 @@ import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
+const MAX_OUTPUT = 64 * 1024 * 1024;
 
 export class CommandError extends Error {
   constructor(
@@ -31,7 +32,11 @@ export async function execCommand(
   env?: NodeJS.ProcessEnv,
 ): Promise<CommandResult | undefined> {
   try {
-    const { stdout, stderr } = await execFileAsync(command, args, env ? { env } : {});
+    // Big diffs and file lists outgrow the 1 MB default.
+    const { stdout, stderr } = await execFileAsync(command, args, {
+      maxBuffer: MAX_OUTPUT,
+      ...(env && { env }),
+    });
     return { exitCode: 0, stdout, stderr };
   } catch (error) {
     if (isErrnoException(error) && error.code === 'ENOENT') return undefined;

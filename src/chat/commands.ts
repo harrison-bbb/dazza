@@ -124,10 +124,21 @@ export const COMMANDS: Command[] = [
     },
   },
   {
+    name: 'new',
+    aliases: ['clear'],
+    description: 'Start a fresh conversation (the plan and board stay as they are)',
+    async run({ store, say }) {
+      await store.clearManagerSession();
+      say('Fresh conversation. The plan and the board are as they were. What’s next?');
+    },
+  },
+  {
     name: 'logout',
     description: 'Sign out of Dazza (your Claude Code or Codex sign-in stays as it is)',
     async run({ config, say, exit }) {
       await config.clearConnection();
+      // Models are per agent CLI, and you may reconnect with the other one.
+      await config.updateSettings({ model: undefined });
       say('Signed out of Dazza. Run `dazza` again to reconnect with a subscription or an API key.');
       exit();
     },

@@ -33,10 +33,44 @@ export class Manager {
   constructor(private readonly options: ManagerOptions) {}
 
   async *send(message: string, signal?: AbortSignal): AsyncGenerator<AgentEvent> {
-    const { store, config, provider, projectRoot, mcpServer } = this.options;
-    const sessionId = await store.readManagerSession();
-    const { model } = await config.readSettings();
+    const { store, provider } = this.options;
+    const sessionId = await store.readManagerSession(provider.id);
+    if (!sessionId) {
+      yield* this.run(message, undefined, signal);
+      return;
+    }
 
+    // Agent CLIs delete old conversations (Claude Code after 30 days). A resume
+    // that fails before it starts means that, so start a fresh one instead.
+    let started = false;
+    for await (const event of this.run(message, sessionId, signal)) {
+      if (event.type === 'started') started = true;
+      const gone =
+        !started &&
+        event.type === 'finished' &&
+        !event.ok &&
+        (event.error?.kind ?? 'failed') === 'failed';
+      if (!gone) {
+        yield event;
+        continue;
+      }
+      await store.clearManagerSession();
+      yield {
+        type: 'text',
+        text: 'I couldn’t pick up our earlier conversation, so I’ve started a fresh one. The plan and the board are just as they were.',
+      };
+      yield* this.run(message, undefined, signal);
+      return;
+    }
+  }
+
+  private async *run(
+    message: string,
+    sessionId: string | undefined,
+    signal: AbortSignal | undefined,
+  ): AsyncGenerator<AgentEvent> {
+    const { store, config, provider, projectRoot, mcpServer } = this.options;
+    const { model } = await config.readSettings();
     const state = describeState(
       await store.readPlan(),
       await store.readEvents(),
@@ -54,9 +88,13 @@ export class Manager {
     });
 
     for await (const event of events) {
-      if (event.type === 'started' || event.type === 'finished') {
-        await store.writeManagerSession(event.sessionId);
-      }
+      // Only a conversation that's really underway is worth resuming; a failed
+      // run's id (or none at all) would break the next message.
+      const id =
+        event.type === 'started' || (event.type === 'finished' && event.ok)
+          ? event.sessionId
+          : undefined;
+      if (id) await store.writeManagerSession(id, provider.id);
       await trackUsage(store, config, event);
       yield event;
     }

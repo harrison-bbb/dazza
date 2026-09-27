@@ -133,7 +133,14 @@ export class ChatSession {
         message !== undefined && !signal.aborted;
         message = this.queue.shift()
       ) {
-        await this.converse(message.text, message.origin, signal);
+        try {
+          await this.converse(message.text, message.origin, signal);
+        } catch (error) {
+          // One failed message (e.g. a damaged .dazza file) mustn't stop the chat.
+          const text = `Something went wrong: ${errorMessage(error)}`;
+          this.options.output.say(paint.red(text));
+          this.options.onReply?.(text, message.origin);
+        }
       }
     } finally {
       this.chat = undefined;
