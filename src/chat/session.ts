@@ -1,3 +1,4 @@
+import { boardLink } from '../board/link.js';
 import { ActivityRecorder } from '../core/activity.js';
 import { type BuildEvent, build } from '../core/builder.js';
 import type { Config } from '../core/config.js';
@@ -323,6 +324,8 @@ export class ChatSession {
     const stream = new StreamedText(output);
     output.status('chat', 'Thinking');
 
+    // The chat's tools check this before merging (see Store.writeTurnOrigin).
+    await store.writeTurnOrigin(origin === 'terminal' ? undefined : origin.channel);
     try {
       // Commands the user ran themselves go along as context.
       const ran = this.shellRuns.splice(0);
@@ -398,6 +401,7 @@ export class ChatSession {
       output.say(signal.aborted ? paint.dim('Stopped.') : paint.red(failure ?? ''));
     }
     if (stream.started) stream.end();
+    await store.writeTurnOrigin(undefined).catch(() => undefined);
     onReply?.(reply.length > 0 ? reply.join('\n\n') : (failure ?? ''), origin);
     // Past most of its room: say so once, as Claude Code does.
     const full = (this.contextTokens ?? 0) / this.contextWindow;
@@ -488,7 +492,9 @@ export class ChatSession {
 
     const { boardUrl, output, onShare } = this.options;
     output.print(
-      images.map((path) => `  ${paint.dim(`📸 ${boardUrl}/api/media/${path}`)}`).join('\n'),
+      images
+        .map((path) => `  ${paint.dim(`📸 ${boardLink(boardUrl, `/api/media/${path}`)}`)}`)
+        .join('\n'),
     );
     if (call.tool === McpTools.comment) {
       const taskId = typeof call.input.id === 'string' ? call.input.id : undefined;

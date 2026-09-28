@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.5
+
+- **Keep building with the terminal closed, if you want.** `/background on` lets a build carry on after you close the terminal (it's off by default). Stop it with `dazza stop` from any terminal, or "stop" from your phone. Opening `dazza` in the project takes it back. It also stops once the plan is built or after 12 quiet hours, and tells your phone why. On a Mac it keeps the computer awake while it builds.
+- **`/phone-merge off`:** approving from Slack or Telegram no longer merges. Work is merged only from the terminal or the board, so someone who gets into your Slack or Telegram can't merge code. On by default.
+- **The board has a key.** It only answers links that carry the project's own random key, which Dazza adds to every link it gives you. Other people on your network and other websites can no longer read it. Builders can't read the key.
+- **Linux:** Dazza reads process start times from `/proc`, so it no longer relies on a `ps` that some systems don't have. CI now runs on Linux, macOS and Windows.
+- The README and security notes say more plainly what the guard does and doesn't cover.
+
 ## 0.1.4
 
 - **Replies stream in** as they're written, the way Claude Code shows them (on Claude Code).

@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { boardLink } from '../board/link.js';
 import { cancelTask, closeTask, prioritise, requestChanges } from '../core/actions.js';
 import { milestoneProgress } from '../core/milestones.js';
 import { answerPermission } from '../core/permissions.js';
@@ -256,8 +257,9 @@ export const WORK_COMMANDS: Command[] = [
     name: 'scope',
     description: 'Open the scope of work on the board',
     run({ boardUrl, say }: CommandContext) {
-      openInBrowser(`${boardUrl}/#/doc`);
-      say(`Opened the scope: ${boardUrl}/#/doc`);
+      const scope = boardLink(boardUrl, '#/doc');
+      openInBrowser(scope);
+      say(`Opened the scope: ${scope}`);
     },
   },
 ];

@@ -155,10 +155,12 @@ const SECRET_PATHS = [
 ];
 
 function isSecret(target: string, home: string): boolean {
-  // Dazza's own keys too, wherever DAZZA_CONFIG_DIR or XDG_CONFIG_HOME put them.
+  // Dazza's own keys too, wherever DAZZA_CONFIG_DIR or XDG_CONFIG_HOME put them, and
+  // the board's key: with it, a builder could approve and merge its own work.
   return (
     SECRET_PATHS.some((p) => inside(target, resolve(home, p))) ||
-    inside(target, resolve(defaultConfigDir()))
+    inside(target, resolve(defaultConfigDir())) ||
+    /[\\/]\.dazza[\\/]board-token$/.test(target)
   );
 }
 

@@ -1,3 +1,4 @@
+import { boardLink } from '../board/link.js';
 import { currentTask, progress } from '../core/plan.js';
 import type { Plan, Task } from '../core/schema.js';
 import type { Notification } from '../notify/notification.js';
@@ -117,7 +118,7 @@ export function notificationMessage(note: Notification, where: Where): Rendered 
               button('Request changes', Actions.requestChanges, note.taskId),
               {
                 ...button('Open on board (on your computer)', Actions.board, note.taskId),
-                url: `${where.boardUrl}/#/tasks/${note.taskId}`,
+                url: boardLink(where.boardUrl, `#/tasks/${note.taskId}`),
               },
             ],
           },

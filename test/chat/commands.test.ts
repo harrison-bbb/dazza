@@ -240,6 +240,28 @@ describe('running commands', () => {
     );
   });
 
+  it('/background switches building in the background on and off, off by default', async () => {
+    const { ctx, said } = context();
+    await run(ctx, '/background');
+    expect(said.at(-1)).toContain('Building in the background is off');
+    await run(ctx, '/background on');
+    expect((await project.config.readSettings()).backgroundBuild).toBe(true);
+    expect(said.at(-1)).toContain('`dazza stop`');
+    await run(ctx, '/background off');
+    expect((await project.config.readSettings()).backgroundBuild).toBe(false);
+  });
+
+  it('/phone-merge switches merging from Slack or Telegram off and on, on by default', async () => {
+    const { ctx, said } = context();
+    await run(ctx, '/phone-merge');
+    expect(said.at(-1)).toContain('Approving from Slack or Telegram merges the work');
+    await run(ctx, '/phone-merge off');
+    expect((await project.config.readSettings()).phoneMerge).toBe(false);
+    expect(said.at(-1)).toContain('only from here or the board');
+    await run(ctx, '/phone-merge on');
+    expect((await project.config.readSettings()).phoneMerge).toBe(true);
+  });
+
   it('/exit ends the chat', async () => {
     const { ctx, exited } = context();
     await run(ctx, '/quit');

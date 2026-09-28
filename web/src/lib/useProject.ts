@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { fetchProject, type ProjectSnapshot } from './api';
+import { BoardKeyMissing, fetchProject, type ProjectSnapshot } from './api';
 
 export interface ProjectState {
   project: ProjectSnapshot | undefined;
@@ -23,7 +23,9 @@ export function useProject(): ProjectState {
       setProject(await fetchProject());
       setError(undefined);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(
+        err instanceof BoardKeyMissing ? 'key' : err instanceof Error ? err.message : String(err),
+      );
     }
   }, []);
 

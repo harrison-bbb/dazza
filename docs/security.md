@@ -42,7 +42,7 @@ On both agents, every tool call goes through `dazza guard` first (a `PreToolUse`
 
 | | What | Examples |
 |---|---|---|
-| **Never**, even if asked | Leaving the machine, or changing it | `git push` (any), deploying or publishing (`npm publish`, `vercel --prod`, `terraform apply`, `kubectl delete`, mutating `aws`/`gcloud`/`az`), `sudo`, `ssh`, piping a download into a shell, reading or copying credential files (`~/.ssh`, `~/.aws`, `~/.npmrc`, the keychain…), writing or deleting outside the worktree (including via `cd ..`, redirects, `find -delete`), switching or deleting branches, rewriting git history |
+| **Refused**, even if asked | Leaving the machine, or changing it | `git push` (any), deploying or publishing (`npm publish`, `vercel --prod`, `terraform apply`, `kubectl delete`, mutating `aws`/`gcloud`/`az`), `sudo`, `ssh`, piping a download into a shell, reading or copying credential files (`~/.ssh`, `~/.aws`, `~/.npmrc`, the keychain…), writing or deleting outside the worktree (including via `cd ..`, redirects, `find -delete`), switching or deleting branches, rewriting git history |
 | **Asks you first** | Reversible only with effort, or touching something live | Connecting to a database that isn't local, `DROP`/`TRUNCATE`/`DELETE FROM`, `prisma migrate reset`, sending a change (POST/PUT/PATCH/DELETE or a body) to an outside service, machine-wide installs, killing processes by name, read-only calls to a live cloud account |
 | Goes ahead | Normal work inside the worktree | Installing dependencies, running tests and dev servers, local databases, editing code, `git status`/`diff`/`commit` |
 
@@ -76,9 +76,14 @@ The board server binds to `127.0.0.1`, never to a public interface. The API also
 
 - rejects requests whose `Host` isn't `localhost` or `127.0.0.1`, which blocks DNS rebinding;
 - requires a custom header on every write. Browsers won't send it cross-site without a CORS preflight, and the board never grants one, so another site you visit can't approve or close tasks;
-- serves screenshots only through paths that match the media path format, so nothing outside `.dazza/media/` is reachable.
+- serves screenshots only through paths that match the media path format, so nothing outside `.dazza/media/` is reachable;
+- answers only requests that carry the project's board key: a random key in `.dazza/board-token` (readable only by you, and off limits to builders). Dazza's links carry it as `?t=`. Opening one sets it as an `HttpOnly`, `SameSite=Strict` cookie and drops it from the address bar, so other people on your network and other websites can't read the board.
 
-The board has no login. Anything that runs as you on your machine can use it.
+Anything that runs as you on your machine can read the key file, and so can use the board.
+
+## Building in the background
+
+Off by default. With `/background on`, closing the terminal mid-build hands the build to a detached `dazza` process in the same project, which logs to `.dazza/background.log` and records its process id in `.dazza/background.json`. It uses the same guard, settings and connected phone as the terminal did. It stops when the plan is built, when you run `dazza stop` or send "stop" from Slack or Telegram, after 12 hours with nothing happening, or when you open `dazza` in the project again (which takes the build back). On macOS it holds a `caffeinate -i` assertion for as long as it runs, so the computer doesn't sleep mid-build.
 
 ## Messaging
 
@@ -87,7 +92,7 @@ Messaging lets someone who holds your phone, or your Slack account, drive Dazza.
 - **Telegram** accepts messages only from the chat id linked during setup. Messages from anyone else who finds the bot are ignored. Dazza uses long polling, so there's no webhook and no inbound port.
 - **Slack** accepts messages, button clicks, modal submissions and `/dazza` commands only from the Slack user linked during setup. Anyone else who messages the app gets a one-line refusal, and nothing reaches Dazza. It uses Socket Mode: Dazza opens an outbound WebSocket to Slack, so there's no public URL and no inbound port. The app asks for the scopes it uses and no more: `chat:write`, `im:history`, `files:write`, `reactions:write`, `commands` and `users:read` (to look up its own app id during setup). It can't read channels, only its own DM.
 
-A message from the linked account is treated exactly like one typed into the terminal. It can approve and merge work, change the plan, and start a build.
+A message from the linked account is treated exactly like one typed into the terminal. It can approve and merge work, change the plan, and start a build. `/phone-merge off` takes merging out of that: the Approve button and a message asking the chat to accept work both answer that it has to be approved at the computer (the terminal or the board). The chat's `set_status` tool enforces it, not the model: while the chat answers a message from the phone, Dazza records where it came from in `.dazza/turn`, and the tool refuses to close a task while that's set.
 
 ## What leaves your machine
 

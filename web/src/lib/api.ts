@@ -18,8 +18,14 @@ export type {
 } from '../../../src/core/schema.js';
 export type { ProjectSnapshot, ScopeVersion };
 
+/** The board was opened without its key (an old link, or another browser). */
+export class BoardKeyMissing extends Error {
+  override name = 'BoardKeyMissing';
+}
+
 export async function fetchProject(): Promise<ProjectSnapshot> {
   const res = await fetch('/api/project');
+  if (res.status === 401) throw new BoardKeyMissing();
   if (!res.ok) throw new Error(`Failed to load project (${res.status})`);
   return res.json() as Promise<ProjectSnapshot>;
 }

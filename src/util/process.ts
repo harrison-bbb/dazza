@@ -1,5 +1,5 @@
 import { type ChildProcess, execFile, spawn } from 'node:child_process';
-import { readdir, readlink, realpath } from 'node:fs/promises';
+import { readdir, readFile, readlink, realpath } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
 import { resolveCommand } from './command.js';
@@ -220,6 +220,11 @@ async function workingDirectories(): Promise<{ pid: number; cwd: string }[]> {
 
 async function startTimes(pids: number[]): Promise<Map<number, number>> {
   if (pids.length === 0) return new Map();
+  // Linux: straight from the kernel, so it works without a full `ps` (BusyBox has no lstart).
+  if (process.platform === 'linux') {
+    const fromProc = await procStartTimes(pids);
+    if (fromProc.size > 0) return fromProc;
+  }
   const result = await execCommand('ps', ['-o', 'pid=,lstart=', '-p', pids.join(',')]);
   const times = new Map<number, number>();
   for (const line of result?.stdout.split('\n') ?? []) {
@@ -228,6 +233,37 @@ async function startTimes(pids: number[]): Promise<Map<number, number>> {
   }
   return times;
 }
+
+/**
+ * When each process started, from /proc: its start time in clock ticks after
+ * boot (field 22 of /proc/<pid>/stat), plus the boot time from /proc/stat.
+ */
+async function procStartTimes(pids: number[]): Promise<Map<number, number>> {
+  const times = new Map<number, number>();
+  const boot = Number(
+    /^btime (\d+)$/m.exec(await readFile('/proc/stat', 'utf8').catch(() => ''))?.[1],
+  );
+  if (!boot) return times;
+  for (const pid of pids) {
+    const started = procStart(await readFile(`/proc/${pid}/stat`, 'utf8').catch(() => ''), boot);
+    if (started !== undefined) times.set(pid, started);
+  }
+  return times;
+}
+
+/** A process's start, in ms since the epoch, from its /proc/<pid>/stat line. Exported for tests. */
+export function procStart(stat: string, bootSeconds: number): number | undefined {
+  // The command name (field 2) can hold spaces and brackets: count fields after its closing ")".
+  const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+  // Field 22 (starttime) is the 20th after the name.
+  const ticks = Number(fields[19]);
+  return fields.length > 19 && Number.isFinite(ticks)
+    ? (bootSeconds + ticks / CLOCK_TICKS) * 1000
+    : undefined;
+}
+
+/** Linux's clock ticks per second (USER_HZ): 100 on every mainstream kernel. */
+const CLOCK_TICKS = 100;
 
 function signal(pid: number, name: NodeJS.Signals): void {
   try {

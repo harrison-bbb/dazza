@@ -1,5 +1,14 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { access, appendFile, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import {
+  access,
+  appendFile,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { z } from 'zod';
@@ -11,8 +20,12 @@ import { type Activity, Event, type EventInput, Plan } from './schema.js';
 export const STATE_DIR = '.dazza';
 
 const MANAGER_SESSION_FILE = 'session.json';
+/** The board's key: needed for every call to its API. Readable only by the user. */
+export const BOARD_TOKEN_FILE = 'board-token';
 /** What the user typed at the prompt, one JSON string per line. */
 const HISTORY_FILE = 'history.jsonl';
+/** Where the message the chat is answering came from, while it answers (see writeTurnOrigin). */
+const TURN_FILE = 'turn';
 const MAX_HISTORY = 500;
 const USAGE_FILE = 'usage.json';
 const BUILD_FILE = 'build.json';
@@ -29,6 +42,9 @@ const ActivityLine = z.object({
 const SCOPE_HISTORY = 'scope-history';
 const LOCAL_FILES = [
   MANAGER_SESSION_FILE,
+  BOARD_TOKEN_FILE,
+  HISTORY_FILE,
+  TURN_FILE,
   USAGE_FILE,
   BUILD_FILE,
   PERMISSIONS_FILE,
@@ -373,6 +389,31 @@ export class Store {
       const { [taskId]: _, ...rest } = await this.readTaskBuilds();
       await this.writeAtomic(BUILD_FILE, `${JSON.stringify(rest, null, 2)}\n`);
     });
+  }
+
+  /** The board's key for this project, made the first time it's needed. */
+  async readBoardToken(): Promise<string> {
+    const existing = (await this.readOptional(BOARD_TOKEN_FILE))?.trim();
+    if (existing && /^[\w-]{32,}$/.test(existing)) return existing;
+    const token = randomBytes(24).toString('base64url');
+    await this.init();
+    await writeFile(this.path(BOARD_TOKEN_FILE), `${token}\n`, { mode: 0o600 });
+    return token;
+  }
+
+  /**
+   * Where the message Dazza's chat is answering came from ('slack' or
+   * 'telegram'), for as long as it answers. The chat's tools run in another
+   * process, and some (merging) depend on whether the user is at the computer.
+   */
+  async writeTurnOrigin(from: string | undefined): Promise<void> {
+    if (!from) return rm(this.path(TURN_FILE), { force: true });
+    await this.init();
+    await writeFile(this.path(TURN_FILE), `${from}\n`, 'utf8');
+  }
+
+  async readTurnOrigin(): Promise<string | undefined> {
+    return (await this.readOptional(TURN_FILE))?.trim() || undefined;
   }
 
   /** What the user has typed in this project, oldest first, for ↑ at the prompt. */

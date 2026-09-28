@@ -88,6 +88,7 @@ Just type to talk to Dazza, about anything in the project. Type `/` for commands
 | `/status` | Where the project is at |
 | `/tasks` | Every task, by milestone, with status and size |
 | `/next T7` | Build T7 next (it still waits for what it depends on) |
+| `/background on\|off` | Keep building after you close the terminal (off by default). `dazza stop`, or "stop" from your phone, stops it; opening `dazza` takes it back |
 | `/parallel 1–3` | How many independent tasks to build at once (default 2) |
 
 | Reviewing | |
@@ -115,16 +116,17 @@ Just type to talk to Dazza, about anything in the project. Type `/` for commands
 | `/model`, `/usage` | Switch models; see your plan's limits or API spend |
 | `/mcp [on\|off]` | The MCP servers you have in Claude Code or Codex. Dazza's chat can use them (builders can't) |
 | `/notify on\|off` | Desktop notifications when a task needs you (on by default) |
+| `/phone-merge on\|off` | Whether approving from Slack or Telegram merges the work. Off keeps merging to the terminal and the board |
 | `/slack`, `/telegram` | Connect (or check) Slack or Telegram. `-disconnect` to unlink |
 | `/logout`, `/help`, `/exit` | |
 
-The board runs at `http://localhost:4777` while Dazza is open. You can **watch builds live**: the dashboard and each task page show what the builder is doing right now (what it's thinking, the files it touches, the commands it runs), and afterwards the task's build log shows how it was built. The board has the dashboard and milestones, and every task with its handoff, evidence and a comment thread shared with Dazza. The **scope of work** reads like a proper project plan. It has the agreed scope, a deliverables table with every task's acceptance criteria and status (always in step with the tasks), and the change log. You can **edit it right there**: once the plan is approved, your edit goes in the change log as yours, and Dazza and the builder work from the new version. Every version of the scope is kept: view any earlier one and restore it. Restoring adds a version, so nothing is lost. You can also download the scope as Markdown, or print it or save it as a PDF. Tasks can be edited on the board too (title, size, description, criteria). `dazza board` opens the board without starting a chat.
+The board runs at `http://localhost:4777` while Dazza is open. You can **watch builds live**: the dashboard and each task page show what the builder is doing right now (what it's thinking, the files it touches, the commands it runs), and afterwards the task's build log shows how it was built. The board has the dashboard and milestones, and every task with its handoff, evidence and a comment thread shared with Dazza. The **scope of work** reads like a proper project plan. It has the agreed scope, a deliverables table with every task's acceptance criteria and status (always in step with the tasks), and the change log. You can **edit it right there**: once the plan is approved, your edit goes in the change log as yours, and Dazza and the builder work from the new version. Every version of the scope is kept: view any earlier one and restore it. Restoring adds a version, so nothing is lost. You can also download the scope as Markdown, or print it or save it as a PDF. Tasks can be edited on the board too (title, size, description, criteria). `dazza board` opens the board without starting a chat. The board only answers links that carry its key, which Dazza adds for you (`/dashboard` opens one), so other websites and other people on your network can't read it.
 
 ## Safe to point at real work
 
-Dazza's builder works like a careful engineer on someone else's systems. On Claude Code and Codex alike, every command and file access goes through **Dazza's guard** before it runs:
+Dazza's builder works like a careful engineer on someone else's systems. On Claude Code and Codex alike, every command and file access goes through **Dazza's guard** before it runs. The guard is built to refuse some things outright and ask before others. It's a strong safeguard, not a sandbox, and [docs/security.md](docs/security.md) says where it stops.
 
-- **Never, even if asked:** pushing, deploying or publishing, `sudo`, credential files, anything outside the task's worktree, switching branches, changing cloud or cluster resources.
+- **Refused, even if asked:** pushing, deploying or publishing, `sudo`, credential files, anything outside the task's worktree, switching branches, changing cloud or cluster resources.
 - **Asks you first:** remote databases, deleting data, sending changes to outside services, machine-wide installs. The builder asks with the exact command and why. You answer with `/allow`, `/deny`, the board, or a button on your phone. Allowing covers that one command for that one task.
 - **Just works:** everything else inside the task's worktree.
 
@@ -143,6 +145,8 @@ Ask "can we do X instead?", "add Y", or "we don't need T9", and Dazza handles it
 
 ## Away from your desk
 
+Dazza builds while it's open and your computer is awake. Turn on `/background` and it keeps building after you close the terminal, until the plan is built, you stop it (`dazza stop` from any terminal, or "stop" from your phone), or nothing has happened for 12 hours. On a Mac it keeps the computer from sleeping while it builds. Open `dazza` in the project again and the build comes back to the terminal.
+
 Link **Slack** or **Telegram** and Dazza reaches you while it builds. It's the same conversation as the terminal.
 
 - **Notifications:** a task ready for review (with screenshots and the criteria results), a blocked task's question, a command waiting for your OK, a milestone reached, a build that stopped, a usage limit.
@@ -150,14 +154,14 @@ Link **Slack** or **Telegram** and Dazza reaches you while it builds. It's the s
 - **Threads:** reply to a notification and Dazza knows which task you mean.
 - **Slack extras:** a Home tab with the whole project, and `/dazza status|build|stop` from anywhere. Setup takes about two minutes, with no server; it uses Socket Mode.
 
-Only you are listened to. Messages from anyone else are ignored.
+Only you are listened to. Messages from anyone else are ignored. Anyone who gets into your Slack or Telegram could approve work from there, though, so `/phone-merge off` keeps merging to your computer: the phone still gets everything else.
 
 ## When things go wrong
 
 - **Usage limit reached:** the task pauses and resumes the same session when the limit resets.
 - **Out of credit, or a rejected key:** it stops straight away and says what to do.
 - **Overloaded service:** it backs off and retries. **The agent CLI crashes:** it retries once, then blocks the task with the error.
-- **Dazza is killed** (terminal closed, laptop died): the task resumes in its worktree next time.
+- **Dazza is killed** (terminal closed without `/background`, laptop died): the task resumes in its worktree next time.
 - **Lost conversation** (Claude Code deletes old sessions): it starts a fresh one, and the plan is unaffected.
 - **A stuck builder** (20 minutes of silence): it stops it, explains, and moves on.
 
@@ -179,7 +183,7 @@ More in [docs/architecture.md](docs/architecture.md), [docs/providers.md](docs/p
 
 ## Limits
 
-- Dazza builds only while it's open. Building tasks side by side finishes sooner but uses your plan's limits faster: `/parallel 1` builds one at a time.
+- Dazza builds while it's open, or in the background once you turn on `/background`. Either way your computer needs to be on. Building tasks side by side finishes sooner but uses your plan's limits faster: `/parallel 1` builds one at a time.
 - On Codex, Dazza's guard needs a recent Codex CLI (one with hooks). Dazza won't run Codex in a project that brings Codex hooks of its own until you've reviewed them in Codex.
 - Task sizes are estimates. They start at about 10, 20 and 40 minutes for S, M and L, then follow how long this project's tasks actually take. The close-out report compares each task's size with its real time.
 - Deploying is deliberately yours: Dazza prepares the config and a checklist, and you do the final steps.

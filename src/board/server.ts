@@ -4,7 +4,8 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
-import { Hono } from 'hono';
+import { type Context, Hono } from 'hono';
+import { getCookie, setCookie } from 'hono/cookie';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
 import {
@@ -35,6 +36,8 @@ export const DEFAULT_PORT = 4777;
 const PORT_ATTEMPTS = 10;
 const POLL_INTERVAL_MS = 500;
 const DEBOUNCE_MS = 100;
+/** Where the browser keeps the board's key once it's opened the board. */
+const TOKEN_COOKIE = 'dazza_board';
 const WATCHED_FILES = ['tasks.json', 'scope.md', 'events.jsonl', 'permissions.json', 'report.md'];
 
 const CommentBody = z.object({ body: z.string() });
@@ -46,18 +49,35 @@ const ScopeBody = z.object({
 });
 const StatusBody = z.object({ status: z.enum(REQUESTABLE_STATUSES), note: z.string().optional() });
 
-export function createBoardApp(store: Store, projectRoot: string, webRoot: string): Hono {
+export function createBoardApp(
+  store: Store,
+  projectRoot: string,
+  webRoot: string,
+  /** The board's key: without it, nothing on this machine can read or change the project. */
+  token: string,
+): Hono {
   const app = new Hono();
+  const keyed = (c: Context) => getCookie(c, TOKEN_COOKIE) === token || c.req.query('t') === token;
 
   // The board is local-only. Reject requests that arrive under another hostname
-  // (DNS rebinding), and require a custom header on writes, which cross-site pages
-  // can't send without a CORS preflight we never grant.
+  // (DNS rebinding); require the key, so other programs and other users on this
+  // machine can't approve or merge work; and require a custom header on writes,
+  // which cross-site pages can't send without a CORS preflight we never grant.
   app.use('/api/*', async (c, next) => {
     const host = new URL(c.req.url).hostname;
     if (host !== 'localhost' && host !== '127.0.0.1') return c.text('Forbidden', 403);
+    if (!keyed(c)) return c.text('Open the board from Dazza: this link has no key.', 401);
     if (c.req.method !== 'GET' && c.req.header(CSRF_HEADER) !== '1')
       return c.text('Forbidden', 403);
     await next();
+  });
+
+  // Opening the board with its key (?t=…): keep the key in a cookie for this
+  // browser, and take it out of the address bar. The page's #/route survives.
+  app.get('/', async (c, next) => {
+    if (c.req.query('t') !== token) return next();
+    setCookie(c, TOKEN_COOKIE, token, { httpOnly: true, sameSite: 'Strict', path: '/' });
+    return c.redirect('/', 302);
   });
 
   app.get('/api/project', async (c) => {
@@ -239,19 +259,21 @@ export function createBoardApp(store: Store, projectRoot: string, webRoot: strin
 }
 
 export interface RunningBoard {
+  /** The board's address, with its key: open this, or build links with boardLink(). */
   url: string;
   close(): void;
 }
 
 /** Serve the board on the first free port from `DEFAULT_PORT`. */
 export async function startBoard(store: Store, projectRoot: string): Promise<RunningBoard> {
-  const app = createBoardApp(store, projectRoot, defaultWebRoot());
+  const token = await store.readBoardToken();
+  const app = createBoardApp(store, projectRoot, defaultWebRoot(), token);
 
   for (let port = DEFAULT_PORT; port < DEFAULT_PORT + PORT_ATTEMPTS; port++) {
     try {
       const server = await listen(app, port);
       return {
-        url: `http://localhost:${port}`,
+        url: `http://localhost:${port}/?t=${token}`,
         close: () => {
           server.close();
           // Open SSE streams would otherwise hold the server (and the CLI) open.

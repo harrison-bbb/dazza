@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import pkg from '../../package.json' with { type: 'json' };
 
 /*
@@ -13,9 +13,30 @@ const program = new Command()
   .description('Stop operating your coding agent. Start managing it.')
   .version(pkg.version)
   .option('-c, --continue', 'pick up the last conversation, instead of starting a new one')
-  .action(async ({ continue: resume }: { continue?: boolean }) =>
-    (await import('../chat/repl.js')).startChat(process.cwd(), { continue: resume === true }),
+  // The background build a closed terminal hands over to (see /background).
+  .addOption(new Option('--background').hideHelp())
+  .action(async ({ continue: resume, background }: { continue?: boolean; background?: boolean }) =>
+    (await import('../chat/repl.js')).startChat(process.cwd(), {
+      continue: resume === true,
+      background: background === true,
+    }),
   );
+
+program
+  .command('stop')
+  .description('Stop a build running in the background (see /background)')
+  .action(async () => {
+    const [{ Store }, { stopInBackground }] = await Promise.all([
+      import('../core/store.js'),
+      import('../chat/background.js'),
+    ]);
+    const stopped = await stopInBackground(new Store(process.cwd()));
+    console.log(
+      stopped
+        ? 'Stopped the background build. Its task is paused and picks up where it left off when you /build.'
+        : 'Nothing is building in the background here.',
+    );
+  });
 
 program
   .command('doctor')

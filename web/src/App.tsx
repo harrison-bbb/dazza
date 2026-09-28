@@ -24,7 +24,13 @@ export function App() {
   if (!project) {
     return (
       <div className="grid h-dvh place-items-center px-6 text-center text-[13px] text-muted">
-        {error ? (
+        {error === 'key' ? (
+          <p>
+            <InlineText>
+              {'This board needs its key. Open it from Dazza: type `/dashboard` in your terminal.'}
+            </InlineText>
+          </p>
+        ) : error ? (
           <p>
             <InlineText>
               {

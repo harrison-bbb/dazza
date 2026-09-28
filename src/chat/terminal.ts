@@ -151,6 +151,15 @@ export class Terminal {
     this.drawnCursorRow = 0;
   }
 
+  /** Give up on the line being read, as if cancelled: the terminal is going away. */
+  cancelRead(): void {
+    const reading = this.onKey;
+    if (!reading) return;
+    // Ctrl-C clears a half-typed line first; a second one on the empty line cancels.
+    reading({ ctrl: true, name: 'c' });
+    if (this.onKey === reading) reading({ ctrl: true, name: 'c' });
+  }
+
   /** Read one line. Resolves undefined when the user cancels (Ctrl-C / Ctrl-D on empty). */
   async readLine(options: ReadOptions): Promise<string | undefined> {
     if (!this.interactive) return this.nextLine(options.prompt);

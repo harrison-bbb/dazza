@@ -3,7 +3,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CommandError, execCommand, spawnLines, stopProcessesIn } from '../../src/util/process.js';
+import {
+  CommandError,
+  execCommand,
+  procStart,
+  spawnLines,
+  stopProcessesIn,
+} from '../../src/util/process.js';
 
 const node = process.execPath;
 const cwd = process.cwd();
@@ -119,5 +125,16 @@ describe('stopProcessesIn', () => {
     expect(older.exitCode).toBeNull();
     older.kill();
     await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('procStart', () => {
+  it('reads a Linux process’s start time from /proc, even with an awkward command name', () => {
+    // pid (comm) state ppid ... field 22 = starttime, in clock ticks after boot.
+    const fields = Array.from({ length: 50 }, (_, i) => String(i + 3));
+    fields[19] = '12345'; // starttime: 123.45s after boot
+    const stat = `4242 (node (dev) server) ${fields.join(' ')}`;
+    expect(procStart(stat, 1_790_000_000)).toBe((1_790_000_000 + 123.45) * 1000);
+    expect(procStart('', 1_790_000_000)).toBeUndefined();
   });
 });

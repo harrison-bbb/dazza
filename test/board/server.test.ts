@@ -16,7 +16,19 @@ describe('board server', () => {
     await writeFile(join(webRoot, 'index.html'), '<div id="root"></div>');
   });
 
-  const app = () => createBoardApp(project.store, project.root, webRoot);
+  const KEY = 'test-key-0123456789abcdefghijklmnopqrstuv';
+  // A browser that has opened the board with its key: it sends the cookie.
+  const app = () => {
+    const board = createBoardApp(project.store, project.root, webRoot, KEY);
+    return {
+      request: (url: string, init: RequestInit = {}) =>
+        board.request(url, {
+          ...init,
+          headers: { cookie: `dazza_board=${KEY}`, ...(init.headers as Record<string, string>) },
+        }),
+      unkeyed: board,
+    };
+  };
   const post = (
     path: string,
     body?: unknown,
@@ -27,6 +39,27 @@ describe('board server', () => {
       headers: { 'content-type': 'application/json', ...headers },
       ...(body !== undefined && { body: JSON.stringify(body) }),
     });
+
+  it('answers only with its key, set as a cookie when the board is opened', async () => {
+    const board = app().unkeyed;
+    // Another program on the machine, without the key.
+    expect((await board.request('http://localhost/api/project')).status).toBe(401);
+    expect(
+      (
+        await board.request('http://localhost/api/tasks/T1/close', {
+          method: 'POST',
+          headers: { 'x-dazza': '1' },
+        })
+      ).status,
+    ).toBe(401);
+    // Opening the board's link: the key moves into a strict, HTTP-only cookie.
+    const opened = await board.request(`http://localhost/?t=${KEY}`);
+    expect(opened.status).toBe(302);
+    expect(opened.headers.get('location')).toBe('/');
+    expect(opened.headers.get('set-cookie')).toMatch(/dazza_board=.+HttpOnly.+SameSite=Strict/);
+    // A wrong key opens nothing.
+    expect((await board.request('http://localhost/?t=guess')).status).not.toBe(302);
+  });
 
   it('serves an empty project', async () => {
     const res = await app().request('http://localhost/api/project');

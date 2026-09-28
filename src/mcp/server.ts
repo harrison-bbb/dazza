@@ -22,6 +22,7 @@ import {
 } from '../core/edits.js';
 import { humanDuration, minutesLeft, sizeMinutes } from '../core/estimates.js';
 import { answerPermission, requestPermission } from '../core/permissions.js';
+import { mergeAtTheComputer, phoneMayMerge } from '../core/phoneMerge.js';
 import { carryOverProgress } from '../core/plan.js';
 import { REPORT_SECTIONS } from '../core/report.js';
 import { missingSections, reviewPlan } from '../core/review.js';
@@ -394,7 +395,13 @@ function registerManagerTools(server: McpServer, store: Store): void {
         note: z.string().optional().describe('Why, or what to change. Saved as their comment.'),
       },
     },
-    async ({ id, status, note }) => toResult(await setStatus(store, id, status, note)),
+    async ({ id, status, note }) => {
+      // Asked from Slack or Telegram with merging from there switched off.
+      if (status === 'closed' && (await store.readTurnOrigin()) && !(await phoneMayMerge())) {
+        return toResult(mergeAtTheComputer(id));
+      }
+      return toResult(await setStatus(store, id, status, note));
+    },
   );
 
   server.registerTool(

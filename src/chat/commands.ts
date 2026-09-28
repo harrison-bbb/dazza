@@ -116,6 +116,51 @@ export const COMMANDS: Command[] = [
     },
   },
   {
+    name: 'background',
+    args: '[on|off]',
+    description: 'Keep building after you close the terminal (off unless you switch it on)',
+    async run({ config, say }, args) {
+      const choice = args.trim().toLowerCase();
+      if (choice === 'on' || choice === 'off') {
+        await config.updateSettings({ backgroundBuild: choice === 'on' });
+        return say(
+          choice === 'on'
+            ? 'On. When you leave with a build under way, it carries on in the background: on this computer, while it’s awake. Stop it with `dazza stop` from any terminal, or "stop" from Slack or Telegram. Opening `dazza` here takes it back.'
+            : 'Off. Closing Dazza stops the build, and the current task picks up where it left off next time.',
+        );
+      }
+      const on = (await config.readSettings()).backgroundBuild === true;
+      say(
+        on
+          ? 'Building in the background is on: leave with a build under way and it carries on. /background off switches it off.'
+          : 'Building in the background is off: closing Dazza stops the build. /background on keeps it going after you leave.',
+      );
+    },
+  },
+  {
+    name: 'phone-merge',
+    args: '[on|off]',
+    description:
+      'Whether approving from Slack or Telegram merges the work (on unless you switch it off)',
+    async run({ config, say }, args) {
+      const choice = args.trim().toLowerCase();
+      if (choice === 'on' || choice === 'off') {
+        await config.updateSettings({ phoneMerge: choice === 'on' });
+        return say(
+          choice === 'on'
+            ? 'On. Approving from Slack or Telegram merges the work.'
+            : 'Off. Work is merged only from here or the board, so someone in your Slack or Telegram can’t merge code. Your phone still gets everything else.',
+        );
+      }
+      const on = (await config.readSettings()).phoneMerge !== false;
+      say(
+        on
+          ? 'Approving from Slack or Telegram merges the work. /phone-merge off keeps merging to here and the board.'
+          : 'Merging from Slack or Telegram is off: approve work here or on the board. /phone-merge on allows it again.',
+      );
+    },
+  },
+  {
     name: 'mcp',
     args: '[on|off]',
     description:
@@ -394,13 +439,27 @@ export function commandMenu(text: string): MenuItem[] {
 
 /** /help's sections, in the README's order. Anything unlisted goes under Setup. */
 const HELP_GROUPS: [string, string[]][] = [
-  ['The work', ['build', 'stop', 'status', 'tasks', 'next', 'parallel']],
+  ['The work', ['build', 'stop', 'status', 'tasks', 'next', 'parallel', 'background']],
   ['Reviewing', ['review', 'try', 'accept', 'changes', 'diff', 'allow', 'deny', 'redo', 'cancel']],
   [
     'The project',
     ['approve', 'scope', 'dashboard', 'report', 'continue', 'new', 'compact', 'context'],
   ],
-  ['Setup', ['model', 'mcp', 'usage', 'notify', 'slack', 'telegram', 'logout', 'help', 'exit']],
+  [
+    'Setup',
+    [
+      'model',
+      'mcp',
+      'usage',
+      'notify',
+      'slack',
+      'telegram',
+      'phone-merge',
+      'logout',
+      'help',
+      'exit',
+    ],
+  ],
 ];
 /** In the menu as you type, but not worth a row in /help. */
 const HELP_HIDDEN = new Set(['slack-disconnect', 'telegram-disconnect']);

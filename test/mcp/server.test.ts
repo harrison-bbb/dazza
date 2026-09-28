@@ -351,6 +351,32 @@ describe('MCP tools, called through a real client', () => {
     });
   });
 
+  it('won’t merge for a message from the phone when merging from there is off', async () => {
+    await project.store.writePlan(makePlan([makeTask({ id: 'T1', status: 'review' })]));
+    const before = process.env.DAZZA_CONFIG_DIR;
+    process.env.DAZZA_CONFIG_DIR = project.config.dir;
+    try {
+      await project.config.updateSettings({ phoneMerge: false });
+      const client = await connect();
+      const close = () =>
+        client.callTool({ name: 'set_status', arguments: { id: 'T1', status: 'closed' } });
+
+      await project.store.writeTurnOrigin('telegram');
+      const refused = await close();
+      expect(refused.isError).toBe(true);
+      expect(text(refused)).toContain('/accept T1');
+      expect((await project.store.readPlan())?.tasks[0]?.status).toBe('review');
+
+      // Typed at the computer, it merges.
+      await project.store.writeTurnOrigin(undefined);
+      expect((await close()).isError).toBeFalsy();
+      expect((await project.store.readPlan())?.tasks[0]?.status).toBe('closed');
+    } finally {
+      if (before === undefined) delete process.env.DAZZA_CONFIG_DIR;
+      else process.env.DAZZA_CONFIG_DIR = before;
+    }
+  });
+
   it('reports rule violations as tool errors', async () => {
     await project.store.writePlan(makePlan([makeTask({ id: 'T1' })]));
     const result = await (await connect()).callTool({

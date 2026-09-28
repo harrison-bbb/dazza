@@ -10,6 +10,7 @@ import { describeCodebase, inspectCodebase } from '../core/inspect.js';
 import { Manager } from '../core/manager.js';
 import { isComplete, recordMilestones } from '../core/milestones.js';
 import { answerPermission } from '../core/permissions.js';
+import { mergeAtTheComputer, phoneMayMerge } from '../core/phoneMerge.js';
 import { reportRequest } from '../core/report.js';
 import { StateError, Store } from '../core/store.js';
 import { newerDazza, updateNotice } from '../core/updates.js';
@@ -38,6 +39,12 @@ import { TelegramBridge } from '../telegram/bridge.js';
 import { debounce } from '../util/debounce.js';
 import { errorMessage } from '../util/text.js';
 import { fileMenu, listProjectFiles, pasteClipboardImage, pointedAt } from './attachments.js';
+import {
+  markRunning,
+  startInBackground,
+  stopInBackground,
+  waitInBackground,
+} from './background.js';
 import { BRAND, logo, sessionInfo } from './banner.js';
 import { type CommandContext, commandMenu, parseCommand, suggest } from './commands.js';
 import { greeting, NO_PLAN } from './describe.js';
@@ -60,6 +67,8 @@ const PLAN_SETTLE_MS = 300;
 export interface ChatOptions {
   /** Pick up the last conversation (`dazza --continue`), instead of starting a new one. */
   continue?: boolean;
+  /** Run as the background build a closed terminal handed over to (`/background on`). */
+  background?: boolean;
 }
 
 export async function startChat(projectRoot: string, options: ChatOptions = {}): Promise<void> {
@@ -86,7 +95,9 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
   const config = new Config();
   // Asked now, shown with the banner: it runs alongside the checks below.
   const update = newerDazza(config);
-  const connection = (await config.readConnection()) ?? (await firstConnect(terminal, config));
+  const connection =
+    (await config.readConnection()) ??
+    (options.background ? undefined : await firstConnect(terminal, config));
   if (!connection) {
     say('Not connected yet. Run `dazza` again whenever you’re ready.');
     return;
@@ -135,8 +146,13 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
   );
   const newer = await update;
   if (newer) console.log(paint.amber(updateNotice(newer)));
+  // Taking the build back from the background: stop it there first.
+  const tookOver = !options.background && (await stopInBackground(store));
   // A new conversation each time, as in Claude Code; --continue picks up the last one.
-  if (!options.continue) await store.newConversation();
+  // The background build keeps the conversation it was handed.
+  if (options.background) {
+    // (no new conversation)
+  } else if (!options.continue) await store.newConversation();
   else if (!(await store.readManagerSession(provider.id)))
     await store.continueConversation(provider.id);
   const hasConversation = (await store.readManagerSession(provider.id)) !== undefined;
@@ -216,7 +232,7 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
       case 'build':
         return stripAnsi(await startBuild(session, provider, config, store));
       case 'stop':
-        if (!session.isBuilding) return 'Not building right now.';
+        if (!session.isOnTheJob) return 'Not building right now.';
         await session.stopBuild();
         return 'Stopped the build. The current task picks up where it left off next time.';
     }
@@ -238,7 +254,10 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
   const handlersFor = (where: string): ChannelHandlers => ({
     onMessage: fromRemote,
     onCommand: remoteCommand,
-    onApprove: async (taskId) => fromPhone(where)(await closeTask(store, taskId)),
+    onApprove: async (taskId) =>
+      fromPhone(where)(
+        (await phoneMayMerge(config)) ? await closeTask(store, taskId) : mergeAtTheComputer(taskId),
+      ),
     onRequestChanges: async (taskId, note) =>
       fromPhone(where)(await requestChanges(store, taskId, note)),
     onPermission: async (taskId, allow) =>
@@ -407,6 +426,39 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
   const mentionMenu = fileMenu(() => files);
   // ↑ reaches what was typed in earlier sessions too, as in Claude Code.
   const history: string[] = await store.readHistory();
+
+  if (options.background) {
+    // The background build: no terminal, just the work, until there's a reason to stop.
+    const done = await markRunning(store);
+    await startBuild(session, provider, config, store);
+    const reason = await waitInBackground({
+      onTheJob: () => session.isOnTheJob,
+      allDone: async () => {
+        const plan = await store.readPlan();
+        return Boolean(plan?.tasks.every((t) => t.status === 'closed' || t.status === 'cancelled'));
+      },
+      lastActivity: async () =>
+        Date.parse((await store.readEvents()).at(-1)?.at ?? '') || Date.now(),
+    });
+    notify(info(`⏹ Stopped building in the background: ${reason}.`));
+    say(`Stopped building in the background: ${reason}.`);
+    await done();
+    exiting = true;
+  } else if (tookOver) {
+    say('Took the build back from the background. It carries on here; /stop stops it.');
+    await startBuild(session, provider, config, store);
+  }
+
+  // Closing the terminal window: leave as /exit would, handing the build to the
+  // background if that's switched on.
+  let hungUp = false;
+  const onHangup = () => {
+    hungUp = true;
+    exiting = true;
+    terminal.cancelRead();
+  };
+  process.once('SIGHUP', onHangup);
+
   while (!exiting) {
     const input = await terminal.readLine({
       prompt: PROMPT,
@@ -422,6 +474,7 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
       },
     });
     if (input === undefined) {
+      if (hungUp) break;
       // Piped input ran out: let queued work finish. In a terminal, Ctrl-C stops
       // whatever is running first, and only exits once nothing is.
       if (!terminal.interactive) await session.idle();
@@ -435,7 +488,6 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
       break;
     }
     const line = input.trim();
-    // Pastes expand to many lines; the one-line editor can't show those again.
     // Pastes expand to many lines; long ones aren't worth recalling whole.
     if (line && line.split('\n').length <= MAX_RECALLED_LINES && line !== history.at(-1)) {
       history.push(line);
@@ -470,11 +522,25 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
     }
   }
 
+  process.off('SIGHUP', onHangup);
+  // Leaving with work under way and /background on: hand it over rather than stop it.
+  const handOff =
+    !options.background &&
+    session.isOnTheJob &&
+    (await config.readSettings()).backgroundBuild === true;
   await session.stopBuild();
   await session.stopChat();
   unwatchFile(planFile);
   await closeChannels();
   board.close();
+  if (handOff) {
+    startInBackground(projectRoot, store, cliPath());
+    if (!hungUp) {
+      say(
+        'Still building, in the background. `dazza stop` (or "stop" from your phone) stops it; opening `dazza` here takes it back.',
+      );
+    }
+  }
 }
 
 /** /build: check the model can work on its own, then build in the background. */
@@ -506,7 +572,7 @@ async function startBuild(
     );
   }
   session.startBuild();
-  say(paint.dim('Building in the background. Keep talking to me while I work; /stop stops it.'));
+  say(paint.dim('Building. Keep talking to me while I work; /stop stops it.'));
   return 'Building. I’ll message you as tasks are ready.';
 }
 

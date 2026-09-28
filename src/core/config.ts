@@ -22,6 +22,14 @@ export const Settings = z.object({
    * (email, calendar, docs, trackers). Unset means on. Builders never get them.
    */
   userMcp: z.boolean().optional(),
+  /** Keep building after the terminal closes (`/background on`). Unset means off. */
+  backgroundBuild: z.boolean().optional(),
+  /**
+   * Approving work from Slack or Telegram merges it. Off (`/phone-merge off`)
+   * means it's merged only from the terminal or the board, so someone in the
+   * user's Slack or Telegram can't. Unset means on.
+   */
+  phoneMerge: z.boolean().optional(),
   /** The user chose not to connect Slack or Telegram during onboarding; don't ask again. */
   messagingSkipped: z.boolean().optional(),
 });

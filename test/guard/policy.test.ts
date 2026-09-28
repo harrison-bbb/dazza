@@ -112,6 +112,12 @@ describe('guard policy: files', () => {
     }
   });
 
+  it('keeps builders away from the board’s key', () => {
+    expect(tool('Read', '/work/project/.dazza/board-token')).toBe('never');
+    expect(run('cat ../project/.dazza/board-token')).toBe('never');
+    expect(tool('Read', '/work/project/.dazza/scope.md')).toBe('allow');
+  });
+
   it('never reads credentials, but reads the project freely', () => {
     expect(tool('Read', '/work/T3/.env')).toBe('allow');
     expect(tool('Read', '/home/sam/.ssh/id_ed25519')).toBe('never');
