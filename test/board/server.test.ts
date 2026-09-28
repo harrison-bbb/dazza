@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ProjectSnapshot } from '../../src/board/api.js';
 import { createBoardApp } from '../../src/board/server.js';
-import { makePlan, makeTask } from '../fixtures.js';
+import { makePlan, makeTask, SCOPE } from '../fixtures.js';
 import { useTempProject } from '../helpers.js';
 
 describe('board server', () => {
@@ -61,6 +61,50 @@ describe('board server', () => {
     expect((await post('/api/tasks/T1/permission', { allow: true })).status).toBe(200);
     expect((await project.store.readPermissions('T1')).allowed).toEqual(['brew install redis']);
     expect((await project.store.readPlan())?.tasks[0]?.status).toBe('planned');
+  });
+
+  it('saves the user’s edit to the scope, logs it once the plan is approved, and won’t overwrite a newer version', async () => {
+    await project.store.writePlan({
+      ...makePlan([makeTask({ id: 'T1' })]),
+      approvedAt: '2026-09-27T10:00:00Z',
+    });
+    await project.store.writeScope(SCOPE);
+    const snapshot = async () =>
+      (await (await app().request('http://localhost/api/project')).json()) as ProjectSnapshot;
+    const put = (body: unknown) =>
+      app().request('http://localhost/api/scope', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', 'x-dazza': '1' },
+        body: JSON.stringify(body),
+      });
+    const { scopeVersion } = await snapshot();
+
+    const thin = await put({ markdown: '## Overview\nJust this', base: scopeVersion });
+    expect(thin.status).toBe(409);
+    expect(JSON.stringify(await thin.json())).toContain('Keep every section');
+
+    const edited = SCOPE.replace('## Out of scope\nDetails.', '## Out of scope\nNo mobile app.');
+    const saved = await put({
+      markdown: edited,
+      base: scopeVersion,
+      summary: 'Ruled out a mobile app',
+    });
+    expect(saved.status).toBe(200);
+    const scope = (await project.store.readScope()) ?? '';
+    expect(scope).toContain('No mobile app.');
+    expect(scope).toMatch(
+      /## Change log\n\n- \*\*v2 · .*\*\*: Ruled out a mobile app\. Why: Edited by you on the board/,
+    );
+    expect((await project.store.readEvents()).at(-1)).toMatchObject({
+      type: 'scope_changed',
+      actor: 'user',
+    });
+
+    // Someone else's edit since this one was started: refused, not overwritten.
+    const stale = await put({ markdown: SCOPE, base: scopeVersion });
+    expect(stale.status).toBe(409);
+    expect(JSON.stringify(await stale.json())).toContain('changed while you were editing');
+    expect(await project.store.readScope()).toBe(scope);
   });
 
   it('approves the plan', async () => {

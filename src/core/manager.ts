@@ -150,5 +150,14 @@ export function describeState(
       ...comments.map((c) => `- ${c.taskId ?? 'general'} · ${c.actor} (${c.at}): ${c.message}`),
     );
   }
+  // The user's own edits to the scope: read it again before talking about it.
+  const edits = events.filter((e) => e.type === 'scope_changed' && e.actor === 'user').slice(-3);
+  if (edits.length > 0) {
+    lines.push(
+      '',
+      'The user edited the scope on the board (read .dazza/scope.md for the current version):',
+      ...edits.map((e) => `- ${e.at}: ${e.message}`),
+    );
+  }
   return lines.join('\n');
 }

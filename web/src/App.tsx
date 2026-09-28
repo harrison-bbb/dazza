@@ -32,11 +32,13 @@ export function App() {
   const found = route.view === 'item' && plan ? findItem(plan, route.id) : undefined;
 
   return (
-    <div className="flex h-dvh flex-col">
-      <TopBar crumbs={crumbs(name, route, found)} live={live} />
-      <main className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+    <div className="flex h-dvh flex-col print:h-auto">
+      <div className="print:hidden">
+        <TopBar crumbs={crumbs(name, route, found)} live={live} />
+      </div>
+      <main className="flex min-h-0 flex-1 flex-col overflow-y-auto print:overflow-visible">
         {route.view === 'doc' ? (
-          <DocView scope={project.scope} events={events} />
+          <DocView project={project} onChange={refresh} />
         ) : route.view === 'report' ? (
           <ReportView report={project.report} />
         ) : route.view === 'tasks' ? (

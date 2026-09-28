@@ -56,20 +56,20 @@ describe('build loop', () => {
 
     // T2 depends on T1, which is only in review, so T3 is built instead.
     expect(await statuses()).toEqual(['T1:review', 'T2:planned', 'T3:review']);
+    // T1 and T3 are independent, so they build side by side, in either order.
     expect(
       events
         .filter((e) => e.type === 'task_finished')
-        .map((e) => e.type === 'task_finished' && e.task.id),
+        .map((e) => e.type === 'task_finished' && e.task.id)
+        .sort(),
     ).toEqual(['T1', 'T3']);
     expect(events.at(-1)).toMatchObject({
       type: 'stopped',
       reason: expect.stringContaining('2 waiting for your review'),
       idle: true,
     });
-    expect(provider.runs[0]).toMatchObject({
-      autonomous: true,
-      cwd: project.store.worktreeDir('T1'),
-    });
+    const t1 = provider.runs.find((r) => currentTask(r) === 'T1');
+    expect(t1).toMatchObject({ autonomous: true, cwd: project.store.worktreeDir('T1') });
     expect(provider.runs[0]?.allowedTools).toContain('mcp__dazza__submit');
     expect(provider.runs[0]?.allowedTools).not.toContain('mcp__dazza__save_plan');
   });

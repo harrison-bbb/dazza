@@ -1,6 +1,6 @@
 import type { Notification } from './notification.js';
 
-export type ChannelId = 'telegram' | 'slack';
+export type ChannelId = 'telegram' | 'slack' | 'desktop';
 
 /**
  * A message that came in from a channel. `ref` is the channel's own note of

@@ -44,12 +44,13 @@ export function keepChangeLog(next: string, previous: string | undefined): strin
 
 /** The log's entries, newest first, as written. */
 export function changeLogEntries(scope: string | undefined): string[] {
-  const log = scope?.split(new RegExp(`^## ${CHANGE_LOG}\\s*$`, 'm'))[1];
+  const log = scope?.split(new RegExp(`^## ${CHANGE_LOG}[ \\t]*$`, 'm'))[1];
   return (log ?? '').split('\n').filter((line) => line.startsWith('- '));
 }
 
-function withoutChangeLog(scope: string): string {
-  return scope.split(new RegExp(`^## ${CHANGE_LOG}\\s*$`, 'm'))[0] ?? scope;
+/** The scope without its change log: the part people edit. */
+export function withoutChangeLog(scope: string): string {
+  return scope.split(new RegExp(`^## ${CHANGE_LOG}[ \\t]*$`, 'm'))[0] ?? scope;
 }
 
 /** The user's own date, e.g. "2026-09-28", not UTC's. */

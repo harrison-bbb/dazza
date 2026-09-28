@@ -68,6 +68,13 @@ describe('connect', () => {
     expect(said.some((s) => s.includes('wasn’t accepted'))).toBe(true);
   });
 
+  it('checks Claude Code is installed before asking for an Anthropic key', async () => {
+    const { ui, said } = scriptedUI(['Anthropic API key', 'sk-good']);
+    expect(await connect(ui, deps({ detect: async () => ({ installed: false }) }))).toBeUndefined();
+    expect(said.at(-1)).toContain('Claude Code, which isn’t installed yet');
+    expect(said.some((s) => s.includes('Paste an Anthropic API key'))).toBe(false);
+  });
+
   it('gives up after repeated bad keys', async () => {
     const { ui } = scriptedUI(['Anthropic API key', 'a', 'b', 'c']);
     expect(await connect(ui, deps())).toBeUndefined();

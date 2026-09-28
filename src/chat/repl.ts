@@ -19,6 +19,7 @@ import type {
   Remote,
   RemoteCommand,
 } from '../notify/channel.js';
+import { DesktopNotifier } from '../notify/desktop.js';
 import {
   info,
   milestoneNotification,
@@ -70,7 +71,10 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
   console.log(`\n${logo()}\n`);
   const config = new Config();
   const connection = (await config.readConnection()) ?? (await firstConnect(terminal, config));
-  if (!connection) return;
+  if (!connection) {
+    say('No problem. Run `dazza` again whenever you’re ready to connect.');
+    return;
+  }
 
   const provider = createProvider(connection);
   const status = await provider.detect();
@@ -235,6 +239,9 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
         ),
       );
     }
+    if ((await config.readSettings()).desktopNotifications !== false) {
+      channels.set('desktop', new DesktopNotifier(projectRoot));
+    }
     for (const channel of channels.values()) channel.start();
   };
   const closeChannels = async () => {
@@ -331,6 +338,10 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
         await closeChannels();
         await openChannels();
       }
+    },
+    reconnect: async () => {
+      await closeChannels();
+      await openChannels();
     },
     unlink: async (channel) => {
       await closeChannels();

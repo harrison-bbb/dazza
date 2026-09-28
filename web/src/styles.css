@@ -42,3 +42,27 @@
     @apply outline-1 outline-offset-2 outline-ink-2;
   }
 }
+
+/* Printing (or saving as PDF): ink on paper, the whole page, no chrome. */
+@media print {
+  :root {
+    --color-bg: #ffffff;
+    --color-panel: #ffffff;
+    --color-hover: #f3f3f3;
+    --color-line: #dddddd;
+    --color-line-strong: #bbbbbb;
+    --color-ink: #111111;
+    --color-ink-2: #333333;
+    --color-muted: #666666;
+    --color-faint: #999999;
+    --color-accent: #1f8a3b;
+  }
+  html {
+    color-scheme: light;
+  }
+  body,
+  main {
+    height: auto !important;
+    overflow: visible !important;
+  }
+}

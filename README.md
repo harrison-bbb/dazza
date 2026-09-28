@@ -97,10 +97,11 @@ Just type to talk to Dazza, about anything in the project. Type `/` for commands
 | Setup | |
 |---|---|
 | `/model`, `/usage` | Switch models; see your plan's limits or API spend |
+| `/notify on\|off` | Desktop notifications when a task needs you (on by default) |
 | `/slack`, `/telegram` | Connect (or check) Slack or Telegram. `-disconnect` to unlink |
 | `/logout`, `/help`, `/exit` | |
 
-The board runs at `http://localhost:4777` while Dazza is open. It has the dashboard, milestones, the scope and its change log, every task with its handoff and evidence, and comment threads shared with Dazza. `dazza board` opens it without starting a chat.
+The board runs at `http://localhost:4777` while Dazza is open. It has the dashboard and milestones, and every task with its handoff, evidence and a comment thread shared with Dazza. The **scope of work** reads like a proper project plan. It has the agreed scope, a deliverables table with every task's acceptance criteria and status (always in step with the tasks), and the change log. You can **edit it right there**: once the plan is approved, your edit goes in the change log as yours, and Dazza and the builder work from the new version. You can also download it as Markdown, or print it or save it as a PDF. `dazza board` opens the board without starting a chat.
 
 ## Safe to point at real work
 

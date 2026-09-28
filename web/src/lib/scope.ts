@@ -1,4 +1,6 @@
+import type { Plan, Task } from './api';
 import { slugify } from './format';
+import { STATUS_LABEL } from './status';
 
 export interface ScopeSection {
   title: string;
@@ -25,5 +27,51 @@ export function scopeSummary(markdown: string): string | undefined {
       ?.replace(/\s+/g, ' ')
       .match(/^.*?[.!?](\s|$)/)?.[0]
       .trim() ?? overview
+  );
+}
+
+const CHANGE_LOG = /^## Change log[ \t]*$/m;
+
+/** The scope's editable body, and the change log Dazza keeps after it. */
+export function splitChangeLog(markdown: string): { body: string; log: string | undefined } {
+  const [body = '', log] = markdown.split(CHANGE_LOG);
+  return { body: body.trimEnd(), log: log === undefined ? undefined : `## Change log${log}` };
+}
+
+/**
+ * The whole plan as one Markdown document, for exporting: the scope, then the
+ * deliverables and their acceptance criteria (from the tasks), then the change log.
+ */
+export function planDocument(project: string, scope: string, plan: Plan | null): string {
+  const { body, log } = splitChangeLog(scope);
+  const cell = (text: string) => text.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+  const table = (tasks: Task[]) => [
+    '| Task | Acceptance criteria | Status |',
+    '|---|---|---|',
+    ...tasks.map(
+      (t) =>
+        `| ${t.id} ${cell(t.title)}${t.size ? ` (${t.size})` : ''} | ${t.acceptanceCriteria.map((c) => `• ${cell(c)}`).join('<br>')} | ${STATUS_LABEL[t.status]} |`,
+    ),
+  ];
+  const deliverables = plan
+    ? [
+        '## Deliverables and acceptance criteria',
+        '',
+        ...(plan.milestones.length > 0
+          ? plan.milestones.flatMap((m) => [
+              `### ${m.id} ${m.title}`,
+              '',
+              m.goal,
+              '',
+              ...table(plan.tasks.filter((t) => m.tasks.includes(t.id))),
+              '',
+            ])
+          : table(plan.tasks)),
+      ]
+    : [];
+  return (
+    [`# ${project}: scope of work`, '', body, '', ...deliverables, '', log ?? '']
+      .join('\n')
+      .trim() + '\n'
   );
 }

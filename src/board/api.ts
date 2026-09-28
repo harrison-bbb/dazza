@@ -7,6 +7,8 @@ import type { Event, Plan } from '../core/schema.js';
 export interface ProjectSnapshot {
   name: string;
   scope: string | null;
+  /** Fingerprint of the scope as sent, so an edit can say what it was based on. */
+  scopeVersion: string;
   plan: Plan | null;
   events: Event[];
   /** The close-out or progress report, once Dazza has written one. */

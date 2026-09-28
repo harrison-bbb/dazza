@@ -34,6 +34,8 @@ export interface CommandContext {
   link(channel: ChannelId): Promise<void>;
   /** Forget the Slack app or Telegram bot. */
   unlink(channel: ChannelId): Promise<void>;
+  /** Reopen notification channels after a settings change. */
+  reconnect(): Promise<void>;
   /** Print Dazza's reply. */
   say(text: string): void;
   /** End the chat after this command. */
@@ -120,6 +122,24 @@ export const COMMANDS: Command[] = [
       say(
         `${paint.green('✔')} Switched to ${paint.bold(choice.name)}. Dazza uses it from your next message.`,
       );
+    },
+  },
+  {
+    name: 'notify',
+    args: '[on|off]',
+    description: 'Desktop notifications when a task needs you',
+    async run({ config, say, reconnect }, args) {
+      const choice = args.trim().toLowerCase();
+      if (choice !== 'on' && choice !== 'off') {
+        const on = (await config.readSettings()).desktopNotifications !== false;
+        say(
+          `Desktop notifications are ${on ? 'on' : 'off'}. ${paint.dim(`/notify ${on ? 'off' : 'on'} to turn them ${on ? 'off' : 'on'}.`)}`,
+        );
+        return;
+      }
+      await config.updateSettings({ desktopNotifications: choice === 'on' });
+      await reconnect();
+      say(`${paint.green('✔')} Desktop notifications ${choice}.`);
     },
   },
   {

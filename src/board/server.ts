@@ -12,9 +12,11 @@ import {
   approvePlan,
   cancelTask,
   closeTask,
+  editScope,
   prioritise,
   REQUESTABLE_STATUSES,
   requestChanges,
+  scopeVersion,
   setStatus,
 } from '../core/actions.js';
 import { humanDuration, minutesLeft } from '../core/estimates.js';
@@ -31,6 +33,11 @@ const WATCHED_FILES = ['tasks.json', 'scope.md', 'events.jsonl', 'permissions.js
 
 const CommentBody = z.object({ body: z.string() });
 const PermissionBody = z.object({ allow: z.boolean() });
+const ScopeBody = z.object({
+  markdown: z.string().min(1),
+  base: z.string(),
+  summary: z.string().optional(),
+});
 const StatusBody = z.object({ status: z.enum(REQUESTABLE_STATUSES), note: z.string().optional() });
 
 export function createBoardApp(store: Store, projectRoot: string, webRoot: string): Hono {
@@ -51,6 +58,7 @@ export function createBoardApp(store: Store, projectRoot: string, webRoot: strin
     c.json<ProjectSnapshot>({
       name: basename(projectRoot),
       scope: (await store.readScope()) ?? null,
+      scopeVersion: scopeVersion(await store.readScope()),
       plan: (await store.readPlan()) ?? null,
       events: await store.readEvents(),
       permissions: await store.readPendingPermissions(),
@@ -85,6 +93,15 @@ export function createBoardApp(store: Store, projectRoot: string, webRoot: strin
     const parsed = StatusBody.safeParse(await c.req.json().catch(() => undefined));
     if (!parsed.success) return c.json({ ok: false, message: 'Expected { status, note? }' }, 400);
     const result = await setStatus(store, c.req.param('id'), parsed.data.status, parsed.data.note);
+    return c.json(result, result.ok ? 200 : 409);
+  });
+
+  app.put('/api/scope', async (c) => {
+    const parsed = ScopeBody.safeParse(await c.req.json().catch(() => undefined));
+    if (!parsed.success)
+      return c.json({ ok: false, message: 'Expected { markdown, base, summary? }' }, 400);
+    const { markdown, base, summary } = parsed.data;
+    const result = await editScope(store, markdown, { base, ...(summary && { summary }) });
     return c.json(result, result.ok ? 200 : 409);
   });
 

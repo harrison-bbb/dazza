@@ -22,13 +22,26 @@ export const buildNext = (id: string) => post(`${task(id)}/next`);
 export const answerPermission = (id: string, allow: boolean) =>
   post(`${task(id)}/permission`, { allow });
 
+export const saveScope = (markdown: string, base: string, summary?: string) =>
+  send('PUT', '/api/scope', { markdown, base, ...(summary && { summary }) });
+
 const task = (id: string) => `/api/tasks/${encodeURIComponent(id)}`;
 
-async function post(path: string, body?: unknown): Promise<ActionResponse> {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', [CSRF_HEADER]: '1' },
-    ...(body !== undefined && { body: JSON.stringify(body) }),
-  });
-  return res.json() as Promise<ActionResponse>;
+function post(path: string, body?: unknown): Promise<ActionResponse> {
+  return send('POST', path, body);
+}
+
+/** Never throws: a failure comes back as a message to show, so buttons never get stuck. */
+async function send(method: string, path: string, body?: unknown): Promise<ActionResponse> {
+  try {
+    const res = await fetch(path, {
+      method,
+      headers: { 'content-type': 'application/json', [CSRF_HEADER]: '1' },
+      ...(body !== undefined && { body: JSON.stringify(body) }),
+    });
+    const json = (await res.json().catch(() => undefined)) as ActionResponse | undefined;
+    return json ?? { ok: false, message: `Dazza couldn’t do that (${res.status}).` };
+  } catch {
+    return { ok: false, message: 'Can’t reach Dazza. Is it still running in your terminal?' };
+  }
 }

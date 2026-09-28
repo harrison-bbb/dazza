@@ -102,9 +102,11 @@ async function connectApiKey(
   provider: ProviderId,
 ): Promise<Connection | undefined> {
   const source = KEY_SOURCES[provider];
-  if (provider === 'codex' && !(await deps.detect('codex')).installed) {
+  // The key is for the agent CLI, so check it's there before asking for one.
+  if (!(await deps.detect(provider)).installed) {
+    const name = provider === 'codex' ? 'Codex' : 'Claude Code';
     ui.say(
-      `Dazza drives Codex, which isn’t installed yet. Install it (${PROVIDER_HELP.codex.install}), then run dazza again.`,
+      `Dazza drives ${name}, which isn’t installed yet. Install it (${PROVIDER_HELP[provider].install}), then run dazza again.`,
     );
     return undefined;
   }

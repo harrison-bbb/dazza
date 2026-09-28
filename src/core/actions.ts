@@ -1,7 +1,10 @@
+import { createHash } from 'node:crypto';
 import { Git } from '../git/git.js';
 import { recordMilestones } from './milestones.js';
 import { approve, findItem, moveTask, waitingOn, withStatus } from './plan.js';
+import { missingSections } from './review.js';
 import type { Actor, Plan } from './schema.js';
+import { keepChangeLog, withChangeLog } from './scope.js';
 import type { Store } from './store.js';
 import { landApprovedWork } from './work.js';
 
@@ -275,4 +278,53 @@ function log(
 
 function fail(message: string): ActionResult {
   return { ok: false, message };
+}
+
+/**
+ * The user's own edit to the scope, from the board. Once the plan is approved
+ * that's a change to what was agreed, so it goes in the change log as theirs.
+ * `base` is the version they started editing, so an edit made meanwhile (by
+ * Dazza, say) isn't silently overwritten.
+ */
+export async function editScope(
+  store: Store,
+  markdown: string,
+  { summary = '', base }: { summary?: string; base?: string } = {},
+  now = new Date(),
+): Promise<ActionResult> {
+  const current = await store.readScope();
+  if (base !== undefined && base !== scopeVersion(current)) {
+    return fail(
+      'The scope changed while you were editing. Copy your changes, reload, and apply them again.',
+    );
+  }
+  const missing = missingSections(markdown);
+  if (missing.length > 0)
+    return fail(`Keep every section: ${missing.map((s) => `## ${s}`).join(', ')} is missing.`);
+  const plan = await store.readPlan();
+  const what = summary.trim() || 'Edited the scope';
+  await store.writeScope(
+    plan?.approvedAt
+      ? withChangeLog(
+          markdown,
+          current,
+          { summary: what, why: 'Edited by you on the board', tasks: [] },
+          now,
+        )
+      : keepChangeLog(markdown, current),
+  );
+  await log(store, now, {
+    type: 'scope_changed',
+    actor: 'user',
+    message: `You edited the scope: ${what}`,
+  });
+  return { ok: true, message: plan?.approvedAt ? 'Saved, and added to the change log.' : 'Saved.' };
+}
+
+/** A short fingerprint of the scope's text, to notice edits made meanwhile. */
+export function scopeVersion(scope: string | undefined): string {
+  return createHash('sha256')
+    .update(scope ?? '')
+    .digest('hex')
+    .slice(0, 16);
 }

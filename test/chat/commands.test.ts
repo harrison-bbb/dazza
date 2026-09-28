@@ -116,6 +116,7 @@ describe('running commands', () => {
       startBuild: async () => {},
       requestReport: async () => {},
       stopBuild: async () => {},
+      reconnect: async () => {},
       confirm: async () => confirmAnswer,
       status: () => {},
       link: async (channel) => {
