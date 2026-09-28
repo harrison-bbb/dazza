@@ -1,5 +1,6 @@
 import { Check, ChevronRight, FileText, Flag, ListTodo } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
+import { LiveActivity } from '../components/LiveActivity';
 import { StatusIcon } from '../components/StatusIcon';
 import { Button, Heading, Id, InlineText } from '../components/ui';
 import { approvePlan, type Event, type Plan, type ProjectSnapshot, type Task } from '../lib/api';
@@ -19,10 +20,11 @@ export function Dashboard({ project, onChange }: { project: ProjectSnapshot; onC
   const tasks = plan?.tasks ?? [];
   const inScope = tasks.filter((t) => t.status !== 'cancelled');
   const closed = inScope.filter((t) => t.status === 'closed').length;
-  const building = tasks.find((t) => t.status === 'building');
+  // Tasks can build side by side.
+  const building = tasks.filter((t) => t.status === 'building');
   const review = tasks.filter((t) => t.status === 'review');
   const blocked = tasks.filter((t) => t.status === 'blocked');
-  const next = plan && !building ? nextUp(plan) : undefined;
+  const next = plan && building.length === 0 ? nextUp(plan) : undefined;
 
   return (
     <div className="mx-auto w-full max-w-2xl px-5 py-14">
@@ -80,8 +82,8 @@ export function Dashboard({ project, onChange }: { project: ProjectSnapshot; onC
 
       {plan?.approvedAt && (
         <Section title="Now">
-          {building ? (
-            <NowRow task={building} events={events} />
+          {building.length > 0 ? (
+            building.map((task) => <NowRow key={task.id} task={task} events={events} />)
           ) : (
             <p className="py-3 text-[13px] text-muted">
               Dazza is idle.{' '}
@@ -222,6 +224,9 @@ function NowRow({ task, events }: { task: Task; events: Event[] }) {
           <span className="text-faint">· {timeAgo(update.at)}</span>
         </span>
       )}
+      <span className="mt-2 block pl-[26px]">
+        <LiveActivity taskId={task.id} live limit={6} compact />
+      </span>
     </a>
   );
 }

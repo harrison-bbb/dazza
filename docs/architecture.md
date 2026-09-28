@@ -128,6 +128,10 @@ Tasks are listed in priority order: the builder takes the first one whose depend
 
 **Project notes.** A handoff can carry notes for later builders: conventions set, where things live, commands, gotchas. They collect in `.dazza/notes.md`, and each task's brief includes the latest.
 
+**Live activity.** As each builder works, the chat records plain-English steps (what it said, files it wrote, commands it ran, subtasks it finished) per task in `.dazza/activity/<id>.jsonl` (`src/core/activity.ts`). The board polls them while a task builds, and keeps them as the task's build log.
+
+**Undoing.** Every scope version is kept in `.dazza/scope-history/`; restoring one writes it as a new version and logs it. `redoTask` in `work.ts` throws a task's work away (worktree, branch, build record, handoff) and queues it again from scratch.
+
 **Handoff checks.** Before the commit, `src/core/hygiene.ts` checks the changes like a reviewer: secrets, files that belong only on the developer's machine, very large files. The worker must fix them and submit again. The handoff also reports on every acceptance criterion, with evidence, and Dazza refuses one that skips any.
 
 ## Resilience

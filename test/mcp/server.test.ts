@@ -121,6 +121,7 @@ describe('MCP tools, called through a real client', () => {
       'approve_plan',
       'comment',
       'prioritise',
+      'redo_task',
       'save_plan',
       'screenshot',
       'set_status',

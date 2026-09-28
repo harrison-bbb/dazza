@@ -29,11 +29,13 @@ import { changeLogEntries, keepChangeLog, withChangeLog } from '../core/scope.js
 import { Store } from '../core/store.js';
 import {
   blockTask,
+  redoTask,
   setSubtaskStatus,
   submitTask,
   takeNewMessages,
   WorkReport,
 } from '../core/work.js';
+import { Git } from '../git/git.js';
 import { judge } from '../guard/policy.js';
 import { ScreenshotRequest, Screenshots } from '../preview/screenshots.js';
 
@@ -56,6 +58,7 @@ export const McpTools = {
   approvePlan: tool('approve_plan'),
   prioritise: tool('prioritise'),
   writeReport: tool('write_report'),
+  redoTask: tool('redo_task'),
   answerPermission: tool('answer_permission'),
   screenshot: tool('screenshot'),
 } as const;
@@ -73,6 +76,7 @@ export const MANAGER_TOOLS = [
   McpTools.approvePlan,
   McpTools.prioritise,
   McpTools.writeReport,
+  McpTools.redoTask,
   McpTools.screenshot,
 ];
 
@@ -328,6 +332,20 @@ function registerManagerTools(server: McpServer, store: Store): void {
       },
     },
     async ({ id, status, note }) => toResult(await setStatus(store, id, status, note)),
+  );
+
+  server.registerTool(
+    'redo_task',
+    {
+      description:
+        "Throw away a task's work (its worktree, branch and handoff) and queue it to be built again from scratch. " +
+        'Only after the user said yes to losing that work. For work that just needs fixing, send it back with set_status instead.',
+      inputSchema: {
+        id: z.string(),
+        note: z.string().optional().describe('What to do differently this time, from the user.'),
+      },
+    },
+    async ({ id, note }) => toResult(await redoTask(store, new Git(store.root), id, note)),
   );
 
   server.registerTool(

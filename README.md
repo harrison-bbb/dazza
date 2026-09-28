@@ -85,6 +85,7 @@ Just type to talk to Dazza, about anything in the project. Type `/` for commands
 | `/try T3` | Where to run T3's work before approving it |
 | `/diff T3` | What T3 changed, file by file |
 | `/allow T3`, `/deny T3` | Answer T3's request to run a command that needs your OK |
+| `/redo T3 [note]` | Throw away T3's work and build it again from scratch (asks first) |
 | `/cancel T5` | Drop a task (asks you to confirm first) |
 
 | The project | |
@@ -101,7 +102,7 @@ Just type to talk to Dazza, about anything in the project. Type `/` for commands
 | `/slack`, `/telegram` | Connect (or check) Slack or Telegram. `-disconnect` to unlink |
 | `/logout`, `/help`, `/exit` | |
 
-The board runs at `http://localhost:4777` while Dazza is open. It has the dashboard and milestones, and every task with its handoff, evidence and a comment thread shared with Dazza. The **scope of work** reads like a proper project plan. It has the agreed scope, a deliverables table with every task's acceptance criteria and status (always in step with the tasks), and the change log. You can **edit it right there**: once the plan is approved, your edit goes in the change log as yours, and Dazza and the builder work from the new version. You can also download it as Markdown, or print it or save it as a PDF. `dazza board` opens the board without starting a chat.
+The board runs at `http://localhost:4777` while Dazza is open. You can **watch builds live**: the dashboard and each task page show what the builder is doing right now (what it's thinking, the files it touches, the commands it runs), and afterwards the task's build log shows how it was built. The board has the dashboard and milestones, and every task with its handoff, evidence and a comment thread shared with Dazza. The **scope of work** reads like a proper project plan. It has the agreed scope, a deliverables table with every task's acceptance criteria and status (always in step with the tasks), and the change log. You can **edit it right there**: once the plan is approved, your edit goes in the change log as yours, and Dazza and the builder work from the new version. Every version of the scope is kept: view any earlier one and restore it. Restoring adds a version, so nothing is lost. You can also download the scope as Markdown, or print it or save it as a PDF. Tasks can be edited on the board too (title, size, description, criteria). `dazza board` opens the board without starting a chat.
 
 ## Safe to point at real work
 
@@ -112,6 +113,13 @@ Dazza's builder works like a careful engineer on someone else's systems. On Clau
 - **Just works:** everything else inside the task's worktree.
 
 Before any handoff is committed, Dazza checks it the way a reviewer would: no secrets (live keys, private keys, tokens), no `.env` files, logs or `node_modules`, and nothing enormous. Background processes the builder started (say, a dev server) are stopped when its run ends. Everything the guard stops is logged on the task. [docs/security.md](docs/security.md) has the full rules, and their limits.
+
+## When Dazza gets it wrong
+
+- **Send it back** with what to change (`/changes T3 <note>`): the builder fixes it on the same branch.
+- **Start it over** when it's not worth fixing (`/redo T3 <what to do differently>`, or **Start over** on the board): the work is thrown away and the task is built again from scratch.
+- **Restore an earlier scope** on the board if an edit went the wrong way.
+- Nothing merges until you approve it, so a bad attempt never reaches your branch.
 
 ## Plans change
 

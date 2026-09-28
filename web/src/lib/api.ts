@@ -18,9 +18,52 @@ export const addComment = (id: string, body: string) => post(`${task(id)}/commen
 export const setStatus = (id: string, status: 'backlog' | 'planned', note?: string) =>
   post(`${task(id)}/status`, { status, ...(note && { note }) });
 
+export interface Activity {
+  at: string;
+  taskId: string;
+  kind: 'say' | 'do' | 'status';
+  text: string;
+}
+
+export async function fetchActivity(taskId: string, limit = 200): Promise<Activity[]> {
+  try {
+    const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/activity?limit=${limit}`);
+    return res.ok ? ((await res.json()) as Activity[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export interface TaskEdits {
+  title?: string;
+  description?: string;
+  acceptanceCriteria?: string[];
+  size?: 'S' | 'M' | 'L';
+}
+export const editTask = (id: string, changes: TaskEdits) => send('PATCH', task(id), changes);
+export const redoTask = (id: string, note: string) => post(`${task(id)}/redo`, { note });
 export const buildNext = (id: string) => post(`${task(id)}/next`);
 export const answerPermission = (id: string, allow: boolean) =>
   post(`${task(id)}/permission`, { allow });
+
+export interface ScopeVersion {
+  id: string;
+  at: string;
+  label: string;
+}
+
+export async function fetchScopeVersions(): Promise<ScopeVersion[]> {
+  const res = await fetch('/api/scope/versions');
+  return res.ok ? ((await res.json()) as ScopeVersion[]) : [];
+}
+
+export async function fetchScopeVersion(id: string): Promise<string | undefined> {
+  const res = await fetch(`/api/scope/versions/${encodeURIComponent(id)}`);
+  return res.ok ? ((await res.json()) as { markdown: string }).markdown : undefined;
+}
+
+export const restoreScopeVersion = (id: string) =>
+  post(`/api/scope/versions/${encodeURIComponent(id)}/restore`);
 
 export const saveScope = (markdown: string, base: string, summary?: string) =>
   send('PUT', '/api/scope', { markdown, base, ...(summary && { summary }) });

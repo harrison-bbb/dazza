@@ -1,5 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { access, appendFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  appendFile,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { z } from 'zod';
@@ -13,6 +22,16 @@ const MANAGER_SESSION_FILE = 'session.json';
 const USAGE_FILE = 'usage.json';
 const BUILD_FILE = 'build.json';
 const PERMISSIONS_FILE = 'permissions.json';
+/** What each builder did, a file per task. */
+const ACTIVITY = 'activity';
+const ActivityLine = z.object({
+  at: z.string(),
+  taskId: z.string(),
+  kind: z.enum(['say', 'do', 'status']),
+  text: z.string(),
+});
+/** Every version of the scope, by when it was saved. */
+const SCOPE_HISTORY = 'scope-history';
 const LOCAL_FILES = [
   MANAGER_SESSION_FILE,
   USAGE_FILE,
@@ -123,8 +142,26 @@ export class Store {
     return this.readOptional('scope.md');
   }
 
-  async writeScope(markdown: string): Promise<void> {
+  /** Save the scope. Every version is kept too, so any can be looked at or restored. */
+  async writeScope(markdown: string, now = new Date()): Promise<void> {
     await this.writeAtomic('scope.md', markdown);
+    await mkdir(this.path(SCOPE_HISTORY), { recursive: true });
+    await writeFile(this.path(`${SCOPE_HISTORY}/${now.getTime()}.md`), markdown, 'utf8');
+  }
+
+  /** Every saved version of the scope, oldest first. */
+  async scopeVersions(): Promise<{ id: string; at: string }[]> {
+    const files = await readdir(this.path(SCOPE_HISTORY)).catch(() => [] as string[]);
+    return files
+      .filter((f) => /^\d+\.md$/.test(f))
+      .map((f) => Number(f.slice(0, -3)))
+      .sort((a, b) => a - b)
+      .map((time) => ({ id: String(time), at: new Date(time).toISOString() }));
+  }
+
+  async readScopeVersion(id: string): Promise<string | undefined> {
+    if (!/^\d+$/.test(id)) return undefined;
+    return this.readOptional(`${SCOPE_HISTORY}/${id}.md`);
   }
 
   /**
@@ -257,6 +294,42 @@ export class Store {
       const all = parsed.success ? parsed.data : {};
       const next = { ...all, [taskId]: change(all[taskId] ?? { allowed: [] }) };
       await this.writeAtomic(PERMISSIONS_FILE, `${JSON.stringify(next, null, 2)}\n`);
+    });
+  }
+
+  async appendActivity(entry: {
+    at: string;
+    taskId: string;
+    kind: string;
+    text: string;
+  }): Promise<void> {
+    await mkdir(this.path(ACTIVITY), { recursive: true });
+    await appendFile(this.path(`${ACTIVITY}/${entry.taskId}.jsonl`), `${JSON.stringify(entry)}\n`);
+  }
+
+  /** A task's latest activity, oldest first. */
+  async readActivity(
+    taskId: string,
+    limit = 200,
+  ): Promise<{ at: string; taskId: string; kind: 'say' | 'do' | 'status'; text: string }[]> {
+    if (!/^T\d+$/.test(taskId)) return [];
+    const raw = (await this.readOptional(`${ACTIVITY}/${taskId}.jsonl`)) ?? '';
+    return raw
+      .split('\n')
+      .slice(-limit - 1)
+      .flatMap((line) => {
+        const parsed = ActivityLine.safeParse(safeJson(line));
+        return parsed.success ? [parsed.data] : [];
+      })
+      .slice(-limit);
+  }
+
+  /** Forget a task's build: it starts from scratch next time. */
+  async removeTaskBuild(taskId: string): Promise<void> {
+    await this.init();
+    await withLock(this.path('build.lock'), async () => {
+      const { [taskId]: _, ...rest } = await this.readTaskBuilds();
+      await this.writeAtomic(BUILD_FILE, `${JSON.stringify(rest, null, 2)}\n`);
     });
   }
 

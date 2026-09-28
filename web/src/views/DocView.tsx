@@ -1,9 +1,27 @@
-import { ArrowLeft, ChevronDown, Download, Pencil, Printer } from 'lucide-react';
+import {
+  ArrowLeft,
+  ChevronDown,
+  Download,
+  History as HistoryIcon,
+  Pencil,
+  Printer,
+  RotateCcw,
+} from 'lucide-react';
 import { type KeyboardEvent, type ReactNode, useState } from 'react';
 import { Markdown } from '../components/Markdown';
 import { StatusIcon } from '../components/StatusIcon';
 import { Button, Id, InlineText } from '../components/ui';
-import { type Event, type Plan, type ProjectSnapshot, saveScope, type Task } from '../lib/api';
+import {
+  type Event,
+  fetchScopeVersion,
+  fetchScopeVersions,
+  type Plan,
+  type ProjectSnapshot,
+  restoreScopeVersion,
+  type ScopeVersion,
+  saveScope,
+  type Task,
+} from '../lib/api';
 import { cn, timeAgo } from '../lib/format';
 import { paths } from '../lib/router';
 import { planDocument, splitChangeLog } from '../lib/scope';
@@ -24,6 +42,8 @@ const REVISION_TYPES: Event['type'][] = [
 export function DocView({ project, onChange }: { project: ProjectSnapshot; onChange(): void }) {
   const { scope, plan, events } = project;
   const [editing, setEditing] = useState(false);
+  /** An earlier version the user is looking at, instead of the current one. */
+  const [viewing, setViewing] = useState<{ version: ScopeVersion; markdown: string }>();
   const history = events.filter((e) => REVISION_TYPES.includes(e.type)).reverse();
   const { body, log } = splitChangeLog(scope ?? '');
 
@@ -53,10 +73,28 @@ export function DocView({ project, onChange }: { project: ProjectSnapshot; onCha
           </div>
         )}
       </div>
-      {history.length > 0 && !editing && <History events={history} />}
+      {history.length > 0 && !editing && !viewing && <History events={history} />}
+      {!editing && !viewing && scope && (
+        <Versions
+          onView={async (version) => {
+            const markdown = await fetchScopeVersion(version.id);
+            if (markdown !== undefined) setViewing({ version, markdown });
+          }}
+        />
+      )}
 
       {!scope ? (
         <p className="mt-10 text-muted">Dazza hasn’t written the scope yet.</p>
+      ) : viewing ? (
+        <OldVersion
+          version={viewing.version}
+          markdown={viewing.markdown}
+          onClose={() => setViewing(undefined)}
+          onRestored={() => {
+            setViewing(undefined);
+            onChange();
+          }}
+        />
       ) : editing ? (
         <Editor
           body={body}
@@ -81,6 +119,115 @@ export function DocView({ project, onChange }: { project: ProjectSnapshot; onCha
         </>
       )}
     </article>
+  );
+}
+
+/** Every saved version of the scope, newest first, each one viewable. */
+function Versions({ onView }: { onView(version: ScopeVersion): void }) {
+  const [open, setOpen] = useState(false);
+  const [versions, setVersions] = useState<ScopeVersion[]>();
+  const toggle = async () => {
+    if (!open && !versions) setVersions((await fetchScopeVersions()).reverse());
+    setOpen(!open);
+  };
+  return (
+    <div className="mt-1 text-[13px] text-muted print:hidden">
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        className="inline-flex items-center gap-1 hover:text-ink"
+      >
+        <HistoryIcon className="size-3.5" />
+        Earlier versions
+        <ChevronDown className={cn('size-3.5 transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && versions && (
+        <ol className="mt-3 space-y-1.5 border-l border-line pl-4">
+          {versions.length === 0 && <li>No earlier versions saved yet.</li>}
+          {versions.map((version, i) => (
+            <li key={version.id} className="flex items-baseline gap-2">
+              <span className="min-w-0 flex-1 truncate text-ink-2">
+                {version.label}
+                {i === 0 && <span className="text-faint"> · current</span>}
+              </span>
+              <span className="text-faint">{timeAgo(version.at)}</span>
+              {i > 0 && (
+                <button
+                  type="button"
+                  onClick={() => onView(version)}
+                  className="text-ink-2 underline decoration-faint underline-offset-2 hover:text-ink"
+                >
+                  View
+                </button>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+/** An earlier version, read-only, with the option to bring it back. */
+function OldVersion({
+  version,
+  markdown,
+  onClose,
+  onRestored,
+}: {
+  version: ScopeVersion;
+  markdown: string;
+  onClose(): void;
+  onRestored(): void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string>();
+  const restore = async () => {
+    const result = await restoreScopeVersion(version.id);
+    if (result.ok) onRestored();
+    else setError(result.message);
+  };
+  return (
+    <div className="mt-8">
+      <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 rounded-lg border border-line-strong bg-panel px-4 py-3 text-[13px]">
+        <span className="min-w-0 flex-1 text-ink-2">
+          Viewing an earlier version: <span className="text-ink">{version.label}</span> ·{' '}
+          {timeAgo(version.at)}
+        </span>
+        {confirming ? (
+          <>
+            <span className="text-muted">Make this the current scope?</span>
+            <Button variant="primary" onClick={restore}>
+              Restore it
+            </Button>
+            <Button variant="quiet" onClick={() => setConfirming(false)}>
+              No
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button onClick={() => setConfirming(true)}>
+              <RotateCcw className="size-3.5" />
+              Restore this version
+            </Button>
+            <Button variant="quiet" onClick={onClose}>
+              Back to current
+            </Button>
+          </>
+        )}
+        {error && <p className="w-full text-red">{error}</p>}
+        {confirming && (
+          <p className="w-full text-[12px] text-muted">
+            The current version stays in the history, and the change log records the restore. The
+            tasks don’t change; Dazza will offer to bring them in line.
+          </p>
+        )}
+      </div>
+      <div className="mt-8 opacity-90">
+        <Markdown>{splitChangeLog(markdown).body}</Markdown>
+      </div>
+    </div>
   );
 }
 

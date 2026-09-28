@@ -16,13 +16,18 @@ import {
   prioritise,
   REQUESTABLE_STATUSES,
   requestChanges,
+  restoreScope,
   scopeVersion,
   setStatus,
 } from '../core/actions.js';
+import { editTask, TaskChanges } from '../core/edits.js';
 import { humanDuration, minutesLeft } from '../core/estimates.js';
 import { answerPermission } from '../core/permissions.js';
 import { MediaPath } from '../core/schema.js';
+import { changeLogEntries } from '../core/scope.js';
 import type { Store } from '../core/store.js';
+import { redoTask } from '../core/work.js';
+import { Git } from '../git/git.js';
 import { CSRF_HEADER, type ProjectSnapshot } from './api.js';
 
 export const DEFAULT_PORT = 4777;
@@ -96,12 +101,71 @@ export function createBoardApp(store: Store, projectRoot: string, webRoot: strin
     return c.json(result, result.ok ? 200 : 409);
   });
 
+  app.get('/api/scope/versions', async (c) => {
+    const versions = await store.scopeVersions();
+    return c.json(
+      await Promise.all(
+        versions.map(async (v) => ({
+          ...v,
+          label: versionLabel(await store.readScopeVersion(v.id)),
+        })),
+      ),
+    );
+  });
+
+  app.get('/api/scope/versions/:id', async (c) => {
+    const markdown = await store.readScopeVersion(c.req.param('id'));
+    return markdown === undefined ? c.notFound() : c.json({ markdown });
+  });
+
+  app.post('/api/scope/versions/:id/restore', async (c) => {
+    const result = await restoreScope(store, c.req.param('id'));
+    return c.json(result, result.ok ? 200 : 404);
+  });
+
   app.put('/api/scope', async (c) => {
     const parsed = ScopeBody.safeParse(await c.req.json().catch(() => undefined));
     if (!parsed.success)
       return c.json({ ok: false, message: 'Expected { markdown, base, summary? }' }, 400);
     const { markdown, base, summary } = parsed.data;
     const result = await editScope(store, markdown, { base, ...(summary && { summary }) });
+    return c.json(result, result.ok ? 200 : 409);
+  });
+
+  // What a task's builder has been doing, newest last. Polled while it builds.
+  app.get('/api/tasks/:id/activity', async (c) => {
+    const limit = Math.min(500, Math.max(1, Number(c.req.query('limit') ?? 200) || 200));
+    return c.json(await store.readActivity(c.req.param('id'), limit));
+  });
+
+  app.patch('/api/tasks/:id', async (c) => {
+    const parsed = TaskChanges.safeParse(await c.req.json().catch(() => undefined));
+    if (!parsed.success) return c.json({ ok: false, message: 'Those changes aren’t valid.' }, 400);
+    const id = c.req.param('id');
+    const task = (await store.readPlan())?.tasks.find((t) => t.id === id);
+    if (task?.status === 'building') {
+      return c.json(
+        {
+          ok: false,
+          message: `${id} is being built. Leave a comment for the build instead, or /stop first.`,
+        },
+        409,
+      );
+    }
+    if (task?.status === 'closed' || task?.status === 'cancelled') {
+      return c.json(
+        { ok: false, message: `${id} is ${task.status}, so there’s nothing to change.` },
+        409,
+      );
+    }
+    const result = await editTask(store, id, parsed.data);
+    return c.json(result, result.ok ? 200 : 409);
+  });
+
+  app.post('/api/tasks/:id/redo', async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { note?: unknown };
+    const note = typeof body.note === 'string' ? body.note : '';
+    const result = await redoTask(store, new Git(store.root), c.req.param('id'), note);
     return c.json(result, result.ok ? 200 : 409);
   });
 
@@ -211,6 +275,14 @@ function isAddressInUse(error: unknown): boolean {
 async function readBody(request: Request): Promise<string | undefined> {
   const parsed = CommentBody.safeParse(await request.json().catch(() => undefined));
   return parsed.success ? parsed.data.body : undefined;
+}
+
+/** What a version was: its newest change-log entry, or the first plan. */
+function versionLabel(markdown: string | undefined): string {
+  const latest = changeLogEntries(markdown)[0];
+  return latest
+    ? latest.replace(/^- \*\*(v\d+) · [^*]+\*\*: /, '$1: ').replace(/\. Why:.*$/, '')
+    : 'v1: The first plan';
 }
 
 async function buildLeft(store: Store): Promise<string | null> {

@@ -52,7 +52,7 @@ if (args[0] === '--version') {
   const prompt = readFileSync(0, 'utf8');
   if (prompt === 'BADKEY') {
     // Retries forever on a rejected key, as the real CLI would for a while.
-    process.stdout.write(fixture('unauthorized.jsonl').split('\n').slice(0, 4).join('\n') + '\n');
+    process.stdout.write(`${fixture('unauthorized.jsonl').split('\n').slice(0, 4).join('\n')}\n`);
     setTimeout(() => {}, 60_000);
   } else if (prompt === 'CRASH') {
     console.error('thread panicked');

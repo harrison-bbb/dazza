@@ -1,3 +1,4 @@
+import { ActivityRecorder } from '../core/activity.js';
 import { type BuildEvent, build } from '../core/builder.js';
 import type { Config } from '../core/config.js';
 import { clock, explainAgentError } from '../core/errors.js';
@@ -225,6 +226,8 @@ export class ChatSession {
     const render = createBuildRenderer(store.root);
     output.status('build', 'Getting ready to build');
     const building = new Set<string>();
+    // What each builder does, for the board's live view.
+    const activity = new ActivityRecorder(store);
     try {
       const { workerGuard } = this.options;
       for await (const event of build({
@@ -241,6 +244,7 @@ export class ChatSession {
           if (event.event.type === 'retry')
             output.status('build', retryStatus(event.event, this.options.provider.name));
         }
+        await activity.record(event);
         if (event.type === 'task_started') building.add(event.task.id);
         if (event.type === 'task_finished') building.delete(event.task.id);
         if (event.type === 'task_started' || event.type === 'task_finished') {

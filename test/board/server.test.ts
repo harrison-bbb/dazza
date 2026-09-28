@@ -107,6 +107,68 @@ describe('board server', () => {
     expect(await project.store.readScope()).toBe(scope);
   });
 
+  it('keeps every version of the scope, and restores one as a new version', async () => {
+    await project.store.writePlan({
+      ...makePlan([makeTask({ id: 'T1' })]),
+      approvedAt: '2026-09-27T10:00:00Z',
+    });
+    await project.store.writeScope(SCOPE, new Date(1_000));
+    const changed = SCOPE.replace('## Out of scope\nDetails.', '## Out of scope\nNo mobile app.');
+    await project.store.writeScope(changed, new Date(2_000));
+
+    const versions = (await (
+      await app().request('http://localhost/api/scope/versions')
+    ).json()) as {
+      id: string;
+      label: string;
+    }[];
+    expect(versions.map((v) => v.id)).toEqual(['1000', '2000']);
+    expect(versions[0]?.label).toBe('v1: The first plan');
+    const first = (await (
+      await app().request('http://localhost/api/scope/versions/1000')
+    ).json()) as {
+      markdown: string;
+    };
+    expect(first.markdown).toBe(SCOPE);
+
+    expect((await post('/api/scope/versions/1000/restore')).status).toBe(200);
+    const scope = (await project.store.readScope()) ?? '';
+    expect(scope).toContain('## Out of scope\nDetails.');
+    expect(scope).toMatch(/Restored the scope as it was at 1970-01-01 00:00/);
+    // Nothing is lost: the version it replaced is still there, and the restore is a version of its own.
+    expect((await project.store.scopeVersions()).length).toBe(3);
+    expect(await project.store.readScopeVersion('2000')).toBe(changed);
+    expect((await post('/api/scope/versions/999/restore')).status).toBe(404);
+  });
+
+  it('edits a task from the board, but not one being built', async () => {
+    await project.store.writePlan(
+      makePlan([makeTask({ id: 'T1' }), makeTask({ id: 'T2', status: 'building' })]),
+    );
+    const patch = (id: string, body: unknown) =>
+      app().request(`http://localhost/api/tasks/${id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json', 'x-dazza': '1' },
+        body: JSON.stringify(body),
+      });
+    const saved = await patch('T1', {
+      title: 'Sign in',
+      acceptanceCriteria: ['Shows a form', 'Rejects a bad password'],
+      size: 'M',
+    });
+    expect(saved.status).toBe(200);
+    const t1 = (await project.store.readPlan())?.tasks[0];
+    expect(t1).toMatchObject({
+      title: 'Sign in',
+      size: 'M',
+      acceptanceCriteria: ['Shows a form', 'Rejects a bad password'],
+    });
+    expect((await project.store.readEvents()).at(-1)?.type).toBe('task_edited');
+
+    expect((await patch('T2', { title: 'x' })).status).toBe(409);
+    expect((await patch('T1', { acceptanceCriteria: [] })).status).toBe(400);
+  });
+
   it('approves the plan', async () => {
     await project.store.writePlan(makePlan([makeTask({ id: 'T1' })]));
     expect((await post('/api/approve')).status).toBe(200);

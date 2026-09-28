@@ -1,9 +1,11 @@
 import { Check, ChevronLeft, ChevronRight, CircleAlert, X } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { Activity, type ComposerMode } from '../components/Activity';
+import { LiveActivity } from '../components/LiveActivity';
 import { Markdown } from '../components/Markdown';
 import { Screenshots } from '../components/Screenshots';
 import { StatusIcon, StatusLabel } from '../components/StatusIcon';
+import { TaskEditor } from '../components/TaskEditor';
 import { Button, Heading, Id, InlineText } from '../components/ui';
 import {
   answerPermission,
@@ -12,6 +14,7 @@ import {
   closeTask,
   type Event,
   type Handoff,
+  redoTask,
   type Subtask,
   setStatus,
   type Task,
@@ -51,6 +54,7 @@ export function ItemView({
   onChange,
 }: ItemViewProps) {
   const [mode, setMode] = useState<ComposerMode>('comment');
+  const [editing, setEditing] = useState(false);
   const item = subtask ?? task;
   const thread = events.filter((e) => e.taskId === item.id);
   const siblings = subtask ? task.subtasks : tasks;
@@ -74,16 +78,37 @@ export function ItemView({
             <Id>{item.id}</Id>
             <Pager ids={siblings.map((s) => s.id)} current={item.id} />
           </div>
-          <h1 className="mt-3 text-2xl font-semibold tracking-tight">
-            <InlineText>{item.title}</InlineText>
-          </h1>
+          {editing && !subtask ? (
+            <TaskEditor
+              task={task}
+              onDone={(saved) => {
+                setEditing(false);
+                if (saved) onChange();
+              }}
+            />
+          ) : (
+            <h1 className="mt-3 text-2xl font-semibold tracking-tight">
+              <InlineText>{item.title}</InlineText>
+            </h1>
+          )}
 
-          {!subtask && (
+          {!subtask && !editing && (
             <TaskActions
               task={task}
               onRequestChanges={() => setMode('changes')}
+              onEdit={() => setEditing(true)}
               onChange={onChange}
             />
+          )}
+
+          {!subtask && task.status === 'building' && (
+            <section className="mt-6 rounded-lg border border-line px-4 py-3">
+              <div className="mb-2 flex items-center gap-2 text-[13px] font-medium text-ink">
+                <span className="size-1.5 animate-pulse rounded-full bg-accent" />
+                Building now
+              </div>
+              <LiveActivity taskId={task.id} live />
+            </section>
           )}
 
           {!subtask && task.status === 'blocked' && permission ? (
@@ -92,7 +117,7 @@ export function ItemView({
             blocker && <BlockerNote question={blocker} onReply={() => setMode('unblock')} />
           )}
 
-          {item.description && (
+          {!editing && item.description && (
             // Descriptions are Markdown: the scope of a task, with details and boundaries.
             <div className="mt-6">
               <Markdown>{item.description}</Markdown>
@@ -188,6 +213,7 @@ export function ItemView({
                   <SubtaskList subtasks={task.subtasks} />
                 </section>
               )}
+              {task.status !== 'building' && <BuildLog taskId={task.id} />}
             </>
           )}
         </div>
@@ -206,18 +232,68 @@ export function ItemView({
 }
 
 /** What the user can do with a task, depending on where it is. */
-function TaskActions(props: { task: Task; onRequestChanges(): void; onChange(): void }) {
-  const { task, onRequestChanges, onChange } = props;
+function TaskActions(props: {
+  task: Task;
+  onRequestChanges(): void;
+  onEdit(): void;
+  onChange(): void;
+}) {
+  const { task, onRequestChanges, onEdit, onChange } = props;
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [redoing, setRedoing] = useState(false);
+  const [redoNote, setRedoNote] = useState('');
+  const [problem, setProblem] = useState<string>();
   const [busy, setBusy] = useState(false);
   if (task.status === 'closed' || task.status === 'cancelled') return null;
 
-  const run = async (action: () => Promise<unknown>) => {
+  const run = async (action: () => Promise<{ ok: boolean; message: string }>) => {
     setBusy(true);
-    await action();
+    const result = await action();
     setBusy(false);
+    setProblem(result.ok ? undefined : result.message);
     onChange();
   };
+  const editable = task.status !== 'building';
+  // Work worth starting over: handed over, or blocked partway, or sent back.
+  const restartable =
+    task.status === 'review' ||
+    task.status === 'blocked' ||
+    (task.status === 'planned' && Boolean(task.handoff));
+
+  if (redoing) {
+    return (
+      <div className="mt-5 rounded-lg border border-line px-4 py-3 text-[13px]">
+        <p className="text-ink">
+          Throw away all of {task.id}’s work and build it again from scratch?
+        </p>
+        <input
+          value={redoNote}
+          onChange={(e) => setRedoNote(e.target.value)}
+          placeholder="What to do differently (optional)"
+          className="mt-2 w-full rounded-md border border-line bg-transparent px-3 py-1.5 outline-none focus:border-line-strong"
+        />
+        <div className="mt-3 flex gap-2">
+          <Button
+            variant="primary"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                const result = await redoTask(task.id, redoNote);
+                if (result.ok) setRedoing(false);
+                return result;
+              })
+            }
+          >
+            Start over
+          </Button>
+          <Button variant="quiet" onClick={() => setRedoing(false)}>
+            Keep the work
+          </Button>
+        </div>
+        {problem && <p className="mt-2 text-red">{problem}</p>}
+      </div>
+    );
+  }
 
   return (
     <div className="mt-5 flex flex-wrap items-center gap-3">
@@ -271,6 +347,17 @@ function TaskActions(props: { task: Task; onRequestChanges(): void; onChange(): 
           Cancel task
         </Button>
       )}
+      {editable && (
+        <Button variant="quiet" onClick={onEdit}>
+          Edit
+        </Button>
+      )}
+      {restartable && (
+        <Button variant="quiet" onClick={() => setRedoing(true)}>
+          Start over
+        </Button>
+      )}
+      {problem && <p className="w-full text-[13px] text-red">{problem}</p>}
     </div>
   );
 }
@@ -527,5 +614,28 @@ function Checkbox({ checked }: { checked: boolean }) {
     >
       {checked && <Check className="size-2.5" strokeWidth={3.5} />}
     </span>
+  );
+}
+
+/** How the task was built, step by step: collapsed, since it's for looking back. */
+function BuildLog({ taskId }: { taskId: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="mt-10">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="flex items-center gap-1 text-[13px] text-muted hover:text-ink"
+      >
+        <ChevronRight className={cn('size-3.5 transition-transform', open && 'rotate-90')} />
+        Build log
+      </button>
+      {open && (
+        <div className="mt-3">
+          <LiveActivity taskId={taskId} live={false} limit={500} />
+        </div>
+      )}
+    </section>
   );
 }

@@ -29,11 +29,13 @@ export function Activity({ itemId, events, mode, onModeChange, onChange }: Activ
   return (
     <aside className="flex flex-col border-t border-line bg-panel lg:h-full lg:min-h-0 lg:border-t-0 lg:border-l">
       <div className="flex h-11 shrink-0 items-center border-b border-line px-5 text-[13px] font-medium">
-        Activity
+        Conversation
       </div>
       <div ref={thread} className="flex-1 overflow-y-auto px-5 py-4">
         {events.length === 0 ? (
-          <p className="text-[13px] text-faint">No activity yet.</p>
+          <p className="text-[13px] text-faint">
+            Nothing here yet. Comments reach Dazza and the build.
+          </p>
         ) : (
           <ol className="space-y-4">
             {events.map((event) => (

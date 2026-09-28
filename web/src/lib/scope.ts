@@ -69,9 +69,7 @@ export function planDocument(project: string, scope: string, plan: Plan | null):
           : table(plan.tasks)),
       ]
     : [];
-  return (
-    [`# ${project}: scope of work`, '', body, '', ...deliverables, '', log ?? '']
-      .join('\n')
-      .trim() + '\n'
-  );
+  return `${[`# ${project}: scope of work`, '', body, '', ...deliverables, '', log ?? '']
+    .join('\n')
+    .trim()}\n`;
 }

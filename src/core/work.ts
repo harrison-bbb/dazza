@@ -505,3 +505,87 @@ export async function tidyWorktrees(store: Store, git: Git): Promise<void> {
     if (task.status === 'cancelled' && dir && existsSync(dir)) await git.removeWorktree(dir);
   }
 }
+
+/**
+ * Throw away a task's work and build it again from scratch: for when the work
+ * isn't worth fixing. Its worktree, branch and handoff go; the task goes back
+ * in the queue with its subtasks reset, and the note (what to do differently)
+ * reaches the next build. Approved work is on the user's branch, so it can't be
+ * started over here.
+ */
+export async function redoTask(
+  store: Store,
+  git: Git,
+  taskId: string,
+  note = '',
+  now = new Date(),
+): Promise<ActionResult> {
+  const plan = await store.readPlan();
+  const task = plan?.tasks.find((t) => t.id === taskId);
+  if (!plan || !task) return { ok: false, message: `No task ${taskId}.` };
+  if (task.status === 'building') {
+    return { ok: false, message: `${taskId} is being built. /stop first, then start it over.` };
+  }
+  if (task.status === 'closed') {
+    return {
+      ok: false,
+      message: `${taskId} is approved and merged into your branch, so it can’t be started over here.`,
+    };
+  }
+  if (task.status === 'cancelled') return { ok: false, message: `${taskId} is cancelled.` };
+
+  const build = await store.readTaskBuild(taskId);
+  if (build) {
+    if (build.dir) await git.removeWorktree(build.dir);
+    await git.deleteBranch(build.branch);
+    await store.removeTaskBuild(taskId);
+  }
+  await store.updatePermissions(taskId, () => ({ allowed: [] }));
+  await store.updatePlan((current): [Plan | undefined, undefined] => {
+    if (!current) return [undefined, undefined];
+    return [
+      {
+        ...current,
+        tasks: current.tasks.map((t) =>
+          t.id === taskId
+            ? {
+                ...withoutHandoff(t),
+                status: t.status === 'backlog' ? 'backlog' : 'planned',
+                subtasks: t.subtasks.map((s) =>
+                  s.status === 'cancelled' ? s : { ...s, status: 'planned' as const },
+                ),
+              }
+            : t,
+        ),
+      },
+      undefined,
+    ];
+  });
+  await log(store, now, 'task_moved', taskId, 'Started over: the earlier work was thrown away');
+  await store
+    .appendActivity({
+      at: now.toISOString(),
+      taskId,
+      kind: 'status',
+      text: 'Started over from scratch',
+    })
+    .catch(() => {});
+  if (note.trim()) {
+    await store.appendEvent({
+      at: now.toISOString(),
+      actor: 'user',
+      type: 'comment',
+      taskId,
+      message: `Starting over. ${note.trim()}`,
+    });
+  }
+  return {
+    ok: true,
+    message: `Threw away ${taskId}’s work. It’s back in the queue and starts from scratch${note.trim() ? ', with your note' : ''}.`,
+  };
+}
+
+function withoutHandoff(task: Task): Task {
+  const { handoff: _, ...rest } = task;
+  return rest;
+}

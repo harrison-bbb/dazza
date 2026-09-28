@@ -62,7 +62,7 @@
   }
   body,
   main {
-    height: auto !important;
-    overflow: visible !important;
+    height: auto;
+    overflow: visible;
   }
 }

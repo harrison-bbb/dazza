@@ -9,6 +9,7 @@ import {
   landApprovedWork,
   prepareRepo,
   recoverInterruptedWork,
+  redoTask,
   setSubtaskStatus,
   startTask,
   submitTask,
@@ -147,6 +148,39 @@ describe('building tasks', () => {
       '# Project notes\n\n## T1: Setup\n\n- Components live in src/ui\n- Run tests with pnpm test\n',
     );
     expect((await task('T1')).handoff).not.toHaveProperty('notes');
+  });
+
+  it('starts a task over from scratch, throwing its work away', async () => {
+    await git.init();
+    const first = await buildTask('T1', { 'bad.js': 'a terrible attempt' });
+    await setSubtaskStatus(project.store, 'T1.1', 'closed');
+
+    const redone = await redoTask(project.store, git, 'T1', 'Use the existing router');
+    expect(redone.ok).toBe(true);
+    const t1 = await task('T1');
+    expect(t1.status).toBe('planned');
+    expect(t1.handoff).toBeUndefined();
+    expect(t1.subtasks[0]?.status).toBe('planned');
+    expect(existsSync(first.dir as string)).toBe(false);
+    expect(await git.branchExists(first.branch)).toBe(false);
+    expect(await project.store.readTaskBuild('T1')).toBeUndefined();
+    expect((await project.store.readEvents()).at(-1)).toMatchObject({
+      actor: 'user',
+      message: 'Starting over. Use the existing router',
+    });
+
+    // The next attempt starts fresh: none of the old work.
+    const again = await startTask(project.store, git, await task('T1'));
+    expect(existsSync(join(again.dir as string, 'bad.js'))).toBe(false);
+  });
+
+  it('won’t start over work that’s being built, or already merged', async () => {
+    await git.init();
+    await startTask(project.store, git, await task('T1'));
+    expect((await redoTask(project.store, git, 'T1')).message).toContain('/stop first');
+    await submitTask(project.store, 'T1', report);
+    await closeTask(project.store, 'T1');
+    expect((await redoTask(project.store, git, 'T1')).message).toContain('approved and merged');
   });
 
   it('resumes where it left off, and recreates a worktree that was deleted', async () => {

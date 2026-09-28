@@ -4,7 +4,7 @@ import { recordMilestones } from './milestones.js';
 import { approve, findItem, moveTask, waitingOn, withStatus } from './plan.js';
 import { missingSections } from './review.js';
 import type { Actor, Plan } from './schema.js';
-import { keepChangeLog, withChangeLog } from './scope.js';
+import { keepChangeLog, withChangeLog, withoutChangeLog } from './scope.js';
 import type { Store } from './store.js';
 import { landApprovedWork } from './work.js';
 
@@ -327,4 +327,43 @@ export function scopeVersion(scope: string | undefined): string {
     .update(scope ?? '')
     .digest('hex')
     .slice(0, 16);
+}
+
+/**
+ * Bring back an earlier version of the scope. That's a new version, not a
+ * rewind: the one being replaced stays in the history, and the change log
+ * records the restore. Tasks aren't touched; Dazza offers to line them up.
+ */
+export async function restoreScope(
+  store: Store,
+  versionId: string,
+  now = new Date(),
+): Promise<ActionResult> {
+  const version = await store.readScopeVersion(versionId);
+  if (version === undefined) return fail('No such version of the scope.');
+  const when = new Date(Number(versionId)).toISOString().slice(0, 16).replace('T', ' ');
+  const current = await store.readScope();
+  const plan = await store.readPlan();
+  const body = withoutChangeLog(version);
+  await store.writeScope(
+    plan?.approvedAt
+      ? withChangeLog(
+          body,
+          current,
+          { summary: `Restored the scope as it was at ${when}`, why: 'Restored by you', tasks: [] },
+          now,
+        )
+      : keepChangeLog(body, current),
+    now,
+  );
+  await log(store, now, {
+    type: 'scope_changed',
+    actor: 'user',
+    message: `You restored the scope as it was at ${when}`,
+  });
+  return {
+    ok: true,
+    message:
+      'Restored. The tasks are as they were: ask Dazza to bring them in line if they need it.',
+  };
 }

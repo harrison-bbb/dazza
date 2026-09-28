@@ -4,6 +4,7 @@ import { answerPermission } from '../core/permissions.js';
 import { findItem } from '../core/plan.js';
 import type { Plan, Task } from '../core/schema.js';
 import type { Store } from '../core/store.js';
+import { redoTask } from '../core/work.js';
 import { Git } from '../git/git.js';
 import { openInBrowser } from '../util/open.js';
 import type { Command, CommandContext } from './commands.js';
@@ -97,6 +98,23 @@ export const WORK_COMMANDS: Command[] = [
           ? `${result(outcome)} ${paint.dim('If this changes the scope, tell me why and I’ll record it in the change log.')}`
           : result(outcome),
       );
+    },
+  },
+  {
+    name: 'redo',
+    args: '<task> [what to do differently]',
+    description: 'Throw away a task’s work and build it again from scratch (asks first)',
+    async run({ store, say, confirm }, args) {
+      const [first = '', ...rest] = args.trim().split(/\s+/);
+      const id = taskArg(first);
+      if (!id) return say('Which task? For example: /redo T3 use the existing Button component');
+      const task = (await store.readPlan())?.tasks.find((t) => t.id === id);
+      if (!task) return say(`No task ${id}.`);
+      const note = rest.join(' ');
+      if (!(await confirm(`Throw away all of ${id} ${task.title}’s work and start it again?`))) {
+        return say('Kept it.');
+      }
+      say(result(await redoTask(store, new Git(store.root), id, note)));
     },
   },
   {
