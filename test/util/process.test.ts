@@ -128,7 +128,7 @@ describe('stopProcessesIn', () => {
     expect(stray.exitCode !== null || stray.signalCode !== null).toBe(true);
     expect(older.exitCode).toBeNull();
     older.kill();
-    await rm(dir, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
 });
 

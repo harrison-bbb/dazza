@@ -11,6 +11,7 @@ import {
   unwrapShell,
 } from '../../src/providers/codex.js';
 import type { AgentEvent } from '../../src/providers/types.js';
+import { shellCommand } from '../../src/util/process.js';
 
 const fixture = (path: string) => fileURLToPath(new URL(`../fixtures/${path}`, import.meta.url));
 const codex = new CodexProvider({ bin: fixture('bin/fake-codex.mjs') });
@@ -119,8 +120,11 @@ describe('Dazza’s guard on Codex', () => {
   it('runs the guard as a PreToolUse hook on every call', () => {
     const args = buildCodexArgs({ cwd: '/p', autonomous: true, guard });
     expect(args).toContain('--dangerously-bypass-hook-trust');
+    // Quoted for the shell Codex runs hooks with: sh, or cmd.exe on Windows.
+    const command = shellCommand(guard.command, guard.args);
+    expect(command).toContain('/opt/dazza cli.js');
     expect(args).toContain(
-      `hooks.PreToolUse=[{matcher=".*",hooks=[{type="command",command="/usr/bin/node '/opt/dazza cli.js' guard --role worker",timeout=60}]}]`,
+      `hooks.PreToolUse=[{matcher=".*",hooks=[{type="command",command=${JSON.stringify(command)},timeout=60}]}]`,
     );
     expect(buildCodexArgs({ cwd: '/p', autonomous: true })).not.toContain(
       '--dangerously-bypass-hook-trust',
@@ -144,7 +148,7 @@ describe('Dazza’s guard on Codex', () => {
         error: { kind: 'setup', message: expect.stringContaining('.codex/hooks.json') },
       });
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     }
   });
 });

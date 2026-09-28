@@ -13,5 +13,7 @@ export default defineConfig({
   test: {
     include: ['test/**/*.test.ts', 'web/src/**/*.test.ts'],
     setupFiles: ['test/setup.ts'],
+    // Git and process start-up are several times slower on Windows runners.
+    testTimeout: process.platform === 'win32' ? 20_000 : 5_000,
   },
 });

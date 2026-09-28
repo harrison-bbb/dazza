@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Config, type TelegramLink } from '../../src/core/config.js';
 import {
   macKeychain,
@@ -101,10 +101,15 @@ describe.runIf(process.platform === 'win32')('Windows DPAPI', () => {
 
 // The real thing, on a throwaway keychain: never the user's own.
 describe.runIf(process.platform === 'darwin')('the macOS Keychain', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'dazza-keychain-'));
-  const file = join(dir, 'test.keychain-db');
-  execFileSync('security', ['create-keychain', '-p', 'test', file]);
-  execFileSync('security', ['unlock-keychain', '-p', 'test', file]);
+  let dir = '';
+  let file = '';
+  // In beforeAll: describe bodies run on every platform, even skipped ones.
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dazza-keychain-'));
+    file = join(dir, 'test.keychain-db');
+    execFileSync('security', ['create-keychain', '-p', 'test', file]);
+    execFileSync('security', ['unlock-keychain', '-p', 'test', file]);
+  });
   afterAll(() => {
     execFileSync('security', ['delete-keychain', file]);
     rmSync(dir, { recursive: true, force: true });

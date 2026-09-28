@@ -18,7 +18,7 @@ export function useTempProject(): { root: string; store: Store; config: Config }
     project.config = new Config(join(project.root, '.config'));
   });
   afterEach(async () => {
-    await rm(project.root, { recursive: true, force: true });
+    await rm(project.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
   return project;
 }
