@@ -58,6 +58,20 @@ export function notificationMessage(note: Notification, where: Where): Rendered 
           ]),
         ],
       };
+    case 'milestone':
+      return {
+        text: `${note.id} reached: ${note.title}`,
+        blocks: [
+          section(`*🏁 ${note.id} reached · ${escapeText(note.title)}*\n${escapeText(note.goal)}`),
+          markdown(note.tasks.map((t) => `- ${t}`).join('\n')),
+          context([
+            where.project,
+            note.branch && `On ${note.branch}, ready to try`,
+            note.next && `Next up: ${note.next}`,
+            note.images.length > 0 && screenshotsInThread(note.images.length),
+          ]),
+        ],
+      };
     case 'permission':
       return {
         text: `${note.taskId} wants to run a command that needs your OK`,

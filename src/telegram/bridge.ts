@@ -248,6 +248,16 @@ export function telegramText(note: Notification): string {
       ]
         .filter(Boolean)
         .join('\n\n');
+    case 'milestone':
+      return [
+        `🏁 ${note.id} reached: ${note.title}`,
+        note.goal,
+        `What went into it:\n${note.tasks.map((t) => `• ${t}`).join('\n')}`,
+        note.branch && `It's all on ${note.branch}, so you can try it there.`,
+        note.next && `Next up: ${note.next}.`,
+      ]
+        .filter(Boolean)
+        .join('\n\n');
     case 'permission':
       return [
         `🔐 ${note.taskId} wants to run a command that needs your OK: ${note.title}`,

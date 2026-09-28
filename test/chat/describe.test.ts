@@ -47,6 +47,21 @@ describe('greeting', () => {
     );
   });
 
+  it('says which milestone it’s working towards, and how much building is left', () => {
+    const plan: Plan = {
+      ...approved(
+        makePlan([
+          makeTask({ id: 'T1', status: 'closed', size: 'S' }),
+          makeTask({ id: 'T2', title: 'Auth', size: 'L' }),
+        ]),
+      ),
+      milestones: [{ id: 'M1', title: 'Sign in', goal: 'Log in', tasks: ['T1', 'T2'] }],
+    };
+    expect(greeting(plan)).toBe(
+      '1/2 tasks closed (about 1½ hours of building left). Working towards M1 Sign in (1/2). Next up: T2 Auth. Run /build to start.',
+    );
+  });
+
   it('celebrates (quietly) when everything is done', () => {
     expect(greeting(approved(makePlan([makeTask({ id: 'T1', status: 'closed' })])))).toBe(
       'All 1 tasks closed. Nice.',

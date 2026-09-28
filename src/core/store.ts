@@ -151,6 +151,15 @@ export class Store {
     await rm(this.path(MANAGER_SESSION_FILE), { force: true });
   }
 
+  /** The close-out (or progress) report, written by Dazza for the user. */
+  readReport(): Promise<string | undefined> {
+    return this.readOptional('report.md');
+  }
+
+  async writeReport(markdown: string): Promise<void> {
+    await this.writeAtomic('report.md', markdown);
+  }
+
   /** Where a screenshot lives on disk, from its media path (e.g. "T3/home.png"). */
   mediaFile(path: string): string {
     return join(this.dir, 'media', path);

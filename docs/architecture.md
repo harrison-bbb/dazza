@@ -95,6 +95,8 @@ Each agent CLI spawns `dazza mcp --root <project> --role manager|worker` over st
 | `set_status` | manager | Close, cancel or move a task or subtask when the user says so. Same rules as the board |
 | `update_scope` | manager | Rewrite the scope after an agreed change. Dazza keeps the change log (`src/core/scope.ts`), so no revision can drop the history |
 | `approve_plan` | manager | Approve the plan when the user says so in conversation |
+| `prioritise` | manager | Move a task to the front of the queue, or ahead of another |
+| `write_report` | manager | Save the close-out or progress report (`.dazza/report.md`), from facts Dazza gathers (`src/core/report.ts`) |
 | `answer_permission` | manager | Record the user's answer to a command the guard held back |
 | `ask_permission` | worker | Ask to run one exact command the guard held back; the task waits |
 | `comment` | both | Post on a task's thread or the project, optionally with screenshots |
@@ -105,6 +107,10 @@ Each agent CLI spawns `dazza mcp --root <project> --role manager|worker` over st
 | `submit` | worker | Hand the task over for review. Dazza commits the work |
 
 Tool input is validated with zod. Invalid input comes back to the agent as a tool error so it can correct itself. Worker tool results also carry any new comments from the user, so instructions reach a running build at its next tool call.
+
+## Plans: sizes, milestones, order
+
+Tasks are listed in priority order: the builder takes the first one whose dependencies are closed. Each has a size (S, M or L, about 20, 45 or 90 minutes of building; `SIZE_MINUTES` in `src/core/schema.ts`), which is how Dazza says what's left and what a change costs (`src/core/estimates.ts`). Plans of four tasks or more are grouped into milestones: stages the user can try, each with a goal. `src/core/milestones.ts` works out progress, and records a `milestone_reached` event once, whichever way the last task was closed (chat, board or phone). The chat announces it on every channel. When every task is closed, the chat asks the manager for the close-out report, with the facts gathered by `reportRequest`, so the report is written from the record rather than from memory.
 
 ## The build loop
 

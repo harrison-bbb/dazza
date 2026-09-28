@@ -9,6 +9,10 @@ export interface ProjectSnapshot {
   scope: string | null;
   plan: Plan | null;
   events: Event[];
+  /** The close-out or progress report, once Dazza has written one. */
+  report: string | null;
+  /** Roughly how much building is left, e.g. "about 2 hours", from task sizes. */
+  buildLeft: string | null;
   /** Commands tasks are waiting on the user's OK to run, by task id. */
   permissions: Record<string, { command: string; why: string }>;
 }

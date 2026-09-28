@@ -13,7 +13,7 @@ export function makeTask(overrides: Partial<Task> & Pick<Task, 'id'>): Task {
 }
 
 export function makePlan(tasks: Task[]): Plan {
-  return { version: 1, approvedAt: null, tasks };
+  return { version: 1, approvedAt: null, tasks, milestones: [] };
 }
 
 /** A scope with every section the manager is asked for. */
@@ -40,6 +40,7 @@ export function plannedTask(overrides: Partial<Task> & Pick<Task, 'id'>): Task {
   return makeTask({
     description: detail('What the user gets.').repeat(4),
     acceptanceCriteria: ['The main path works', 'The empty state shows a message'],
+    size: 'M',
     subtasks: [1, 2].map((n) => ({
       id: `${overrides.id}.${n}`,
       title: `Part ${n}`,

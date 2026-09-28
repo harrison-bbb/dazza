@@ -21,6 +21,8 @@ export interface CommandContext {
   boardUrl: string;
   /** Build the approved plan in the background, showing the work live. */
   startBuild(): Promise<void>;
+  /** Have Dazza write the progress (or close-out) report. */
+  requestReport(): Promise<void>;
   /** Show (or clear) an activity in the status line while a command works. */
   status(text: string | undefined): void;
   /** Walk through linking Slack or a Telegram bot. */
@@ -65,6 +67,17 @@ export const COMMANDS: Command[] = [
     async run({ store, say }) {
       const plan = await store.readPlan();
       say(plan ? greeting(plan) : 'No plan yet. Tell me what you want to build or change.');
+    },
+  },
+  {
+    name: 'report',
+    description: 'Write up where the project is: a progress report, or the close-out at the end',
+    async run({ store, say, requestReport }) {
+      if (!(await store.readPlan())?.approvedAt) {
+        say('There’s nothing to report yet: the plan isn’t approved.');
+        return;
+      }
+      await requestReport();
     },
   },
   {

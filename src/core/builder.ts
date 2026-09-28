@@ -366,6 +366,7 @@ export function taskBrief(
     .map((e) => `- ${e.actor === 'user' ? 'User' : 'You (Dazza)'} on ${e.taskId}: ${e.message}`);
   const done = plan.tasks.filter((t) => t.status === 'closed').map((t) => `${t.id} ${t.title}`);
   const dropped = task.subtasks.filter((s) => s.status === 'cancelled');
+  const milestone = plan.milestones.find((m) => m.tasks.includes(task.id));
   // What this task builds on, as its builder described it at handoff.
   const foundations = plan.tasks
     .filter((t) => task.dependsOn.includes(t.id) && t.handoff)
@@ -381,6 +382,7 @@ export function taskBrief(
       : `Build ${task.id}.`,
     '',
     `# ${task.id}: ${task.title}`,
+    ...(milestone ? [`Part of ${milestone.id} ${milestone.title}: ${milestone.goal}`, ''] : []),
     task.description,
     '',
     '## Done when',

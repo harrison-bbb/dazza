@@ -55,6 +55,7 @@ Just type to talk to Dazza. Type `/` for commands:
 | `/dashboard` | Open the project board in your browser |
 | `/status` | Where the project is at |
 | `/approve` | Approve the drafted plan |
+| `/report` | Write up where the project is: a progress report, or the close-out at the end |
 | `/model [name or number]` | List the models your account can use, or switch |
 | `/usage` | Session and weekly limits on a subscription (live on Codex), or spend on an API key |
 | `/slack` | See your Slack link, or connect Slack |
@@ -121,6 +122,10 @@ Dazza only listens to you: messages and clicks from anyone else in the workspace
 Onboarding also offers to link a Telegram bot (or run `/telegram` later). Create a bot with [@BotFather](https://t.me/BotFather), paste its token, and message the bot once so Dazza can find your chat. While Dazza is open it messages you when a task is ready for review or blocked, and when a build finishes. Review messages have **Approve** (with a confirm, since it merges) and **Request changes** buttons, and requesting changes asks what to change. Reply to a message and Dazza knows which task you mean; otherwise it's the same conversation as the terminal. `/status`, `/build` and `/stop` also work there. Dazza only accepts messages from your own chat.
 
 You can also run the project from the chat: "close T4", "unblock T5, tags are case-insensitive", "add a subtask to T3 for X", "move T8 to the backlog". Small edits like these apply straight away and show up on the board.
+
+Every task has a size (S, M or L: about 20, 45 or 90 minutes of building), and bigger plans are grouped into **milestones**: stages you can try, each with a goal like "clients can book and pay for a walk". The greeting and the board show which milestone Dazza is working towards and roughly how much building is left. When a milestone's last task is approved, Dazza tells you what it delivered and what's next (with screenshots on Slack or Telegram). Say "do T7 next" to change the order; if T7 is waiting on something else, Dazza says what.
+
+When every task is closed, Dazza writes a **close-out report**: what you have now, what was built, what changed along the way (from the change log), how to run it, known limits, and suggested next steps. It's on the board under Report. `/report` writes a progress report any time.
 
 Plans change, and Dazza handles that like a good contractor handles a change request. Ask "can we do X instead?" or "we don't need T9" and Dazza proposes the change first: which tasks it adds, changes or cancels, what already-built work it touches, and what it costs. Nothing changes until you say yes, and cancelling always gets a confirm. Then the tasks and the scope document are updated together, and the scope's **change log** records the new version, what changed, which tasks, and why. The builder reads the updated scope, so the work follows the change.
 

@@ -1,4 +1,4 @@
-import type { Task } from './schema.js';
+import type { Milestone, Task } from './schema.js';
 
 /**
  * A floor under plan quality, checked when the manager saves a plan. The
@@ -26,11 +26,13 @@ export const MIN_TASK_DESCRIPTION = 300;
 export const MIN_SUBTASK_DESCRIPTION = 80;
 const MIN_SUBTASKS = 2;
 const MIN_CRITERIA = 2;
+/** Plans this big get milestones. */
+const MILESTONE_THRESHOLD = 4;
 /** Enough to act on without burying the manager in a wall of errors. */
 const MAX_REPORTED = 12;
 
 /** What's missing from a plan, as instructions to fix it. Empty when it passes. */
-export function reviewPlan(scope: string, tasks: Task[]): string[] {
+export function reviewPlan(scope: string, tasks: Task[], milestones: Milestone[] = []): string[] {
   const problems: string[] = [];
 
   const missing = missingSections(scope);
@@ -51,6 +53,7 @@ export function reviewPlan(scope: string, tasks: Task[]): string[] {
         `${task.id}: has ${task.subtasks.length} subtasks; break it into at least ${MIN_SUBTASKS}.`,
       );
     }
+    if (!task.size) problems.push(`${task.id}: give it a size (S, M or L).`);
     if (task.acceptanceCriteria.length < MIN_CRITERIA) {
       problems.push(
         `${task.id}: add acceptance criteria for the edge cases, not only the main path.`,
@@ -62,6 +65,18 @@ export function reviewPlan(scope: string, tasks: Task[]): string[] {
           `${subtask.id}: the description is too short. Say exactly what to build, where, and how you'd know it's done.`,
         );
       }
+    }
+  }
+
+  // Bigger plans are delivered in stages the user can try.
+  const planned = tasks.filter((t) => t.status === 'planned' || t.status === 'building');
+  if (planned.length >= MILESTONE_THRESHOLD) {
+    const placed = new Set(milestones.flatMap((m) => m.tasks));
+    const loose = planned.filter((t) => !placed.has(t.id)).map((t) => t.id);
+    if (milestones.length === 0) {
+      problems.push('Group the tasks into milestones: stages the user can see and try.');
+    } else if (loose.length > 0) {
+      problems.push(`Put ${loose.join(', ')} in a milestone.`);
     }
   }
 

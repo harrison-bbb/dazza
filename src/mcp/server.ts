@@ -7,6 +7,7 @@ import {
   type ActionResult,
   addComment,
   approvePlan,
+  prioritise,
   REQUESTABLE_STATUSES,
   setStatus,
 } from '../core/actions.js';
@@ -21,8 +22,9 @@ import {
 } from '../core/edits.js';
 import { answerPermission, requestPermission } from '../core/permissions.js';
 import { carryOverProgress } from '../core/plan.js';
+import { REPORT_SECTIONS } from '../core/report.js';
 import { missingSections, reviewPlan } from '../core/review.js';
-import { MediaPath, Plan, SCHEMA_VERSION, Task } from '../core/schema.js';
+import { MediaPath, Milestone, Plan, SCHEMA_VERSION, Task } from '../core/schema.js';
 import { changeLogEntries, keepChangeLog, withChangeLog } from '../core/scope.js';
 import { Store } from '../core/store.js';
 import {
@@ -52,6 +54,8 @@ export const McpTools = {
   askPermission: tool('ask_permission'),
   updateScope: tool('update_scope'),
   approvePlan: tool('approve_plan'),
+  prioritise: tool('prioritise'),
+  writeReport: tool('write_report'),
   answerPermission: tool('answer_permission'),
   screenshot: tool('screenshot'),
 } as const;
@@ -67,6 +71,8 @@ export const MANAGER_TOOLS = [
   McpTools.answerPermission,
   McpTools.updateScope,
   McpTools.approvePlan,
+  McpTools.prioritise,
+  McpTools.writeReport,
   McpTools.screenshot,
 ];
 
@@ -87,7 +93,14 @@ function tool(name: string): string {
 
 export const SavePlanInput = z.object({
   scope: z.string().min(1).describe('The scope of work as Markdown.'),
-  tasks: z.array(Task).min(1).describe('Ordered tasks with acceptance criteria and subtasks.'),
+  tasks: z
+    .array(Task)
+    .min(1)
+    .describe('Tasks in priority order, each with a size, acceptance criteria and subtasks.'),
+  milestones: z
+    .array(Milestone)
+    .default([])
+    .describe('Stages the user can try, in order, each a few tasks with a goal.'),
   summary: z
     .string()
     .optional()
@@ -97,15 +110,16 @@ export const SavePlanInput = z.object({
     .optional()
     .describe('When revising an approved plan, why, as the user put it. Goes in the change log.'),
 });
-export type SavePlanInput = z.infer<typeof SavePlanInput>;
+export type SavePlanInput = z.input<typeof SavePlanInput>;
 
 /**
  * Validate and persist a plan. Revising an approved plan is a scope change: it
  * returns to draft for the user to re-approve. Problems are returned to the agent
  * as tool errors so it can correct the plan and try again.
  */
-export async function savePlan(store: Store, input: SavePlanInput): Promise<CallToolResult> {
-  const problems = reviewPlan(input.scope, input.tasks);
+export async function savePlan(store: Store, raw: SavePlanInput): Promise<CallToolResult> {
+  const input = SavePlanInput.parse(raw);
+  const problems = reviewPlan(input.scope, input.tasks, input.milestones);
   if (problems.length > 0) {
     return failure(
       `Not saved. The builder works from the plan alone, and it's missing detail:\n${problems
@@ -117,7 +131,12 @@ export async function savePlan(store: Store, input: SavePlanInput): Promise<Call
     (current): [Plan | undefined, { error: string } | { count: number; rescoped: boolean }] => {
       const tasks = carryOverProgress(current, input.tasks);
       if (typeof tasks === 'string') return [undefined, { error: tasks }];
-      const result = Plan.safeParse({ version: SCHEMA_VERSION, approvedAt: null, tasks });
+      const result = Plan.safeParse({
+        version: SCHEMA_VERSION,
+        approvedAt: null,
+        tasks,
+        milestones: input.milestones,
+      });
       if (!result.success) {
         return [undefined, { error: `The plan is invalid:\n${z.prettifyError(result.error)}` }];
       }
@@ -300,6 +319,46 @@ function registerManagerTools(server: McpServer, store: Store): void {
       },
     },
     async ({ id, status, note }) => toResult(await setStatus(store, id, status, note)),
+  );
+
+  server.registerTool(
+    'write_report',
+    {
+      description:
+        'Save the close-out (or progress) report for the user: Markdown with the sections you ' +
+        'were asked for. It replaces any earlier report and shows on the board.',
+      inputSchema: { markdown: z.string().min(1) },
+    },
+    async ({ markdown }) => {
+      const missing = REPORT_SECTIONS.filter(
+        (section) => !new RegExp(`^##\\s+${section}\\s*$`, 'mi').test(markdown),
+      );
+      if (missing.length > 0) {
+        return failure(`Not saved: add ${missing.map((s) => `## ${s}`).join(', ')}.`);
+      }
+      await store.writeReport(markdown);
+      await store.appendEvent({
+        at: new Date().toISOString(),
+        type: 'report_written',
+        message: 'Wrote the report',
+      });
+      return toResult({ ok: true, message: 'Saved. It’s on the board under Report.' });
+    },
+  );
+
+  server.registerTool(
+    'prioritise',
+    {
+      description:
+        'Change what gets built next when the user asks ("do T7 next", "T4 is urgent"): move ' +
+        'a task to the front of the queue, or ahead of another. Tasks still wait for what ' +
+        'they depend on.',
+      inputSchema: {
+        id: z.string(),
+        before: z.string().optional().describe('Put it just ahead of this task instead.'),
+      },
+    },
+    async ({ id, before }) => toResult(await prioritise(store, id, before)),
   );
 
   server.registerTool(

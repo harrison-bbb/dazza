@@ -8,7 +8,9 @@ import { recoverAbandonedBuild } from '../core/builder.js';
 import { Config, type Connection } from '../core/config.js';
 import { describeCodebase, inspectCodebase } from '../core/inspect.js';
 import { Manager } from '../core/manager.js';
+import { isComplete, recordMilestones } from '../core/milestones.js';
 import { answerPermission } from '../core/permissions.js';
+import { reportRequest } from '../core/report.js';
 import { StateError, Store } from '../core/store.js';
 import type {
   Channel,
@@ -17,7 +19,12 @@ import type {
   Remote,
   RemoteCommand,
 } from '../notify/channel.js';
-import { info, type Notification, notificationFor } from '../notify/notification.js';
+import {
+  info,
+  milestoneNotification,
+  type Notification,
+  notificationFor,
+} from '../notify/notification.js';
 import { createProvider, PROVIDER_HELP, providerFor } from '../providers/index.js';
 import type { AgentProvider } from '../providers/types.js';
 import { checkApiKey } from '../setup/apiKeys.js';
@@ -247,14 +254,52 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
     say(paint.dim(text));
     notify(info(text, [], taskId));
   };
+  /** Ask Dazza to write the report, with the facts it needs. */
+  const requestReport = async () => {
+    const plan = await store.readPlan();
+    if (!plan) return;
+    session.send(reportRequest(plan, await store.readEvents(), await store.readScope()));
+  };
+
   // The plan changes from everywhere: this chat, the board, Slack, the build itself.
-  let approved = Boolean((await store.readPlan())?.approvedAt);
+  const startPlan = await store.readPlan();
+  let approved = Boolean(startPlan?.approvedAt);
+  let complete = Boolean(startPlan && isComplete(startPlan));
+  // Milestones reached before this session were announced then.
+  const announced = new Set(
+    (await store.readEvents()).filter((e) => e.type === 'milestone_reached').map((e) => e.message),
+  );
   const onPlanChange = debounce(async () => {
     const plan = await store.readPlan().catch(() => undefined);
-    if (plan?.approvedAt && !approved && !session.isBuilding) {
+    if (!plan) return;
+    if (plan.approvedAt && !approved && !session.isBuilding) {
       say(`Plan approved. Run ${paint.bold('/build')} when you want me to start.`);
     }
-    approved = Boolean(plan?.approvedAt);
+    approved = Boolean(plan.approvedAt);
+
+    // Closing a task (here, on the board or from a phone) can complete a milestone.
+    await recordMilestones(store).catch(() => []);
+    for (const event of await store.readEvents()) {
+      if (event.type !== 'milestone_reached' || announced.has(event.message)) continue;
+      announced.add(event.message);
+      const milestone = plan.milestones.find((m) => event.message.startsWith(`${m.id}:`));
+      if (!milestone) continue;
+      const note = milestoneNotification(plan, milestone, store);
+      say(`${paint.bold(`🏁 ${milestone.id} reached: ${milestone.title}`)}\n${milestone.goal}`);
+      notify(note);
+    }
+
+    // The last task closed: wrap the project up.
+    if (!complete && isComplete(plan)) {
+      complete = true;
+      say(`All done. Writing up the close-out report…`);
+      notify(
+        info(
+          '🎉 Every task is closed. I’m writing up the close-out report; it’ll be on the board shortly.',
+        ),
+      );
+      await requestReport();
+    }
     await resumeIfReady();
   }, PLAN_SETTLE_MS);
   const planFile = join(store.dir, 'tasks.json');
@@ -269,6 +314,7 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
     session: session.usage,
     boardUrl: board.url,
     startBuild: () => startBuild(session, provider, config),
+    requestReport,
     status: (text) => terminal.setStatus('chat', text),
     link: async (channel) => {
       if (await setUpChannel(channel, terminal, config)) {

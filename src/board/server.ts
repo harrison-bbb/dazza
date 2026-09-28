@@ -16,6 +16,7 @@ import {
   requestChanges,
   setStatus,
 } from '../core/actions.js';
+import { humanDuration, minutesLeft } from '../core/estimates.js';
 import { answerPermission } from '../core/permissions.js';
 import { MediaPath } from '../core/schema.js';
 import type { Store } from '../core/store.js';
@@ -25,7 +26,7 @@ export const DEFAULT_PORT = 4777;
 const PORT_ATTEMPTS = 10;
 const POLL_INTERVAL_MS = 500;
 const DEBOUNCE_MS = 100;
-const WATCHED_FILES = ['tasks.json', 'scope.md', 'events.jsonl', 'permissions.json'];
+const WATCHED_FILES = ['tasks.json', 'scope.md', 'events.jsonl', 'permissions.json', 'report.md'];
 
 const CommentBody = z.object({ body: z.string() });
 const PermissionBody = z.object({ allow: z.boolean() });
@@ -52,6 +53,8 @@ export function createBoardApp(store: Store, projectRoot: string, webRoot: strin
       plan: (await store.readPlan()) ?? null,
       events: await store.readEvents(),
       permissions: await store.readPendingPermissions(),
+      report: (await store.readReport()) ?? null,
+      buildLeft: await buildLeft(store),
     }),
   );
 
@@ -185,6 +188,12 @@ function isAddressInUse(error: unknown): boolean {
 async function readBody(request: Request): Promise<string | undefined> {
   const parsed = CommentBody.safeParse(await request.json().catch(() => undefined));
   return parsed.success ? parsed.data.body : undefined;
+}
+
+async function buildLeft(store: Store): Promise<string | null> {
+  const plan = await store.readPlan();
+  const minutes = plan ? minutesLeft(plan) : 0;
+  return minutes > 0 ? humanDuration(minutes) : null;
 }
 
 function debounce(fn: () => void, ms: number): () => void {

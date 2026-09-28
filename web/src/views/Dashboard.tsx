@@ -1,8 +1,8 @@
-import { ChevronRight, FileText, ListTodo } from 'lucide-react';
+import { Check, ChevronRight, FileText, Flag, ListTodo } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { StatusIcon } from '../components/StatusIcon';
 import { Button, Heading, Id, InlineText } from '../components/ui';
-import { approvePlan, type Event, type ProjectSnapshot, type Task } from '../lib/api';
+import { approvePlan, type Event, type Plan, type ProjectSnapshot, type Task } from '../lib/api';
 import { timeAgo } from '../lib/format';
 import { paths } from '../lib/router';
 import { scopeSummary } from '../lib/scope';
@@ -43,6 +43,7 @@ export function Dashboard({ project, onChange }: { project: ProjectSnapshot; onC
           </div>
           <span className="text-[12px] text-muted tabular-nums">
             {closed} of {inScope.length} closed
+            {project.buildLeft && ` · ${project.buildLeft} of building left`}
           </span>
         </div>
       )}
@@ -92,6 +93,12 @@ export function Dashboard({ project, onChange }: { project: ProjectSnapshot; onC
         </Section>
       )}
 
+      {plan && plan.milestones.length > 0 && (
+        <Section title="Milestones">
+          <Milestones plan={plan} />
+        </Section>
+      )}
+
       <nav className="mt-10 divide-y divide-line border-y border-line" aria-label="Project">
         <HubLink href={paths.doc} icon={<FileText className="size-4" />} title="Scope of work">
           {scope ? 'What we’re building, and what we’re not' : 'Not written yet'}
@@ -99,6 +106,11 @@ export function Dashboard({ project, onChange }: { project: ProjectSnapshot; onC
         <HubLink href={paths.tasks} icon={<ListTodo className="size-4" />} title="Tasks">
           {taskSummary(tasks)}
         </HubLink>
+        {project.report && (
+          <HubLink href={paths.report} icon={<Flag className="size-4" />} title="Report">
+            What was built, what changed, and what’s next
+          </HubLink>
+        )}
       </nav>
 
       {events.length > 0 && (
@@ -107,6 +119,42 @@ export function Dashboard({ project, onChange }: { project: ProjectSnapshot; onC
         </Section>
       )}
     </div>
+  );
+}
+
+/** Each stage the user can try, and how far along it is. */
+function Milestones({ plan }: { plan: Plan }) {
+  return (
+    <ul className="divide-y divide-line">
+      {plan.milestones.map((milestone) => {
+        const tasks = plan.tasks.filter(
+          (t) => milestone.tasks.includes(t.id) && t.status !== 'cancelled',
+        );
+        const closed = tasks.filter((t) => t.status === 'closed').length;
+        const reached = tasks.length > 0 && closed === tasks.length;
+        return (
+          <li key={milestone.id} className="flex items-center gap-4 py-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 text-[13px]">
+                <Id>{milestone.id}</Id>
+                <span className={reached ? 'text-muted' : 'text-ink'}>{milestone.title}</span>
+                {reached && <Check className="size-3.5 text-accent" strokeWidth={2.5} />}
+              </div>
+              <p className="mt-0.5 truncate text-[12px] text-muted">{milestone.goal}</p>
+            </div>
+            <div className="h-1 w-20 overflow-hidden rounded-full bg-line">
+              <div
+                className="h-full rounded-full bg-accent"
+                style={{ width: `${tasks.length ? (closed / tasks.length) * 100 : 0}%` }}
+              />
+            </div>
+            <span className="w-10 text-right text-[12px] text-muted tabular-nums">
+              {closed}/{tasks.length}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

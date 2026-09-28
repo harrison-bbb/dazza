@@ -25,13 +25,30 @@ interface ItemViewProps {
   subtask: Subtask | undefined;
   tasks: Task[];
   events: Event[];
+  /** The stage this task is part of. */
+  milestone?: { id: string; title: string } | undefined;
   /** A command this task is waiting on the user's OK to run. */
   permission?: { command: string; why: string } | undefined;
   onChange(): void;
 }
 
 /** A task or subtask: details on the left, the conversation about it on the right. */
-export function ItemView({ task, subtask, tasks, events, permission, onChange }: ItemViewProps) {
+/** Task sizes in the builder's time; see SIZE_MINUTES in src/core/schema.ts. */
+const SIZE_LABEL = {
+  S: 'Small · about 20 minutes',
+  M: 'Medium · about 45 minutes',
+  L: 'Large · about 90 minutes',
+};
+
+export function ItemView({
+  task,
+  subtask,
+  tasks,
+  events,
+  permission,
+  milestone,
+  onChange,
+}: ItemViewProps) {
   const [mode, setMode] = useState<ComposerMode>('comment');
   const item = subtask ?? task;
   const thread = events.filter((e) => e.taskId === item.id);
@@ -108,6 +125,15 @@ export function ItemView({ task, subtask, tasks, events, permission, onChange }:
                     </span>
                   )}
                 </Property>
+                {milestone && (
+                  <Property label="Milestone">
+                    <span className="flex items-center gap-1.5">
+                      <Id>{milestone.id}</Id>
+                      {milestone.title}
+                    </span>
+                  </Property>
+                )}
+                {task.size && <Property label="Size">{SIZE_LABEL[task.size]}</Property>}
                 <Property label="Timeline">
                   <Timeline events={events} taskId={task.id} />
                 </Property>

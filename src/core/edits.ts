@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { ActionResult } from './actions.js';
 import { findItem } from './plan.js';
-import { type EventType, Plan, type Subtask, type Task } from './schema.js';
+import { type EventType, Plan, type Subtask, type Task, TaskSize } from './schema.js';
 import type { Store } from './store.js';
 
 /**
@@ -15,6 +15,7 @@ export const TaskChanges = z.object({
   description: z.string().min(1).optional(),
   acceptanceCriteria: z.array(z.string().min(1)).min(1).optional(),
   dependsOn: z.array(z.string()).optional(),
+  size: TaskSize.optional(),
 });
 export type TaskChanges = z.infer<typeof TaskChanges>;
 
@@ -33,6 +34,9 @@ export const NewTask = z.object({
     .default([]),
   dependsOn: z.array(z.string()).default([]),
   status: z.enum(['planned', 'backlog']).default('planned'),
+  size: TaskSize.optional(),
+  /** The milestone it belongs to, e.g. "M2". */
+  milestone: z.string().optional(),
 });
 export type NewTask = z.input<typeof NewTask>;
 
@@ -85,7 +89,7 @@ export async function addTask(
 ): Promise<ActionResult> {
   const parsed = NewTask.safeParse(input);
   if (!parsed.success) return { ok: false, message: z.prettifyError(parsed.error) };
-  const { subtasks, ...fields } = parsed.data;
+  const { subtasks, milestone, ...fields } = parsed.data;
 
   return update(store, now, async (plan) => {
     const id = `T${Math.max(0, ...plan.tasks.map((t) => Number(t.id.slice(1)))) + 1}`;
@@ -94,8 +98,13 @@ export async function addTask(
       id,
       subtasks: subtasks.map((s, i) => ({ ...s, id: `${id}.${i + 1}`, status: 'planned' })),
     };
+    if (milestone && !plan.milestones.some((m) => m.id === milestone))
+      return `No milestone ${milestone}.`;
+    const milestones = plan.milestones.map((m) =>
+      m.id === milestone ? { ...m, tasks: [...m.tasks, id] } : m,
+    );
     return {
-      plan: { ...plan, tasks: [...plan.tasks, task] },
+      plan: { ...plan, tasks: [...plan.tasks, task], milestones },
       event: { type: 'task_added', taskId: id, message: `Added ${id} ${task.title}` },
     };
   });

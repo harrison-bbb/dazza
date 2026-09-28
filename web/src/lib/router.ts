@@ -10,6 +10,7 @@ import { useSyncExternalStore } from 'react';
 export type Route =
   | { view: 'dashboard' }
   | { view: 'doc' }
+  | { view: 'report' }
   | { view: 'tasks' }
   | { view: 'item'; id: string };
 
@@ -20,6 +21,7 @@ export function useRoute(): Route {
 export const paths = {
   dashboard: '#/',
   doc: '#/doc',
+  report: '#/report',
   tasks: '#/tasks',
   item: (id: string) => `#/tasks/${encodeURIComponent(id)}`,
 };
@@ -27,6 +29,7 @@ export const paths = {
 function parse(hash: string): Route {
   const [section, id] = hash.replace(/^#\/?/, '').split('/');
   if (section === 'doc') return { view: 'doc' };
+  if (section === 'report') return { view: 'report' };
   if (section === 'tasks')
     return id ? { view: 'item', id: decodeURIComponent(id) } : { view: 'tasks' };
   return { view: 'dashboard' };

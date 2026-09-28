@@ -23,8 +23,19 @@ describe('reviewPlan', () => {
     expect(problems).toEqual([
       expect.stringContaining('T2: the description is'),
       expect.stringContaining('T2: has 1 subtasks'),
+      'T2: give it a size (S, M or L).',
       expect.stringContaining('T2: add acceptance criteria'),
       expect.stringContaining('T2.1: the description is too short'),
     ]);
+  });
+
+  it('asks bigger plans for milestones that cover the planned work', () => {
+    const tasks = ['T1', 'T2', 'T3', 'T4'].map((id) => plannedTask({ id }));
+    expect(reviewPlan(SCOPE, tasks)).toContain(
+      'Group the tasks into milestones: stages the user can see and try.',
+    );
+    const m1 = { id: 'M1', title: 'Core', goal: 'Add todos', tasks: ['T1', 'T2', 'T3'] };
+    expect(reviewPlan(SCOPE, tasks, [m1])).toContain('Put T4 in a milestone.');
+    expect(reviewPlan(SCOPE, tasks, [{ ...m1, tasks: ['T1', 'T2', 'T3', 'T4'] }])).toEqual([]);
   });
 });

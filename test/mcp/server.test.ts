@@ -4,6 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it } from 'vitest';
 import { addComment } from '../../src/core/actions.js';
+import { REPORT_SECTIONS } from '../../src/core/report.js';
 import { createMcpServer, type McpRole, savePlan } from '../../src/mcp/server.js';
 import { makePlan, makeTask, plannedTask, SCOPE } from '../fixtures.js';
 import { useTempProject } from '../helpers.js';
@@ -51,6 +52,7 @@ describe('savePlan', () => {
     await project.store.writePlan({
       version: 1,
       approvedAt: '2026-09-27T10:00:00Z',
+      milestones: [],
       tasks: [plannedTask({ id: 'T1', status: 'closed' }), plannedTask({ id: 'T2' })],
     });
     const result = await savePlan(project.store, {
@@ -73,6 +75,7 @@ describe('savePlan', () => {
     await project.store.writePlan({
       version: 1,
       approvedAt: '2026-09-27T10:00:00Z',
+      milestones: [],
       tasks: [plannedTask({ id: 'T1', status: 'building' })],
     });
     const result = await savePlan(project.store, {
@@ -117,11 +120,13 @@ describe('MCP tools, called through a real client', () => {
       'answer_permission',
       'approve_plan',
       'comment',
+      'prioritise',
       'save_plan',
       'screenshot',
       'set_status',
       'update_item',
       'update_scope',
+      'write_report',
     ]);
     expect(await names('worker')).toEqual([
       'ask_permission',
@@ -256,6 +261,21 @@ describe('MCP tools, called through a real client', () => {
     });
     // Agreed in conversation: no second trip to the board for approval.
     expect((await project.store.readPlan())?.approvedAt).not.toBeNull();
+  });
+
+  it('saves a report with every section, and shows it on the board', async () => {
+    const client = await connect();
+    const partial = await client.callTool({
+      name: 'write_report',
+      arguments: { markdown: '## What you have now\nA todo app.' },
+    });
+    expect(partial.isError).toBe(true);
+    expect(text(partial)).toContain('## What was built');
+
+    const markdown = REPORT_SECTIONS.map((section) => `## ${section}\nDetails.`).join('\n\n');
+    const saved = await client.callTool({ name: 'write_report', arguments: { markdown } });
+    expect(text(saved)).toContain('on the board under Report');
+    expect(await project.store.readReport()).toBe(markdown);
   });
 
   it('keeps the builder to the task it’s building', async () => {

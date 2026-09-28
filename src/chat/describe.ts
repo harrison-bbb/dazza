@@ -1,4 +1,6 @@
 import { basename } from 'node:path';
+import { humanDuration, minutesLeft } from '../core/estimates.js';
+import { currentMilestone } from '../core/milestones.js';
 import { currentTask, nextTask, progress } from '../core/plan.js';
 import type { Plan, Task } from '../core/schema.js';
 import { McpTools } from '../mcp/server.js';
@@ -28,8 +30,12 @@ export function greeting(plan: Plan | undefined, context: GreetingContext = {}):
   const current = currentTask(plan);
   const next = current ? undefined : nextTask(plan);
   const withStatus = (status: Task['status']) => plan.tasks.filter((t) => t.status === status);
+  const stage = currentMilestone(plan);
+  const left = minutesLeft(plan);
   return [
-    `${closed}/${total} tasks closed.`,
+    `${closed}/${total} tasks closed${left ? ` (${humanDuration(left)} of building left)` : ''}.`,
+    stage &&
+      `Working towards ${stage.milestone.id} ${stage.milestone.title} (${stage.closed}/${stage.total}).`,
     current && `Building ${current.id} ${current.title}.`,
     waiting(withStatus('review'), 'waiting for your review'),
     waiting(withStatus('blocked'), 'blocked on you'),
@@ -50,13 +56,27 @@ function waiting(tasks: Task[], what: string): string | undefined {
 
 /** The task list shown after the plan is saved, so the user can see what they're approving. */
 export function planCard(plan: Plan, wasApproved: boolean, boardUrl: string): string {
-  const title = wasApproved
-    ? `Plan revised · ${plan.tasks.length} tasks · needs your re-approval`
-    : `Plan saved · ${plan.tasks.length} tasks`;
+  const left = minutesLeft(plan);
+  const title = [
+    wasApproved ? 'Plan revised' : 'Plan saved',
+    `${plan.tasks.length} tasks`,
+    left > 0 && `${humanDuration(left)} of building`,
+    wasApproved && 'needs your re-approval',
+  ]
+    .filter(Boolean)
+    .join(' · ');
   const width = Math.max(...plan.tasks.map((task) => task.id.length));
-  const tasks = plan.tasks.map((task) => `  ${paint.dim(task.id.padEnd(width))}  ${task.title}`);
-  const footer = paint.dim(`  Review it at ${boardUrl} · approve there or with /approve`);
-  return [`${paint.green('✔')} ${paint.bold(title)}`, ...tasks, footer].join('\n');
+  const line = (task: Task) =>
+    `  ${paint.dim(task.id.padEnd(width))}  ${task.title}${task.size ? paint.dim(` · ${task.size}`) : ''}`;
+  // Grouped by milestone when there are any, so the stages are clear.
+  const grouped = plan.milestones.flatMap((m) => [
+    `  ${paint.bold(`${m.id} ${m.title}`)} ${paint.dim(`· ${m.goal}`)}`,
+    ...plan.tasks.filter((t) => m.tasks.includes(t.id)).map(line),
+  ]);
+  const placed = new Set(plan.milestones.flatMap((m) => m.tasks));
+  const loose = plan.tasks.filter((t) => !placed.has(t.id)).map(line);
+  const footer = paint.dim(`  Review it at ${boardUrl} · approve there, here, or with /approve`);
+  return [`${paint.green('✔')} ${paint.bold(title)}`, ...grouped, ...loose, footer].join('\n');
 }
 
 /** A short present-tense label for a tool call, shown next to the spinner. */

@@ -1,5 +1,7 @@
 import type { BuildEvent } from '../core/builder.js';
 import { clock } from '../core/errors.js';
+import { milestoneProgress } from '../core/milestones.js';
+import type { Milestone, Plan } from '../core/schema.js';
 import type { Store } from '../core/store.js';
 
 /**
@@ -27,7 +29,21 @@ export type Notification =
       why: string;
       images: string[];
     }
-  | { kind: 'info'; text: string; taskId?: string; images: string[] };
+  | { kind: 'info'; text: string; taskId?: string; images: string[] }
+  /** A stage the user can now try: its goal, what it delivered, and what's next. */
+  | {
+      kind: 'milestone';
+      taskId?: undefined;
+      id: string;
+      title: string;
+      goal: string;
+      /** "T1 Project setup", … */
+      tasks: string[];
+      /** Where the work is now, e.g. "main". */
+      branch?: string;
+      next?: string;
+      images: string[];
+    };
 
 /** A plain message, e.g. a build that stopped, or screenshots Dazza shared. */
 export function info(text: string, images: string[] = [], taskId?: string): Notification {
@@ -91,3 +107,31 @@ export async function notificationFor(
 function plural(count: number, noun: string, suffix = ''): string {
   return `${count} ${noun}${count === 1 ? '' : 's'}${suffix && ` ${suffix}`}`;
 }
+
+/** A milestone just reached, with a few screenshots from its tasks' handoffs. */
+export function milestoneNotification(
+  plan: Plan,
+  milestone: Milestone,
+  store: Pick<Store, 'mediaFile'>,
+): Notification {
+  const progress = milestoneProgress(plan);
+  const tasks = plan.tasks.filter((t) => milestone.tasks.includes(t.id) && t.status === 'closed');
+  const next = progress.find((m) => !m.reached && m.milestone.id !== milestone.id)?.milestone;
+  const branch = tasks.find((t) => t.handoff?.baseBranch)?.handoff?.baseBranch;
+  return {
+    kind: 'milestone',
+    id: milestone.id,
+    title: milestone.title,
+    goal: milestone.goal,
+    tasks: tasks.map((t) => `${t.id} ${t.title}`),
+    ...(branch && { branch }),
+    ...(next && { next: `${next.id} ${next.title}` }),
+    images: tasks
+      .flatMap((t) => t.handoff?.screenshots ?? [])
+      .slice(0, MAX_MILESTONE_SHOTS)
+      .map((path) => store.mediaFile(path)),
+  };
+}
+
+/** Enough to show what a milestone looks like, without a wall of pictures. */
+const MAX_MILESTONE_SHOTS = 4;

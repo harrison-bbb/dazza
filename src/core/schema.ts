@@ -59,6 +59,13 @@ export const Handoff = z.object({
   submittedAt: Timestamp,
 });
 
+/**
+ * Roughly how big a task is, in the builder's time: S about 20 minutes, M about
+ * 45, L about 90. Enough to say what a change costs and how much is left.
+ */
+export const TaskSize = z.enum(['S', 'M', 'L']);
+export const SIZE_MINUTES: Record<z.infer<typeof TaskSize>, number> = { S: 20, M: 45, L: 90 };
+
 export const Task = z
   .object({
     id: TaskId,
@@ -68,6 +75,7 @@ export const Task = z
     subtasks: z.array(Subtask).default([]),
     dependsOn: z.array(TaskId).default([]),
     status: TaskStatus.default('planned'),
+    size: TaskSize.optional(),
     handoff: Handoff.optional(),
   })
   .refine((task) => task.subtasks.every((s) => s.id.startsWith(`${task.id}.`)), {
@@ -75,11 +83,22 @@ export const Task = z
     path: ['subtasks'],
   });
 
+/** A stage the user can see and try: a few tasks that together deliver something. */
+export const Milestone = z.object({
+  id: z.string().regex(/^M\d+$/, 'Milestone ids look like "M1"'),
+  title: z.string().min(1),
+  /** What the user can do once it's reached, e.g. "Clients can book and pay for walks". */
+  goal: z.string().min(1),
+  tasks: z.array(TaskId).min(1),
+});
+
 export const Plan = z
   .object({
     version: z.literal(SCHEMA_VERSION),
     approvedAt: Timestamp.nullable().default(null),
+    /** Tasks in priority order: the builder takes the first one that's ready. */
     tasks: z.array(Task),
+    milestones: z.array(Milestone).default([]),
   })
   .superRefine((plan, ctx) => {
     const ids = new Set<string>();
@@ -100,6 +119,27 @@ export const Plan = z
         }
       }
     }
+    const placed = new Map<string, string>();
+    for (const milestone of plan.milestones) {
+      for (const id of milestone.tasks) {
+        if (!ids.has(id)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `${milestone.id} lists unknown task ${id}`,
+            path: ['milestones'],
+          });
+        }
+        const other = placed.get(id);
+        if (other) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `${id} is in both ${other} and ${milestone.id}; a task belongs to one milestone`,
+            path: ['milestones'],
+          });
+        }
+        placed.set(id, milestone.id);
+      }
+    }
   });
 
 export const EventType = z.enum([
@@ -118,6 +158,10 @@ export const EventType = z.enum([
   'scope_change_proposed',
   /** An agreed change to the scope, recorded in its change log. */
   'scope_changed',
+  /** All of a milestone's tasks are closed. The message starts with its id: "M2: …". */
+  'milestone_reached',
+  /** The close-out (or progress) report was written. */
+  'report_written',
   'comment',
   /** Dazza's guard stopped something the builder tried, or let it through with the user's OK. */
   'guarded',
@@ -143,6 +187,8 @@ export type Subtask = z.infer<typeof Subtask>;
 export type Task = z.infer<typeof Task>;
 export type Handoff = z.infer<typeof Handoff>;
 export type Plan = z.infer<typeof Plan>;
+export type Milestone = z.infer<typeof Milestone>;
+export type TaskSize = z.infer<typeof TaskSize>;
 export type EventType = z.infer<typeof EventType>;
 export type Event = z.infer<typeof Event>;
 /** An event as written, before defaults are applied. */

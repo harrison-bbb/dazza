@@ -8,6 +8,7 @@ import { useProject } from './lib/useProject';
 import { Dashboard } from './views/Dashboard';
 import { DocView } from './views/DocView';
 import { ItemView } from './views/ItemView';
+import { ReportView } from './views/ReportView';
 import { TaskList } from './views/TaskList';
 
 export function App() {
@@ -36,6 +37,8 @@ export function App() {
       <main className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         {route.view === 'doc' ? (
           <DocView scope={project.scope} events={events} />
+        ) : route.view === 'report' ? (
+          <ReportView report={project.report} />
         ) : route.view === 'tasks' ? (
           plan ? (
             <TaskList plan={plan} events={events} />
@@ -49,6 +52,7 @@ export function App() {
             tasks={plan.tasks}
             events={events}
             permission={project.permissions[found.task.id]}
+            milestone={plan.milestones.find((m) => m.tasks.includes(found.task.id))}
             onChange={refresh}
           />
         ) : route.view === 'item' ? (
@@ -82,6 +86,8 @@ function crumbs(project: string, route: Route, found: Found | undefined): Crumb[
       return [{ label: project }];
     case 'doc':
       return [root, { label: 'Scope of work' }];
+    case 'report':
+      return [root, { label: 'Report' }];
     case 'tasks':
       return [root, { label: 'Tasks' }];
     case 'item': {

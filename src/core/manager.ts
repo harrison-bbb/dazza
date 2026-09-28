@@ -2,6 +2,8 @@ import { MANAGER_TOOLS, MCP_SERVER_NAME } from '../mcp/server.js';
 import managerPrompt from '../prompts/manager.md';
 import type { AgentEvent, AgentProvider, McpServerConfig } from '../providers/types.js';
 import type { Config } from './config.js';
+import { humanDuration, minutesLeft } from './estimates.js';
+import { milestoneProgress } from './milestones.js';
 import { progress } from './plan.js';
 import type { Event, Plan } from './schema.js';
 import type { Store } from './store.js';
@@ -121,10 +123,24 @@ export function describeState(
   const status = plan.approvedAt
     ? `approved, ${closed}/${total} tasks closed`
     : 'draft, awaiting approval';
+  const milestoneOf = new Map(plan.milestones.flatMap((m) => m.tasks.map((id) => [id, m.id])));
+  const left = minutesLeft(plan);
   const lines = [
     where,
-    `Plan (${status}):`,
-    ...plan.tasks.map((t) => `- ${t.id} [${t.status}] ${t.title}`),
+    `Plan (${status}), tasks in priority order${left ? `, ${humanDuration(left)} of building left` : ''}:`,
+    ...plan.tasks.map(
+      (t) =>
+        `- ${t.id} [${t.status}${t.size ? `, ${t.size}` : ''}${milestoneOf.has(t.id) ? `, ${milestoneOf.get(t.id)}` : ''}] ${t.title}`,
+    ),
+    ...(plan.milestones.length > 0
+      ? [
+          'Milestones:',
+          ...milestoneProgress(plan).map(
+            ({ milestone, closed, total, reached }) =>
+              `- ${milestone.id} ${milestone.title} (${reached ? 'reached' : `${closed}/${total} closed`}): ${milestone.goal}`,
+          ),
+        ]
+      : []),
   ];
 
   const comments = events.filter((e) => e.type === 'comment').slice(-RECENT_COMMENTS);

@@ -1,5 +1,6 @@
 import { Git } from '../git/git.js';
-import { approve, findItem, withStatus } from './plan.js';
+import { recordMilestones } from './milestones.js';
+import { approve, findItem, moveTask, waitingOn, withStatus } from './plan.js';
 import type { Actor, Plan } from './schema.js';
 import type { Store } from './store.js';
 import { landApprovedWork } from './work.js';
@@ -80,22 +81,18 @@ export async function closeTask(
   const landing = await landApprovedWork(store, new Git(store.root));
   const plan = await store.readPlan();
   const base = plan && findItem(plan, taskId)?.task.handoff?.baseBranch;
-  if (landing.landed.includes(taskId)) {
-    const others = landing.landed.filter((id) => id !== taskId);
-    return {
-      ok: true,
-      message: `${result.message}. Merged into ${base}${others.length ? `, along with ${others.join(', ')}` : ''}.`,
-    };
-  }
+  const others = landing.landed.filter((id) => id !== taskId);
   const held = landing.held[taskId];
-  if (held) return { ok: true, message: `${result.message}. It hasn’t landed yet: ${held}` };
-  if (base) {
-    return {
-      ok: true,
-      message: `${result.message}. It lands on ${base} once the work it builds on does.`,
-    };
-  }
-  return result;
+  const landed = landing.landed.includes(taskId)
+    ? ` Merged into ${base}${others.length ? `, along with ${others.join(', ')}` : ''}.`
+    : held
+      ? ` It hasn’t landed yet: ${held}`
+      : base
+        ? ` It lands on ${base} once the work it builds on does.`
+        : '';
+  const reached = await recordMilestones(store, now);
+  const milestone = reached.map((m) => ` That completes ${m.id}, ${m.title}.`).join('');
+  return { ok: true, message: `${result.message}.${landed}${milestone}` };
 }
 
 /** Send reviewed work back to Dazza with a note on what to change. */
@@ -124,7 +121,7 @@ export async function cancelTask(
   now = new Date(),
 ): Promise<ActionResult> {
   if (taskId.includes('.')) return cancelSubtask(store, taskId, now);
-  return transition(store, taskId, now, (plan, task) => {
+  const result = await transition(store, taskId, now, (plan, task) => {
     if (task.status === 'closed' || task.status === 'cancelled') {
       return fail(`${taskId} is already ${task.status}.`);
     }
@@ -133,6 +130,48 @@ export async function cancelTask(
       event: { type: 'task_cancelled', message: `Cancelled ${task.title}` },
     };
   });
+  // Dropping the last open task of a milestone completes it.
+  if (result.ok) await recordMilestones(store, now);
+  return result;
+}
+
+/**
+ * Put a task first in line (or ahead of another), e.g. "do T7 next". Says
+ * what it still waits on, since dependencies come before priority.
+ */
+export async function prioritise(
+  store: Store,
+  taskId: string,
+  before?: string,
+  now = new Date(),
+): Promise<ActionResult> {
+  const result = await store.updatePlan((plan): [Plan | undefined, ActionResult] => {
+    if (!plan) return [undefined, fail('No plan yet.')];
+    const moved = moveTask(plan, taskId, before);
+    if (typeof moved === 'string') return [undefined, fail(moved)];
+    const task = moved.tasks.find((t) => t.id === taskId);
+    if (task && task.status !== 'planned' && task.status !== 'backlog') {
+      return [undefined, fail(`${taskId} is ${task.status}, so there's nothing to reorder.`)];
+    }
+    const blockers = task ? waitingOn(moved, task).map((t) => `${t.id} (${t.status})`) : [];
+    const where = before ? `ahead of ${before}` : 'first in line';
+    return [
+      moved,
+      {
+        ok: true,
+        message: blockers.length
+          ? `${taskId} is ${where}, but it can't start until ${blockers.join(', ')} ${blockers.length === 1 ? 'is' : 'are'} closed.`
+          : `${taskId} is ${where}${task?.status === 'backlog' ? ', but still in the backlog: move it to planned to build it' : ''}.`,
+      },
+    ];
+  });
+  if (result.ok)
+    await log(store, now, { type: 'task_moved', message: `Moved ${where(before)}`, taskId });
+  return result;
+}
+
+function where(before: string | undefined): string {
+  return before ? `ahead of ${before}` : 'to the front of the queue';
 }
 
 /** Drop one part of a task that's no longer wanted; the rest of the task carries on. */

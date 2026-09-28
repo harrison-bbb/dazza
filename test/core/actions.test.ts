@@ -4,6 +4,7 @@ import {
   approvePlan,
   cancelTask,
   closeTask,
+  prioritise,
   requestChanges,
   setStatus,
 } from '../../src/core/actions.js';
@@ -163,5 +164,25 @@ describe('actions', () => {
     expect(task?.status).toBe('planned');
     expect(task?.subtasks.map((s) => s.status)).toEqual(['planned', 'cancelled']);
     expect(await cancelTask(project.store, 'T3.2')).toMatchObject({ ok: false });
+  });
+
+  it('moves a task to the front of the queue, and says what it still waits on', async () => {
+    await project.store.writePlan(
+      makePlan([
+        makeTask({ id: 'T1', status: 'closed' }),
+        makeTask({ id: 'T2' }),
+        makeTask({ id: 'T3' }),
+        makeTask({ id: 'T4', dependsOn: ['T3'] }),
+      ]),
+    );
+    expect((await prioritise(project.store, 'T3')).message).toBe('T3 is first in line.');
+    const order = async () => (await project.store.readPlan())?.tasks.map((t) => t.id);
+    expect(await order()).toEqual(['T1', 'T3', 'T2', 'T4']);
+
+    expect((await prioritise(project.store, 'T4', 'T2')).message).toBe(
+      "T4 is ahead of T2, but it can't start until T3 (planned) is closed.",
+    );
+    expect(await order()).toEqual(['T1', 'T3', 'T4', 'T2']);
+    expect((await prioritise(project.store, 'T1')).ok).toBe(false); // closed: nothing to reorder
   });
 });

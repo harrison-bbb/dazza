@@ -84,3 +84,24 @@ function hasStarted(status: TaskStatus): boolean {
 function initialStatus(requested: TaskStatus): TaskStatus {
   return requested === 'backlog' ? 'backlog' : 'planned';
 }
+
+/**
+ * Move a task up the queue: before `before`, or to the front of the work
+ * that's waiting. The builder takes the first ready task in plan order.
+ */
+export function moveTask(plan: Plan, id: string, before?: string): Plan | string {
+  const task = plan.tasks.find((t) => t.id === id);
+  if (!task) return `No task ${id}.`;
+  const rest = plan.tasks.filter((t) => t.id !== id);
+  const anchor = before
+    ? rest.findIndex((t) => t.id === before)
+    : rest.findIndex((t) => t.status === 'planned' || t.status === 'backlog');
+  if (before && anchor < 0) return `No task ${before}.`;
+  const at = anchor < 0 ? rest.length : anchor;
+  return { ...plan, tasks: [...rest.slice(0, at), task, ...rest.slice(at)] };
+}
+
+/** Tasks that must be closed before this one can start, and aren't yet. */
+export function waitingOn(plan: Plan, task: Task): Task[] {
+  return plan.tasks.filter((t) => task.dependsOn.includes(t.id) && t.status !== 'closed');
+}
