@@ -116,7 +116,11 @@ export const EventType = z.enum([
   'task_added',
   'task_moved',
   'scope_change_proposed',
+  /** An agreed change to the scope, recorded in its change log. */
+  'scope_changed',
   'comment',
+  /** Dazza's guard stopped something the builder tried, or let it through with the user's OK. */
+  'guarded',
 ]);
 
 export const Actor = z.enum(['user', 'dazza']);

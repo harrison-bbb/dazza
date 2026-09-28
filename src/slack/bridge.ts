@@ -105,7 +105,8 @@ export class SlackBridge implements Channel {
       const home = await this.handlers.home();
       const message = notificationMessage(note, home);
       const posted = await this.api.postMessage({ channel: this.link.channelId, ...message });
-      this.remember(posted.ts, note.taskId, note.kind === 'review' ? message.blocks : undefined);
+      const decides = note.kind === 'review' || note.kind === 'permission';
+      this.remember(posted.ts, note.taskId, decides ? message.blocks : undefined);
       if (note.images.length > 0) {
         await this.api.uploadFiles(posted.channel, note.images, posted.ts);
       }
@@ -259,6 +260,18 @@ export class SlackBridge implements Channel {
           if (where) this.decided.add(where.ts);
           const outcome = await this.handlers.onApprove(value);
           await this.settle(where, outcome.ok ? `✅ ${outcome.message}` : `⚠️ ${outcome.message}`);
+          return;
+        }
+        case Actions.allowCommand:
+        case Actions.refuseCommand: {
+          if (!value || (where && this.decided.has(where.ts))) return;
+          if (where) this.decided.add(where.ts);
+          const allow = actionId === Actions.allowCommand;
+          const outcome = await this.handlers.onPermission(value, allow);
+          await this.settle(
+            where,
+            `${outcome.ok ? (allow ? '✅' : '🚫') : '⚠️'} ${outcome.message}`,
+          );
           return;
         }
         case Actions.requestChanges: {

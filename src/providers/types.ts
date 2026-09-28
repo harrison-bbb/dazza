@@ -54,6 +54,11 @@ export interface AgentRunOptions {
    * provider's own safety checks blocking risky actions.
    */
   autonomous?: boolean;
+  /**
+   * A command to check every tool call before it runs (Dazza's guard), where
+   * the agent CLI supports it. It reads the call as JSON on stdin.
+   */
+  guard?: McpServerConfig;
   signal?: AbortSignal;
 }
 

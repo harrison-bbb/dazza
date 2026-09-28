@@ -44,6 +44,25 @@ describe('board server', () => {
     expect(snapshot.plan?.tasks).toHaveLength(1);
   });
 
+  it('shows a task’s permission request, and records the answer', async () => {
+    await project.store.writePlan(makePlan([makeTask({ id: 'T1', status: 'blocked' })]));
+    await project.store.updatePermissions('T1', (p) => ({
+      ...p,
+      pending: { command: 'brew install redis', why: 'Local cache for tests' },
+    }));
+    const snapshot = (await (
+      await app().request('http://localhost/api/project')
+    ).json()) as ProjectSnapshot;
+    expect(snapshot.permissions).toEqual({
+      T1: { command: 'brew install redis', why: 'Local cache for tests' },
+    });
+
+    expect((await post('/api/tasks/T1/permission', { allow: 'yes' })).status).toBe(400);
+    expect((await post('/api/tasks/T1/permission', { allow: true })).status).toBe(200);
+    expect((await project.store.readPermissions('T1')).allowed).toEqual(['brew install redis']);
+    expect((await project.store.readPlan())?.tasks[0]?.status).toBe('planned');
+  });
+
   it('approves the plan', async () => {
     await project.store.writePlan(makePlan([makeTask({ id: 'T1' })]));
     expect((await post('/api/approve')).status).toBe(200);

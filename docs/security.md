@@ -34,7 +34,25 @@ There are two agent sessions. See [architecture.md](architecture.md).
 - Claude Code: `--permission-mode auto`. Claude Code's own safety checks decide what's too risky and block it.
 - Codex: `--approve-for-me`, which is the workspace-write sandbox with automatic approval review, plus network access (`sandbox_workspace_write.network_access=true`) so it can install dependencies.
 
-Be clear about what that means. During `/build`, the agent runs shell commands on your machine, as you, without a prompt for each one. Dazza relies on the agent CLI's own safeguards for which commands are allowed. It doesn't add a sandbox of its own. Build in projects you'd be comfortable letting Claude Code or Codex work on unattended, and don't build with production credentials in your environment.
+Be clear about what that means. During `/build`, the agent runs shell commands on your machine, as you, without a prompt for each one. The model's own judgment is one safeguard, and in testing it usually refuses obviously risky steps. But judgment isn't a guarantee: a task that seems to need the step, or instructions planted in a file it reads, can change its mind. So Dazza adds a guard of its own.
+
+### Dazza's guard
+
+On Claude Code, every tool call the agent makes goes through `dazza guard` first (a `PreToolUse` hook; the rules are in `src/guard/policy.ts`). It works like a careful engineer on someone else's systems: the task's own worktree is theirs to change, and everything outside it isn't. Each call gets one of three answers:
+
+| | What | Examples |
+|---|---|---|
+| **Never**, even if asked | Leaving the machine, or changing it | `git push` (any), deploying or publishing (`npm publish`, `vercel --prod`, `terraform apply`, `kubectl delete`, mutating `aws`/`gcloud`/`az`), `sudo`, `ssh`, piping a download into a shell, reading or copying credential files (`~/.ssh`, `~/.aws`, `~/.npmrc`, the keychain…), writing or deleting outside the worktree (including via `cd ..`, redirects, `find -delete`), switching or deleting branches, rewriting git history |
+| **Asks you first** | Reversible only with effort, or touching something live | Connecting to a database that isn't local, `DROP`/`TRUNCATE`/`DELETE FROM`, `prisma migrate reset`, sending a change (POST/PUT/PATCH/DELETE or a body) to an outside service, machine-wide installs, killing processes by name, read-only calls to a live cloud account |
+| Goes ahead | Normal work inside the worktree | Installing dependencies, running tests and dev servers, local databases, editing code, `git status`/`diff`/`commit` |
+
+When something needs your OK, the builder asks with the exact command and why, and the task waits. You answer from the chat, the board, or the **Allow once** / **Don't allow** buttons on Slack or Telegram. Allowing lets that exact command run, for that task only. Everything the guard stops or lets through with your OK is logged on the task's timeline. If the guard itself fails, the call is refused (it fails closed).
+
+Two more protections on Claude Code runs: the agent only loads your user-level Claude Code settings, not settings files that come with the repository (`--setting-sources user`). Headless runs skip Claude Code's workspace-trust prompt, so a repository could otherwise bring its own hooks or loosen permissions. And both agents get only Dazza's MCP server.
+
+What the guard is not: a sandbox. It reads commands the way a reviewer would, so a determined attempt to disguise a command (building it at run time, say) can get past the rules. Commands built at run time (`eval`) are held for your OK for that reason. It's defense in depth on top of Claude Code's auto mode and the model's judgment. On Codex, which has no equivalent hook, the guard doesn't apply: Codex's own sandbox limits writes to the task's worktree, but not network access or what commands run. Prefer Claude Code for sensitive work.
+
+Build with the credentials a developer on the project would have, not production ones. Keep production keys out of the environment you run Dazza in; the guard asks before remote databases, but the safest secret is one the agent never had.
 
 Both sessions get only Dazza's MCP server (`--strict-mcp-config` on Claude Code). Your personal MCP servers aren't exposed to them.
 

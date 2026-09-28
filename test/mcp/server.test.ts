@@ -18,7 +18,7 @@ describe('savePlan', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(await project.store.readScope()).toBe(SCOPE);
+    expect(await project.store.readScope()).toBe(`${SCOPE}\n`);
     expect((await project.store.readPlan())?.tasks).toHaveLength(2);
     expect((await project.store.readEvents()).map((e) => e.type)).toEqual(['plan_created']);
   });
@@ -63,6 +63,10 @@ describe('savePlan', () => {
     expect(plan?.approvedAt).toBeNull();
     expect(plan?.tasks.map((t) => t.status)).toEqual(['closed', 'planned', 'planned']);
     expect((await project.store.readEvents()).at(-1)?.type).toBe('scope_change_proposed');
+    // Rewriting an agreed plan is a change to it: logged, like any other.
+    expect(await project.store.readScope()).toMatch(
+      /## Change log\n\n- \*\*v2 · .*\*\*: Revised the whole plan/,
+    );
   });
 
   it('refuses to drop work that has started', async () => {
@@ -110,13 +114,17 @@ describe('MCP tools, called through a real client', () => {
     expect(await names('manager')).toEqual([
       'add_subtask',
       'add_task',
+      'answer_permission',
+      'approve_plan',
       'comment',
       'save_plan',
       'screenshot',
       'set_status',
       'update_item',
+      'update_scope',
     ]);
     expect(await names('worker')).toEqual([
+      'ask_permission',
       'block',
       'check_messages',
       'comment',
@@ -211,6 +219,43 @@ describe('MCP tools, called through a real client', () => {
       await worker.callTool({ name: 'check_messages', arguments: { taskId: 'T1' } }),
     );
     expect(second).not.toContain('Make it blue');
+  });
+
+  it('updates the scope after an agreed change, and logs it', async () => {
+    await project.store.writePlan({
+      ...makePlan([plannedTask({ id: 'T1' }), plannedTask({ id: 'T2' })]),
+      approvedAt: '2026-09-27T10:00:00Z',
+    });
+    await project.store.writeScope(SCOPE);
+    const client = await connect();
+    const thin = await client.callTool({
+      name: 'update_scope',
+      arguments: { scope: '## Overview\nOnly this', summary: 'x', why: 'y' },
+    });
+    expect(thin.isError).toBe(true);
+    expect(text(thin)).toContain('missing ## Users');
+
+    const result = await client.callTool({
+      name: 'update_scope',
+      arguments: {
+        scope: SCOPE.replace('## Out of scope\nDetails.', '## Out of scope\nSharing.'),
+        summary: 'Drop sharing',
+        why: 'Nobody asked for it',
+        tasks: ['T2'],
+      },
+    });
+    expect(text(result)).toContain('Scope updated to v2');
+    const scope = (await project.store.readScope()) ?? '';
+    expect(scope).toContain('## Out of scope\nSharing.');
+    expect(scope).toMatch(
+      /## Change log\n\n- \*\*v2 · \d{4}-\d{2}-\d{2}\*\*: Drop sharing \(T2\)\. Why: Nobody asked for it/,
+    );
+    expect((await project.store.readEvents()).at(-1)).toMatchObject({
+      type: 'scope_changed',
+      message: 'Drop sharing (T2)',
+    });
+    // Agreed in conversation: no second trip to the board for approval.
+    expect((await project.store.readPlan())?.approvedAt).not.toBeNull();
   });
 
   it('keeps the builder to the task it’s building', async () => {

@@ -30,6 +30,8 @@ export interface SessionOptions {
   manager: Manager;
   /** How the builder's agent launches Dazza's worker tools. */
   workerMcp: McpServerConfig;
+  /** How the builder's agent runs Dazza's guard before each tool call. */
+  workerGuard?: McpServerConfig;
   boardUrl: string;
   output: SessionOutput;
   /** Called with every build event, e.g. to send notifications. */
@@ -223,7 +225,15 @@ export class ChatSession {
     const render = createBuildRenderer(store.root);
     output.status('build', 'Getting ready to build');
     try {
-      for await (const event of build({ store, config, provider, mcpServer: workerMcp, signal })) {
+      const { workerGuard } = this.options;
+      for await (const event of build({
+        store,
+        config,
+        provider,
+        mcpServer: workerMcp,
+        ...(workerGuard && { guard: workerGuard }),
+        signal,
+      })) {
         if (event.type === 'agent') {
           this.countUsage(event.event);
           this.noticeShares(event.event);

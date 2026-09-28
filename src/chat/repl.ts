@@ -8,6 +8,7 @@ import { recoverAbandonedBuild } from '../core/builder.js';
 import { Config, type Connection } from '../core/config.js';
 import { describeCodebase, inspectCodebase } from '../core/inspect.js';
 import { Manager } from '../core/manager.js';
+import { answerPermission } from '../core/permissions.js';
 import { StateError, Store } from '../core/store.js';
 import type {
   Channel,
@@ -91,6 +92,7 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
     provider,
     projectRoot,
     mcpServer: { command: process.execPath, args: [cliPath(), 'mcp', '--root', projectRoot] },
+    guard: guardFor(projectRoot, 'manager'),
     ...(codebase && { codebase }),
   });
 
@@ -125,6 +127,7 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
       command: process.execPath,
       args: [cliPath(), 'mcp', '--root', projectRoot, '--role', 'worker'],
     },
+    workerGuard: guardFor(projectRoot, 'worker'),
     boardUrl: board.url,
     output: {
       say,
@@ -197,6 +200,8 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
     onApprove: async (taskId) => fromPhone(where)(await closeTask(store, taskId)),
     onRequestChanges: async (taskId, note) =>
       fromPhone(where)(await requestChanges(store, taskId, note)),
+    onPermission: async (taskId, allow) =>
+      fromPhone(where)(await answerPermission(store, taskId, allow)),
     onProblem: (text) => say(paint.dim(text)),
   });
 
@@ -427,6 +432,14 @@ function say(text: string): void {
   const [first = '', ...rest] = text.trim().split('\n');
   const body = rest.map((line) => (line.trim() ? `\n  ${line}` : '\n')).join('');
   write(`\n${paint.hex(BRAND, '●')} ${first}${body}\n`);
+}
+
+/** How an agent runs Dazza's guard before each tool call. */
+function guardFor(projectRoot: string, role: 'manager' | 'worker') {
+  return {
+    command: process.execPath,
+    args: [cliPath(), 'guard', '--root', projectRoot, '--role', role],
+  };
 }
 
 /** Path of the running CLI, so the agent can launch our MCP server with the same build. */

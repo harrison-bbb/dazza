@@ -18,6 +18,15 @@ export type Notification =
       images: string[];
     }
   | { kind: 'blocked'; taskId: string; title: string; question?: string; images: string[] }
+  /** The builder wants to run a command that needs the user's OK. */
+  | {
+      kind: 'permission';
+      taskId: string;
+      title: string;
+      command: string;
+      why: string;
+      images: string[];
+    }
   | { kind: 'info'; text: string; taskId?: string; images: string[] };
 
 /** A plain message, e.g. a build that stopped, or screenshots Dazza shared. */
@@ -45,6 +54,10 @@ export async function notificationFor(
   const task = plan?.tasks.find((t) => t.id === event.task.id) ?? event.task;
 
   if (event.outcome === 'blocked') {
+    const { pending } = await store.readPermissions(task.id);
+    if (pending) {
+      return { kind: 'permission', taskId: task.id, title: task.title, ...pending, images: [] };
+    }
     const question = (await store.readEvents())
       .filter((e) => e.type === 'comment' && e.actor === 'dazza' && e.taskId === task.id)
       .at(-1);

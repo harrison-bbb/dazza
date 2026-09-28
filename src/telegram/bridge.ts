@@ -34,6 +34,12 @@ const Buttons = {
       { text: '↩️ Request changes', callback_data: `changes:${taskId}` },
     ],
   ],
+  permission: (taskId: string): Keyboard => [
+    [
+      { text: '✅ Allow once', callback_data: `allow:${taskId}` },
+      { text: '🚫 Don’t allow', callback_data: `refuse:${taskId}` },
+    ],
+  ],
   // Approving merges, so it takes a second tap, like Slack's confirm.
   confirm: (taskId: string): Keyboard => [
     [
@@ -80,6 +86,7 @@ export class TelegramBridge implements Channel {
   async notify(note: Notification): Promise<void> {
     const id = await this.send(telegramText(note), note.images, {
       ...(note.kind === 'review' && { keyboard: Buttons.review(note.taskId) }),
+      ...(note.kind === 'permission' && { keyboard: Buttons.permission(note.taskId) }),
     });
     if (id !== undefined && note.taskId) remember(this.about, id, note.taskId);
   }
@@ -203,6 +210,13 @@ export class TelegramBridge implements Channel {
         await this.settle(await this.options.onApprove(taskId), messageId);
         return;
       }
+      case 'allow':
+      case 'refuse': {
+        this.decided.add(messageId);
+        await this.api.setKeyboard(this.link.chatId, messageId);
+        await this.settle(await this.options.onPermission(taskId, action === 'allow'), messageId);
+        return;
+      }
       case 'changes': {
         const prompt = await this.send(
           `What should change in ${taskId}? Reply to this message, and the next build works from your note.`,
@@ -234,6 +248,13 @@ export function telegramText(note: Notification): string {
       ]
         .filter(Boolean)
         .join('\n\n');
+    case 'permission':
+      return [
+        `🔐 ${note.taskId} wants to run a command that needs your OK: ${note.title}`,
+        note.command,
+        `Why: ${note.why}`,
+        'Only this exact command, only for this task.',
+      ].join('\n\n');
     case 'review':
       return [
         `✅ ${note.taskId} is ready for your review: ${note.title}`,

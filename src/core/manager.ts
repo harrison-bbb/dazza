@@ -20,6 +20,8 @@ export interface ManagerOptions {
   projectRoot: string;
   /** How the agent CLI should launch Dazza's MCP server. */
   mcpServer: McpServerConfig;
+  /** Checks every tool call the manager makes; see src/guard. */
+  guard?: McpServerConfig;
   /** The code already in the directory, in a few words, if any. */
   codebase?: string;
 }
@@ -82,6 +84,7 @@ export class Manager {
       systemPrompt: managerPrompt,
       allowedTools: TOOLS,
       mcpServers: { [MCP_SERVER_NAME]: mcpServer },
+      ...(this.options.guard && { guard: this.options.guard }),
       ...(sessionId && { resumeSessionId: sessionId }),
       ...(model && { model }),
       ...(signal && { signal }),

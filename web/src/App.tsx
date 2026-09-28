@@ -48,6 +48,7 @@ export function App() {
             subtask={found.subtask}
             tasks={plan.tasks}
             events={events}
+            permission={project.permissions[found.task.id]}
             onChange={refresh}
           />
         ) : route.view === 'item' ? (

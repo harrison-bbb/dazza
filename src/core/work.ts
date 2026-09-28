@@ -156,7 +156,9 @@ export async function setSubtaskStatus(
 ): Promise<ActionResult> {
   const title = await store.updatePlan((plan): [Plan | undefined, string | undefined] => {
     const found = plan && findItem(plan, subtaskId);
-    if (!plan || !found?.subtask) return [undefined, undefined];
+    // A dropped subtask stays dropped: the user decided that, not the builder.
+    if (!plan || !found?.subtask || found.subtask.status === 'cancelled')
+      return [undefined, undefined];
     return [withStatus(plan, subtaskId, status), found.subtask.title];
   });
   if (title === undefined) return { ok: false, message: `No subtask ${subtaskId}.` };

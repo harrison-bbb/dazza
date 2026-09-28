@@ -156,6 +156,10 @@ describe('TelegramBridge', () => {
         sentBack.push(`${taskId}: ${note}`);
         return { ok: true, message: 'Requested changes' };
       },
+      onPermission: async (taskId, allow) => {
+        sentBack.push(`${taskId}: ${allow ? 'allowed' : 'refused'}`);
+        return { ok: true, message: allow ? 'Allowed' : 'Refused' };
+      },
       onProblem: (text) => problems.push(text),
       api: bot.api('t'),
     });

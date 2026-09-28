@@ -6,6 +6,7 @@ import { Screenshots } from '../components/Screenshots';
 import { StatusIcon, StatusLabel } from '../components/StatusIcon';
 import { Button, Heading, Id, InlineText } from '../components/ui';
 import {
+  answerPermission,
   cancelTask,
   closeTask,
   type Event,
@@ -24,11 +25,13 @@ interface ItemViewProps {
   subtask: Subtask | undefined;
   tasks: Task[];
   events: Event[];
+  /** A command this task is waiting on the user's OK to run. */
+  permission?: { command: string; why: string } | undefined;
   onChange(): void;
 }
 
 /** A task or subtask: details on the left, the conversation about it on the right. */
-export function ItemView({ task, subtask, tasks, events, onChange }: ItemViewProps) {
+export function ItemView({ task, subtask, tasks, events, permission, onChange }: ItemViewProps) {
   const [mode, setMode] = useState<ComposerMode>('comment');
   const item = subtask ?? task;
   const thread = events.filter((e) => e.taskId === item.id);
@@ -65,7 +68,11 @@ export function ItemView({ task, subtask, tasks, events, onChange }: ItemViewPro
             />
           )}
 
-          {blocker && <BlockerNote question={blocker} onReply={() => setMode('unblock')} />}
+          {!subtask && task.status === 'blocked' && permission ? (
+            <PermissionNote taskId={task.id} permission={permission} onChange={onChange} />
+          ) : (
+            blocker && <BlockerNote question={blocker} onReply={() => setMode('unblock')} />
+          )}
 
           {item.description && (
             // Descriptions are Markdown: the scope of a task, with details and boundaries.
@@ -132,7 +139,7 @@ export function ItemView({ task, subtask, tasks, events, onChange }: ItemViewPro
               {task.subtasks.length > 0 && (
                 <section className="mt-10">
                   <Heading
-                    aside={`${task.subtasks.filter((s) => s.status === 'closed').length} of ${task.subtasks.length} closed`}
+                    aside={`${task.subtasks.filter((s) => s.status === 'closed').length} of ${task.subtasks.filter((s) => s.status !== 'cancelled').length} closed`}
                   >
                     Subtasks
                   </Heading>
@@ -241,6 +248,52 @@ function BlockerNote({
       <Button className="mt-3" onClick={onReply}>
         Answer
       </Button>
+    </div>
+  );
+}
+
+/** The builder asking to run one command that Dazza's guard held back. */
+function PermissionNote({
+  taskId,
+  permission,
+  onChange,
+}: {
+  taskId: string;
+  permission: { command: string; why: string };
+  onChange(): void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const answer = async (allow: boolean) => {
+    setBusy(true);
+    try {
+      await answerPermission(taskId, allow);
+    } finally {
+      setBusy(false);
+      onChange();
+    }
+  };
+  return (
+    <div className="mt-6 rounded-lg border border-red/30 px-4 py-3">
+      <div className="flex items-center gap-2 text-[13px] font-medium text-red">
+        <CircleAlert className="size-3.5" />
+        Dazza needs your OK to run a command
+      </div>
+      <pre className="mt-2 overflow-x-auto rounded bg-hover px-3 py-2 font-mono text-[12px] text-ink">
+        {permission.command}
+      </pre>
+      <p className="mt-2 text-[13px] leading-6 text-ink-2">
+        <span className="text-muted">Why: </span>
+        <InlineText>{permission.why}</InlineText>
+      </p>
+      <p className="mt-1 text-[12px] text-muted">Only this exact command, only for this task.</p>
+      <div className="mt-3 flex gap-2">
+        <Button variant="primary" disabled={busy} onClick={() => answer(true)}>
+          Allow once
+        </Button>
+        <Button disabled={busy} onClick={() => answer(false)}>
+          Don’t allow
+        </Button>
+      </div>
     </div>
   );
 }

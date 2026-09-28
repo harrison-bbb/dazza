@@ -5,7 +5,12 @@ import type { Event } from '../lib/api';
 import { cn, timeAgo } from '../lib/format';
 import { paths } from '../lib/router';
 
-const REVISION_TYPES: Event['type'][] = ['plan_created', 'scope_change_proposed', 'plan_approved'];
+const REVISION_TYPES: Event['type'][] = [
+  'plan_created',
+  'scope_change_proposed',
+  'scope_changed',
+  'plan_approved',
+];
 
 export function DocView({ scope, events }: { scope: string | null; events: Event[] }) {
   const history = events.filter((e) => REVISION_TYPES.includes(e.type)).reverse();

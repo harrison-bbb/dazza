@@ -32,6 +32,8 @@ export interface ChannelHandlers {
   onCommand(command: RemoteCommand): Promise<string>;
   onApprove(taskId: string): Promise<Outcome>;
   onRequestChanges(taskId: string, note: string): Promise<Outcome>;
+  /** The user's answer to a task asking to run a command. */
+  onPermission(taskId: string, allow: boolean): Promise<Outcome>;
   /** Something the user should know, e.g. another window has the connection. */
   onProblem(text: string): void;
 }

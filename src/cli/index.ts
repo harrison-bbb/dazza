@@ -4,6 +4,7 @@ import pkg from '../../package.json' with { type: 'json' };
 import { startBoard } from '../board/server.js';
 import { startChat } from '../chat/repl.js';
 import { Store } from '../core/store.js';
+import { runGuard } from '../guard/hook.js';
 import { serveMcp } from '../mcp/server.js';
 import { openInBrowser } from '../util/open.js';
 import { doctor } from './doctor.js';
@@ -24,6 +25,19 @@ program
     const board = await startBoard(new Store(root), root);
     console.log(`Board running at ${board.url} (Ctrl-C to stop)`);
     openInBrowser(board.url);
+  });
+
+program
+  .command('guard', { hidden: true })
+  .description("Check an agent's tool call against Dazza's safety rules (a Claude Code hook)")
+  .requiredOption('--root <path>', 'project root')
+  .option('--role <role>', 'manager or worker', 'worker')
+  .action(async ({ root, role }: { root: string; role: string }) => {
+    let input = '';
+    for await (const chunk of process.stdin) input += chunk;
+    process.stdout.write(
+      await runGuard(resolve(root), role === 'manager' ? 'manager' : 'worker', input),
+    );
   });
 
 program

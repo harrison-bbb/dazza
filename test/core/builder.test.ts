@@ -207,6 +207,20 @@ describe('taskBrief', () => {
     expect(brief).toContain('An app');
   });
 
+  it('leaves dropped subtasks out of the work, and says not to build them', () => {
+    const task = makeTask({
+      id: 'T3',
+      subtasks: [
+        { id: 'T3.1', title: 'Edit text', description: '', status: 'planned' },
+        { id: 'T3.2', title: 'Due dates', description: '', status: 'cancelled' },
+      ],
+    });
+    const brief = taskBrief(makePlan([task]), task, undefined, [], false);
+    expect(brief).toContain('- T3.1 [planned] Edit text');
+    expect(brief).not.toContain('T3.2 [');
+    expect(brief).toContain('## Dropped from this task (don’t build these)\n- T3.2 Due dates');
+  });
+
   it('says what the task builds on, and which work belongs to other tasks', () => {
     const task = makeTask({ id: 'T3', title: 'Leaderboard', dependsOn: ['T1'] });
     const plan = makePlan([

@@ -53,6 +53,7 @@ Everything the user sees (the terminal, the board, messaging) is a view over the
 | `src/board/` | The local board server: JSON API, SSE, static files |
 | `web/` | The board UI (React, Vite, Tailwind), built into `dist/web` |
 | `src/preview/` | Starts the user's app and takes screenshots with their installed Chrome |
+| `src/guard/` | The safety rules every tool call is checked against, and the `dazza guard` hook that applies them |
 | `src/notify/` | What a notification says, and the `Channel` interface Slack and Telegram implement |
 | `src/slack/` | Slack: Web API client, Socket Mode connection, Block Kit views, the bridge, the app manifest |
 | `src/telegram/` | Telegram: Bot API client and the bridge |
@@ -91,7 +92,11 @@ Each agent CLI spawns `dazza mcp --root <project> --role manager|worker` over st
 | `save_plan` | manager | Save the scope and tasks. Revising an approved plan sends it back to draft for re-approval |
 | `update_item` | manager | Edit a task or subtask's title or description |
 | `add_task`, `add_subtask` | manager | Add work the user asked for |
-| `set_status` | manager | Close, cancel or move a task when the user says so. Same rules as the board |
+| `set_status` | manager | Close, cancel or move a task or subtask when the user says so. Same rules as the board |
+| `update_scope` | manager | Rewrite the scope after an agreed change. Dazza keeps the change log (`src/core/scope.ts`), so no revision can drop the history |
+| `approve_plan` | manager | Approve the plan when the user says so in conversation |
+| `answer_permission` | manager | Record the user's answer to a command the guard held back |
+| `ask_permission` | worker | Ask to run one exact command the guard held back; the task waits |
 | `comment` | both | Post on a task's thread or the project, optionally with screenshots |
 | `screenshot` | both | Capture the running app |
 | `update_subtask` | worker | Mark a subtask started or finished |

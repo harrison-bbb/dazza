@@ -9,6 +9,8 @@ export interface ProjectSnapshot {
   scope: string | null;
   plan: Plan | null;
   events: Event[];
+  /** Commands tasks are waiting on the user's OK to run, by task id. */
+  permissions: Record<string, { command: string; why: string }>;
 }
 
 export interface ActionResponse {

@@ -16,6 +16,7 @@ import {
   requestChanges,
   setStatus,
 } from '../core/actions.js';
+import { answerPermission } from '../core/permissions.js';
 import { MediaPath } from '../core/schema.js';
 import type { Store } from '../core/store.js';
 import { CSRF_HEADER, type ProjectSnapshot } from './api.js';
@@ -24,9 +25,10 @@ export const DEFAULT_PORT = 4777;
 const PORT_ATTEMPTS = 10;
 const POLL_INTERVAL_MS = 500;
 const DEBOUNCE_MS = 100;
-const WATCHED_FILES = ['tasks.json', 'scope.md', 'events.jsonl'];
+const WATCHED_FILES = ['tasks.json', 'scope.md', 'events.jsonl', 'permissions.json'];
 
 const CommentBody = z.object({ body: z.string() });
+const PermissionBody = z.object({ allow: z.boolean() });
 const StatusBody = z.object({ status: z.enum(REQUESTABLE_STATUSES), note: z.string().optional() });
 
 export function createBoardApp(store: Store, projectRoot: string, webRoot: string): Hono {
@@ -49,6 +51,7 @@ export function createBoardApp(store: Store, projectRoot: string, webRoot: strin
       scope: (await store.readScope()) ?? null,
       plan: (await store.readPlan()) ?? null,
       events: await store.readEvents(),
+      permissions: await store.readPendingPermissions(),
     }),
   );
 
@@ -78,6 +81,13 @@ export function createBoardApp(store: Store, projectRoot: string, webRoot: strin
     const parsed = StatusBody.safeParse(await c.req.json().catch(() => undefined));
     if (!parsed.success) return c.json({ ok: false, message: 'Expected { status, note? }' }, 400);
     const result = await setStatus(store, c.req.param('id'), parsed.data.status, parsed.data.note);
+    return c.json(result, result.ok ? 200 : 409);
+  });
+
+  app.post('/api/tasks/:id/permission', async (c) => {
+    const parsed = PermissionBody.safeParse(await c.req.json().catch(() => undefined));
+    if (!parsed.success) return c.json({ ok: false, message: 'Expected { allow }' }, 400);
+    const result = await answerPermission(store, c.req.param('id'), parsed.data.allow);
     return c.json(result, result.ok ? 200 : 409);
   });
 

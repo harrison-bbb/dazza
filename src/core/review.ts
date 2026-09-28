@@ -33,10 +33,7 @@ const MAX_REPORTED = 12;
 export function reviewPlan(scope: string, tasks: Task[]): string[] {
   const problems: string[] = [];
 
-  const headings = new Set(
-    [...scope.matchAll(/^##\s+(.+?)\s*$/gm)].map((m) => normalise(m[1] ?? '')),
-  );
-  const missing = SCOPE_SECTIONS.filter((section) => !headings.has(normalise(section)));
+  const missing = missingSections(scope);
   if (missing.length > 0) {
     problems.push(`The scope is missing sections: ${missing.map((s) => `## ${s}`).join(', ')}.`);
   }
@@ -74,6 +71,14 @@ export function reviewPlan(scope: string, tasks: Task[]): string[] {
         `…and ${problems.length - MAX_REPORTED} more like these.`,
       ]
     : problems;
+}
+
+/** Required scope sections the scope doesn't have. */
+export function missingSections(scope: string): string[] {
+  const headings = new Set(
+    [...scope.matchAll(/^##\s+(.+?)\s*$/gm)].map((m) => normalise(m[1] ?? '')),
+  );
+  return SCOPE_SECTIONS.filter((section) => !headings.has(normalise(section)));
 }
 
 /** Headings match regardless of case, spacing or curly apostrophes. */

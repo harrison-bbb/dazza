@@ -310,6 +310,7 @@ describe('SlackBridge', () => {
         return ok('Requested changes');
       },
       onApprovePlan: async () => ok('Approved. 3 tasks locked in.'),
+      onPermission: async (taskId, allow) => ok(`${allow ? 'Allowed' : 'Refused'} for ${taskId}`),
       home: async () => ({
         project: 'notes-app',
         boardUrl: 'http://localhost:4777',

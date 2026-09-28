@@ -12,7 +12,15 @@ export const STATE_DIR = '.dazza';
 const MANAGER_SESSION_FILE = 'session.json';
 const USAGE_FILE = 'usage.json';
 const BUILD_FILE = 'build.json';
-const LOCAL_FILES = [MANAGER_SESSION_FILE, USAGE_FILE, BUILD_FILE, '*.lock', 'media/'];
+const PERMISSIONS_FILE = 'permissions.json';
+const LOCAL_FILES = [
+  MANAGER_SESSION_FILE,
+  USAGE_FILE,
+  BUILD_FILE,
+  PERMISSIONS_FILE,
+  '*.lock',
+  'media/',
+];
 
 /** Machine-local bookkeeping for a task being built. */
 export const TaskBuild = z.object({
@@ -29,6 +37,17 @@ export const TaskBuild = z.object({
 });
 export type TaskBuild = z.infer<typeof TaskBuild>;
 const BuildState = z.record(z.string(), TaskBuild);
+
+/**
+ * Commands the user has been asked about, per task: the one waiting for an
+ * answer, and the exact commands they've allowed for that task.
+ */
+export const TaskPermissions = z.object({
+  pending: z.object({ command: z.string(), why: z.string() }).optional(),
+  allowed: z.array(z.string()).default([]),
+});
+export type TaskPermissions = z.infer<typeof TaskPermissions>;
+const PermissionState = z.record(z.string(), TaskPermissions);
 
 const ManagerSession = z.object({
   sessionId: z.string().min(1),
@@ -183,6 +202,33 @@ export class Store {
         BUILD_FILE,
         `${JSON.stringify({ ...all, [taskId]: build }, null, 2)}\n`,
       );
+    });
+  }
+
+  async readPermissions(taskId: string): Promise<TaskPermissions> {
+    const all = PermissionState.safeParse(safeJson(await this.readOptional(PERMISSIONS_FILE)));
+    return (all.success ? all.data[taskId] : undefined) ?? { allowed: [] };
+  }
+
+  /** Every task's request that's waiting for an answer. */
+  async readPendingPermissions(): Promise<Record<string, { command: string; why: string }>> {
+    const all = PermissionState.safeParse(safeJson(await this.readOptional(PERMISSIONS_FILE)));
+    if (!all.success) return {};
+    return Object.fromEntries(
+      Object.entries(all.data).flatMap(([id, p]) => (p.pending ? [[id, p.pending]] : [])),
+    );
+  }
+
+  async updatePermissions(
+    taskId: string,
+    change: (current: TaskPermissions) => TaskPermissions,
+  ): Promise<void> {
+    await this.init();
+    await withLock(this.path('permissions.lock'), async () => {
+      const parsed = PermissionState.safeParse(safeJson(await this.readOptional(PERMISSIONS_FILE)));
+      const all = parsed.success ? parsed.data : {};
+      const next = { ...all, [taskId]: change(all[taskId] ?? { allowed: [] }) };
+      await this.writeAtomic(PERMISSIONS_FILE, `${JSON.stringify(next, null, 2)}\n`);
     });
   }
 

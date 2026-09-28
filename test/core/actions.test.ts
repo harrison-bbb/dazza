@@ -145,4 +145,23 @@ describe('actions', () => {
       expect(await status('T1')).toBe('building');
     });
   });
+
+  it('drops one subtask, leaving the rest of the task as it was', async () => {
+    await project.store.writePlan(
+      makePlan([
+        makeTask({
+          id: 'T3',
+          subtasks: [
+            { id: 'T3.1', title: 'Edit text', description: '', status: 'planned' },
+            { id: 'T3.2', title: 'Due dates', description: '', status: 'planned' },
+          ],
+        }),
+      ]),
+    );
+    expect(await cancelTask(project.store, 'T3.2')).toMatchObject({ ok: true });
+    const task = (await project.store.readPlan())?.tasks[0];
+    expect(task?.status).toBe('planned');
+    expect(task?.subtasks.map((s) => s.status)).toEqual(['planned', 'cancelled']);
+    expect(await cancelTask(project.store, 'T3.2')).toMatchObject({ ok: false });
+  });
 });

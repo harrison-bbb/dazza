@@ -73,6 +73,16 @@ While Dazza runs, a project board is served at `http://localhost:4777`: a dashbo
 
 While it builds you can keep talking to Dazza in the terminal. Comments you leave on the board, or instructions you give in the chat, reach the build at its next check-in.
 
+### Safe to point at real work
+
+Dazza's builder works like a careful engineer on someone else's systems. On Claude Code, every command and file access goes through Dazza's guard before it runs:
+
+- **Never, even if asked:** pushing to a remote, deploying or publishing, `sudo`, touching credential files, writing or deleting outside the task's own worktree, switching branches, changing cloud or cluster resources.
+- **Asks you first:** remote databases, deleting data, sending changes to outside services (a POST to a live API), installing things machine-wide. The builder asks with the exact command and why, and you allow or refuse it from the chat, the board, or a button on Slack or Telegram. Allowing covers that one command, for that one task.
+- **Just works:** everything else inside the task's worktree.
+
+Everything the guard stops is logged on the task. The scoping conversation also asks what's live (real users, data, money) and writes guardrails into the plan. See [docs/security.md](docs/security.md) for the full rules and their limits.
+
 ### When things go wrong
 
 Builds are meant to run while you're away, so Dazza handles the usual failures itself:
@@ -110,7 +120,9 @@ Dazza only listens to you: messages and clicks from anyone else in the workspace
 
 Onboarding also offers to link a Telegram bot (or run `/telegram` later). Create a bot with [@BotFather](https://t.me/BotFather), paste its token, and message the bot once so Dazza can find your chat. While Dazza is open it messages you when a task is ready for review or blocked, and when a build finishes. Review messages have **Approve** (with a confirm, since it merges) and **Request changes** buttons, and requesting changes asks what to change. Reply to a message and Dazza knows which task you mean; otherwise it's the same conversation as the terminal. `/status`, `/build` and `/stop` also work there. Dazza only accepts messages from your own chat.
 
-You can also run the project from the chat: "close T4", "unblock T5, tags are case-insensitive", "add a subtask to T3 for X", "move T8 to the backlog". Changes you ask for apply straight away and show up on the board.
+You can also run the project from the chat: "close T4", "unblock T5, tags are case-insensitive", "add a subtask to T3 for X", "move T8 to the backlog". Small edits like these apply straight away and show up on the board.
+
+Plans change, and Dazza handles that like a good contractor handles a change request. Ask "can we do X instead?" or "we don't need T9" and Dazza proposes the change first: which tasks it adds, changes or cancels, what already-built work it touches, and what it costs. Nothing changes until you say yes, and cancelling always gets a confirm. Then the tasks and the scope document are updated together, and the scope's **change log** records the new version, what changed, which tasks, and why. The builder reads the updated scope, so the work follows the change.
 
 ## Development
 

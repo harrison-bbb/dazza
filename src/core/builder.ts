@@ -27,6 +27,8 @@ export interface BuilderOptions {
   provider: AgentProvider;
   /** How the agent CLI should launch Dazza's MCP server. */
   mcpServer: McpServerConfig;
+  /** Checks every tool call the builder makes; see src/guard. */
+  guard?: McpServerConfig;
   signal?: AbortSignal;
   /** Overrides for the timing policy, e.g. in tests. */
   timing?: Partial<Timing>;
@@ -293,6 +295,7 @@ async function* runWorker(
       autonomous: true,
       allowedTools: WORKER_TOOLS,
       mcpServers: { [MCP_SERVER_NAME]: mcpServer },
+      ...(options.guard && { guard: options.guard }),
       ...(build.sessionId && { resumeSessionId: build.sessionId }),
       ...(model && { model }),
       signal: run.signal,
@@ -362,6 +365,7 @@ export function taskBrief(
     .filter((e) => e.type === 'comment' && e.taskId && ids.has(e.taskId))
     .map((e) => `- ${e.actor === 'user' ? 'User' : 'You (Dazza)'} on ${e.taskId}: ${e.message}`);
   const done = plan.tasks.filter((t) => t.status === 'closed').map((t) => `${t.id} ${t.title}`);
+  const dropped = task.subtasks.filter((s) => s.status === 'cancelled');
   // What this task builds on, as its builder described it at handoff.
   const foundations = plan.tasks
     .filter((t) => task.dependsOn.includes(t.id) && t.handoff)
@@ -383,9 +387,16 @@ export function taskBrief(
     ...task.acceptanceCriteria.map((c) => `- ${c}`),
     '',
     '## Subtasks',
-    ...task.subtasks.map(
-      (s) => `- ${s.id} [${s.status}] ${s.title}${s.description ? `: ${s.description}` : ''}`,
-    ),
+    ...task.subtasks
+      .filter((s) => s.status !== 'cancelled')
+      .map((s) => `- ${s.id} [${s.status}] ${s.title}${s.description ? `: ${s.description}` : ''}`),
+    ...(dropped.length > 0
+      ? [
+          '',
+          '## Dropped from this task (don’t build these)',
+          ...dropped.map((s) => `- ${s.id} ${s.title}`),
+        ]
+      : []),
     ...(thread.length > 0 ? ['', '## Comments on this task (newest last)', ...thread] : []),
     ...(done.length > 0 ? ['', '## Already built and approved', ...done.map((d) => `- ${d}`)] : []),
     ...(foundations.length > 0 ? ['', '## What this builds on', ...foundations] : []),

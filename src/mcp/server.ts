@@ -3,7 +3,13 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import pkg from '../../package.json' with { type: 'json' };
-import { type ActionResult, addComment, REQUESTABLE_STATUSES, setStatus } from '../core/actions.js';
+import {
+  type ActionResult,
+  addComment,
+  approvePlan,
+  REQUESTABLE_STATUSES,
+  setStatus,
+} from '../core/actions.js';
 import {
   addSubtask,
   addTask,
@@ -13,9 +19,11 @@ import {
   type SubtaskChanges,
   TaskChanges,
 } from '../core/edits.js';
+import { answerPermission, requestPermission } from '../core/permissions.js';
 import { carryOverProgress } from '../core/plan.js';
-import { reviewPlan } from '../core/review.js';
+import { missingSections, reviewPlan } from '../core/review.js';
 import { MediaPath, Plan, SCHEMA_VERSION, Task } from '../core/schema.js';
+import { changeLogEntries, keepChangeLog, withChangeLog } from '../core/scope.js';
 import { Store } from '../core/store.js';
 import {
   blockTask,
@@ -24,6 +32,7 @@ import {
   takeNewMessages,
   WorkReport,
 } from '../core/work.js';
+import { judge } from '../guard/policy.js';
 import { ScreenshotRequest, Screenshots } from '../preview/screenshots.js';
 
 export const MCP_SERVER_NAME = 'dazza';
@@ -40,6 +49,10 @@ export const McpTools = {
   block: tool('block'),
   submit: tool('submit'),
   checkMessages: tool('check_messages'),
+  askPermission: tool('ask_permission'),
+  updateScope: tool('update_scope'),
+  approvePlan: tool('approve_plan'),
+  answerPermission: tool('answer_permission'),
   screenshot: tool('screenshot'),
 } as const;
 
@@ -51,6 +64,9 @@ export const MANAGER_TOOLS = [
   McpTools.addSubtask,
   McpTools.setStatus,
   McpTools.comment,
+  McpTools.answerPermission,
+  McpTools.updateScope,
+  McpTools.approvePlan,
   McpTools.screenshot,
 ];
 
@@ -60,6 +76,7 @@ export const WORKER_TOOLS = [
   McpTools.comment,
   McpTools.checkMessages,
   McpTools.block,
+  McpTools.askPermission,
   McpTools.submit,
   McpTools.screenshot,
 ];
@@ -74,7 +91,11 @@ export const SavePlanInput = z.object({
   summary: z
     .string()
     .optional()
-    .describe('When revising, one line on what changed and why. Shown in the scope history.'),
+    .describe('When revising an approved plan, one line on what changed. Goes in the change log.'),
+  why: z
+    .string()
+    .optional()
+    .describe('When revising an approved plan, why, as the user put it. Goes in the change log.'),
 });
 export type SavePlanInput = z.infer<typeof SavePlanInput>;
 
@@ -106,7 +127,22 @@ export async function savePlan(store: Store, input: SavePlanInput): Promise<Call
   if ('error' in outcome) return failure(outcome.error);
 
   const tasks = `${outcome.count} tasks`;
-  await store.writeScope(input.scope);
+  const previous = await store.readScope();
+  await store.writeScope(
+    // Rewriting an approved plan is a change to what was agreed: it goes in the log.
+    outcome.rescoped
+      ? withChangeLog(
+          input.scope,
+          previous,
+          {
+            summary: input.summary ?? 'Revised the whole plan',
+            why: input.why ?? 'agreed in conversation',
+            tasks: [],
+          },
+          new Date(),
+        )
+      : keepChangeLog(input.scope, previous),
+  );
   await store.appendEvent({
     at: new Date().toISOString(),
     type: outcome.rescoped ? 'scope_change_proposed' : 'plan_created',
@@ -267,6 +303,76 @@ function registerManagerTools(server: McpServer, store: Store): void {
   );
 
   server.registerTool(
+    'approve_plan',
+    {
+      description:
+        'Approve the drafted plan, which lets building start. Only when the user has clearly ' +
+        'said to approve it, having seen the plan (or the change to it) in this conversation.',
+      inputSchema: {},
+    },
+    async () => toResult(await approvePlan(store)),
+  );
+
+  server.registerTool(
+    'update_scope',
+    {
+      description:
+        'Rewrite the scope document after the user agrees a change to what is being built, so ' +
+        'it always matches the plan: new or dropped features, a changed decision, anything the ' +
+        'builder should now do differently. Pass the full updated scope; Dazza keeps the change ' +
+        'log itself and adds this change to it. Make the task changes with the task tools too.',
+      inputSchema: {
+        scope: z.string().min(1).describe('The whole scope, updated. Leave out the change log.'),
+        summary: z.string().min(1).describe('What changed, in one line.'),
+        why: z.string().min(1).describe('Why, as the user put it.'),
+        tasks: z.array(z.string()).default([]).describe('Tasks added, changed or cancelled.'),
+      },
+    },
+    async ({ scope, summary, why, tasks }) => {
+      const missing = missingSections(scope);
+      if (missing.length > 0) {
+        return failure(
+          `Not saved: the scope is missing ${missing.map((s) => `## ${s}`).join(', ')}. Pass the whole scope.`,
+        );
+      }
+      const plan = await store.readPlan();
+      const previous = await store.readScope();
+      // Before approval the plan is still a draft: nothing agreed yet to log changes against.
+      const updated = plan?.approvedAt
+        ? withChangeLog(scope, previous, { summary, why, tasks }, new Date())
+        : keepChangeLog(scope, previous);
+      await store.writeScope(updated);
+      await store.appendEvent({
+        at: new Date().toISOString(),
+        type: 'scope_changed',
+        message: `${summary}${tasks.length ? ` (${tasks.join(', ')})` : ''}`,
+      });
+      const version = changeLogEntries(updated).length + 1;
+      return toResult({
+        ok: true,
+        message: plan?.approvedAt
+          ? `Scope updated to v${version}, with the change logged.`
+          : 'Scope updated.',
+      });
+    },
+  );
+
+  server.registerTool(
+    'answer_permission',
+    {
+      description:
+        'Record the user’s answer when a task is waiting for their OK to run a command. ' +
+        'allow: true only when they clearly said yes. Either way the task goes back in the queue.',
+      inputSchema: {
+        taskId: z.string(),
+        allow: z.boolean(),
+        note: z.string().optional().describe('Anything else they said, passed to the build.'),
+      },
+    },
+    async ({ taskId, allow, note }) => toResult(await answerPermission(store, taskId, allow, note)),
+  );
+
+  server.registerTool(
     'comment',
     {
       description:
@@ -358,6 +464,29 @@ function registerWorkerTools(server: McpServer, store: Store): void {
       ownTask(taskId, async () =>
         withNews(taskId, await blockTask(store, taskId, question, { images: screenshots })),
       ),
+  );
+
+  server.registerTool(
+    'ask_permission',
+    {
+      description:
+        "Ask the user to allow one exact command that Dazza's guard held back for their OK. " +
+        'Only when the task truly needs it and there is no safer way. Then stop: the task ' +
+        'waits for their answer.',
+      inputSchema: {
+        taskId: z.string(),
+        command: z.string().min(1).describe('The exact command, as you will run it.'),
+        why: z.string().min(1).describe('Why the task needs it, and what it changes.'),
+      },
+    },
+    async ({ taskId, command, why }) =>
+      ownTask(taskId, async () => {
+        const decision = judge({ tool: 'Bash', input: { command } }, { workspace: store.root });
+        if (decision.kind === 'never') {
+          return failure(`That can’t be allowed, even with the user’s OK: ${decision.reason}`);
+        }
+        return toResult(await requestPermission(store, taskId, command, why));
+      }),
   );
 
   server.registerTool(

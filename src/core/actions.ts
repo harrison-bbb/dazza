@@ -123,6 +123,7 @@ export async function cancelTask(
   taskId: string,
   now = new Date(),
 ): Promise<ActionResult> {
+  if (taskId.includes('.')) return cancelSubtask(store, taskId, now);
   return transition(store, taskId, now, (plan, task) => {
     if (task.status === 'closed' || task.status === 'cancelled') {
       return fail(`${taskId} is already ${task.status}.`);
@@ -132,6 +133,24 @@ export async function cancelTask(
       event: { type: 'task_cancelled', message: `Cancelled ${task.title}` },
     };
   });
+}
+
+/** Drop one part of a task that's no longer wanted; the rest of the task carries on. */
+async function cancelSubtask(store: Store, id: string, now: Date): Promise<ActionResult> {
+  const result = await store.updatePlan((plan): [Plan | undefined, ActionResult] => {
+    const found = plan && findItem(plan, id);
+    if (!plan || !found?.subtask) return [undefined, fail(`No subtask ${id}.`)];
+    if (found.subtask.status === 'closed' || found.subtask.status === 'cancelled') {
+      return [undefined, fail(`${id} is already ${found.subtask.status}.`)];
+    }
+    return [
+      withStatus(plan, id, 'cancelled'),
+      { ok: true, message: `Cancelled ${found.subtask.title}` },
+    ];
+  });
+  if (result.ok)
+    await log(store, now, { type: 'task_cancelled', message: result.message, taskId: id });
+  return result;
 }
 
 /** Statuses the user can ask for. Building, review and blocked are Dazza's to set. */

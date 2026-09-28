@@ -13,6 +13,8 @@ export const Actions = {
   approve: 'approve',
   requestChanges: 'request_changes',
   approvePlan: 'approve_plan',
+  allowCommand: 'allow_command',
+  refuseCommand: 'refuse_command',
   build: 'build',
   stop: 'stop',
   board: 'board',
@@ -54,6 +56,23 @@ export function notificationMessage(note: Notification, where: Where): Rendered 
             note.images.length > 0 && screenshotsInThread(note.images.length),
             'Reply in this thread and I’ll pick it back up next build',
           ]),
+        ],
+      };
+    case 'permission':
+      return {
+        text: `${note.taskId} wants to run a command that needs your OK`,
+        blocks: [
+          section(`*Needs your OK · ${note.taskId}*\n${escapeText(note.title)}`),
+          section(`\`\`\`${escapeText(note.command)}\`\`\`\n*Why:* ${escapeText(note.why)}`),
+          context([where.project, 'Only this exact command, only for this task']),
+          {
+            type: 'actions',
+            block_id: DECISION_BLOCK,
+            elements: [
+              { ...button('Allow once', Actions.allowCommand, note.taskId), style: 'primary' },
+              { ...button('Don’t allow', Actions.refuseCommand, note.taskId), style: 'danger' },
+            ],
+          },
         ],
       };
     case 'review':

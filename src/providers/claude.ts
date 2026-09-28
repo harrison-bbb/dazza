@@ -181,6 +181,20 @@ export function buildClaudeArgs(options: Omit<AgentRunOptions, 'prompt'>): strin
     );
   }
   if (options.allowedTools?.length) args.push('--allowedTools', options.allowedTools.join(','));
+  if (options.guard) {
+    // Dazza's guard checks every tool call first (see src/guard). Settings files
+    // that come with the repository are ignored: headless runs skip Claude Code's
+    // trust prompt, so a repo could otherwise bring its own hooks or permissions.
+    const hook = [options.guard.command, ...options.guard.args].map(shellQuote).join(' ');
+    args.push(
+      '--setting-sources',
+      'user',
+      '--settings',
+      JSON.stringify({
+        hooks: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: hook }] }] },
+      }),
+    );
+  }
   // Auto mode: edits and commands go ahead, Claude Code's safety classifier blocks risky ones.
   if (options.autonomous) args.push('--permission-mode', 'auto');
   return args;
@@ -374,4 +388,9 @@ function failed(result: { subtype: string; is_error: boolean }): boolean {
 
 function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** Quote a word for the shell Claude Code runs hook commands in. */
+function shellQuote(word: string): string {
+  return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
 }
