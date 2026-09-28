@@ -2,7 +2,8 @@ import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { type BuildEvent, build, taskBrief } from '../../src/core/builder.js';
+import { type BuildEvent, build, resumeBrief, taskBrief } from '../../src/core/builder.js';
+import type { Event } from '../../src/core/schema.js';
 import { blockTask, submitTask } from '../../src/core/work.js';
 import { Git } from '../../src/git/git.js';
 import { claim } from '../../src/util/lock.js';
@@ -65,7 +66,9 @@ describe('build loop', () => {
     ).toEqual(['T1', 'T3']);
     expect(events.at(-1)).toMatchObject({
       type: 'stopped',
-      reason: expect.stringContaining('2 waiting for your review'),
+      reason: expect.stringContaining(
+        'T1, T3 are waiting for your review. 1 more task depends on them',
+      ),
       idle: true,
     });
     const t1 = provider.runs.find((r) => currentTask(r) === 'T1');
@@ -303,5 +306,35 @@ describe('taskBrief', () => {
     expect(brief).toContain('## What this builds on\n### T1: Sign-in\nMagic links via Auth.js');
     expect(brief).toContain('## Coming in other tasks (leave these alone)\n- T4 Month close');
     expect(brief).not.toContain('- T3 Leaderboard');
+  });
+});
+
+describe('resumeBrief', () => {
+  const task = makeTask({ id: 'T3', title: 'Payments' });
+  const event = (type: Event['type'], message: string, taskId?: string): Event => ({
+    at: '2026-09-28T10:00:00Z',
+    type,
+    actor: type === 'comment' ? 'user' : 'dazza',
+    message,
+    ...(taskId && { taskId }),
+  });
+
+  it('carries only what’s new: the user’s answers, and the scope if it changed', () => {
+    const quiet = resumeBrief(task, [], '# Scope');
+    expect(quiet).toMatch(/^Carry on building T3/);
+    expect(quiet).not.toContain('# Scope');
+
+    const brief = resumeBrief(
+      task,
+      [
+        event('comment', 'Use the Stripe test account', 'T3'),
+        event('comment', 'Unrelated', 'T5'),
+        event('scope_changed', 'Dropped refunds'),
+      ],
+      '# Scope\nNo refunds.',
+    );
+    expect(brief).toContain('- T3: Use the Stripe test account');
+    expect(brief).not.toContain('Unrelated');
+    expect(brief).toContain('No refunds.');
   });
 });

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Connection } from '../core/config.js';
 import { execCommand, runInteractive, shellCommand, spawnLines } from '../util/process.js';
+import { capitalize, parseJson } from '../util/text.js';
 import { classifyError, isHopeless } from './errors.js';
 import type {
   AgentError,
@@ -180,6 +181,7 @@ export function buildClaudeArgs(options: Omit<AgentRunOptions, 'prompt'>): strin
       '--strict-mcp-config',
     );
   }
+  if (options.tools) args.push('--tools', options.tools.join(','));
   if (options.allowedTools?.length) args.push('--allowedTools', options.allowedTools.join(','));
   if (options.guard) {
     // Dazza's guard checks every tool call first (see src/guard). Settings files
@@ -273,15 +275,6 @@ function toToolResult(block: unknown): AgentEvent[] {
   return parsed.success
     ? [{ type: 'tool_result', id: parsed.data.tool_use_id, ok: parsed.data.is_error !== true }]
     : [];
-}
-
-function parseJson(text: string | undefined): unknown {
-  if (text === undefined) return undefined;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
 }
 
 // Only the fields Dazza reads. Everything else in the stream is ignored.
@@ -385,9 +378,3 @@ function toRunUsage(usage: Record<string, unknown>, costUsd: number): RunUsage {
 function failed(result: { subtype: string; is_error: boolean }): boolean {
   return result.is_error || result.subtype !== 'success';
 }
-
-function capitalize(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-/** Quote a word for the shell Claude Code runs hook commands in. */

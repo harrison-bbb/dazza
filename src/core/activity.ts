@@ -2,20 +2,8 @@ import { relative } from 'node:path';
 import { McpTools } from '../mcp/server.js';
 import type { BuildEvent } from './builder.js';
 import { clock } from './errors.js';
+import type { Activity } from './schema.js';
 import type { Store } from './store.js';
-
-/**
- * What a builder is doing, step by step, in plain words: for watching a build
- * live on the board, and for looking back at how a task was built. Kept per
- * task in `.dazza/activity/`.
- */
-export interface Activity {
-  at: string;
-  taskId: string;
-  /** say: the builder's own words; do: a step it took; status: where the task is. */
-  kind: 'say' | 'do' | 'status';
-  text: string;
-}
 
 /** Turns build events into activity lines, and keeps them. */
 export class ActivityRecorder {

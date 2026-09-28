@@ -13,7 +13,7 @@ export function makeTask(overrides: Partial<Task> & Pick<Task, 'id'>): Task {
 }
 
 export function makePlan(tasks: Task[]): Plan {
-  return { version: 1, approvedAt: null, tasks, milestones: [] };
+  return { version: 1, approvedAt: null, tasks, milestones: [], problems: [] };
 }
 
 /** A scope with every section the manager is asked for. */

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import type { Crumb } from './components/TopBar';
 import { TopBar } from './components/TopBar';
+import { InlineText, Offline } from './components/ui';
 import type { Plan } from './lib/api';
 import { titleCase } from './lib/format';
 import { paths, type Route, useRoute } from './lib/router';
@@ -12,7 +13,7 @@ import { ReportView } from './views/ReportView';
 import { TaskList } from './views/TaskList';
 
 export function App() {
-  const { project, error, live, refresh } = useProject();
+  const { project, error, live, offline, refresh } = useProject();
   const route = useRoute();
 
   const name = project ? titleCase(project.name) : 'Dazza';
@@ -22,8 +23,18 @@ export function App() {
 
   if (!project) {
     return (
-      <div className="grid h-dvh place-items-center text-[13px] text-muted">
-        {error ? `Can’t reach Dazza: ${error}` : 'Loading…'}
+      <div className="grid h-dvh place-items-center px-6 text-center text-[13px] text-muted">
+        {error ? (
+          <p>
+            <InlineText>
+              {
+                'Dazza isn’t running. Start `dazza` (or `dazza board`) in this project, and this page will reconnect by itself.'
+              }
+            </InlineText>
+          </p>
+        ) : (
+          'Loading…'
+        )}
       </div>
     );
   }
@@ -32,38 +43,51 @@ export function App() {
   const found = route.view === 'item' && plan ? findItem(plan, route.id) : undefined;
 
   return (
-    <div className="flex h-dvh flex-col print:h-auto">
-      <div className="print:hidden">
-        <TopBar crumbs={crumbs(name, route, found)} live={live} />
-      </div>
-      <main className="flex min-h-0 flex-1 flex-col overflow-y-auto print:overflow-visible">
-        {route.view === 'doc' ? (
-          <DocView project={project} onChange={refresh} />
-        ) : route.view === 'report' ? (
-          <ReportView report={project.report} />
-        ) : route.view === 'tasks' ? (
-          plan ? (
-            <TaskList plan={plan} events={events} />
+    <Offline.Provider value={offline}>
+      <div className="flex h-dvh flex-col print:h-auto">
+        <div className="print:hidden">
+          <TopBar crumbs={crumbs(name, route, found)} live={live} />
+          {offline && (
+            <div className="border-b border-line bg-panel px-5 py-2 text-[13px] text-ink-2">
+              <InlineText>
+                {
+                  'Dazza isn’t running, so this is how things were when it closed. Start `dazza` in your terminal and this page reconnects by itself.'
+                }
+              </InlineText>
+            </div>
+          )}
+        </div>
+        <main className="flex min-h-0 flex-1 flex-col overflow-y-auto print:overflow-visible">
+          {route.view === 'doc' ? (
+            <DocView project={project} onChange={refresh} />
+          ) : route.view === 'report' ? (
+            <ReportView report={project.report} />
+          ) : route.view === 'tasks' ? (
+            plan ? (
+              <TaskList plan={plan} events={events} />
+            ) : (
+              <p className="p-10 text-center text-muted">No plan yet.</p>
+            )
+          ) : route.view === 'item' && found && plan ? (
+            <ItemView
+              key={`${route.id}${route.focus ?? ''}`}
+              task={found.task}
+              subtask={found.subtask}
+              tasks={plan.tasks}
+              events={events}
+              permission={project.permissions[found.task.id]}
+              milestone={plan.milestones.find((m) => m.tasks.includes(found.task.id))}
+              focus={route.focus}
+              onChange={refresh}
+            />
+          ) : route.view === 'item' ? (
+            <p className="p-10 text-center text-muted">No task {route.id}.</p>
           ) : (
-            <p className="p-10 text-center text-muted">No plan yet.</p>
-          )
-        ) : route.view === 'item' && found && plan ? (
-          <ItemView
-            task={found.task}
-            subtask={found.subtask}
-            tasks={plan.tasks}
-            events={events}
-            permission={project.permissions[found.task.id]}
-            milestone={plan.milestones.find((m) => m.tasks.includes(found.task.id))}
-            onChange={refresh}
-          />
-        ) : route.view === 'item' ? (
-          <p className="p-10 text-center text-muted">No task {route.id}.</p>
-        ) : (
-          <Dashboard project={{ ...project, name }} onChange={refresh} />
-        )}
-      </main>
-    </div>
+            <Dashboard project={{ ...project, name }} onChange={refresh} />
+          )}
+        </main>
+      </div>
+    </Offline.Provider>
   );
 }
 

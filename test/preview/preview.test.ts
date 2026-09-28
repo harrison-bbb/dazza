@@ -68,7 +68,7 @@ describe('AppServer', () => {
   });
 });
 
-describe.skipIf(!findBrowser())('Camera', () => {
+describe.skipIf(!(await findBrowser()))('Camera', () => {
   const project = useTempProject();
   const camera = new Camera();
   afterEach(async () => camera.close());

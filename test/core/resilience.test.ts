@@ -11,7 +11,7 @@ import { makePlan, makeTask, workReport } from '../fixtures.js';
 import { useTempProject } from '../helpers.js';
 
 /** Each run plays the next scripted behaviour; the last one repeats. */
-type Behaviour = 'submit' | 'crash' | 'hang' | { error: AgentError };
+type Behaviour = 'submit' | 'crash' | 'hang' | 'gone' | { error: AgentError };
 
 class ScriptedProvider implements AgentProvider {
   readonly id = 'claude';
@@ -35,6 +35,18 @@ class ScriptedProvider implements AgentProvider {
   async *run(options: AgentRunOptions): AsyncGenerator<AgentEvent> {
     this.runs.push(options);
     const behaviour = this.script[Math.min(this.runs.length - 1, this.script.length - 1)];
+    if (behaviour === 'gone') {
+      // The CLI no longer has the session: it fails before starting.
+      yield {
+        type: 'finished',
+        ok: false,
+        output: 'No conversation found',
+        sessionId: '',
+        durationMs: 1,
+        error: { kind: 'failed', message: 'No conversation found' },
+      };
+      return;
+    }
     yield { type: 'started', sessionId: `session-${this.runs.length}`, model: 'x' };
     if (behaviour === 'crash') throw new Error('claude exited with code 1: segfault');
     if (behaviour === 'hang') {
@@ -103,6 +115,27 @@ describe('a resilient build', () => {
     );
     expect(status).toBe('review');
     expect(provider.runs[1]?.resumeSessionId).toBe('session-1');
+    // The session has the brief already: the resume carries only what's new.
+    expect(provider.runs[0]?.prompt).toMatch(/^Build T1/);
+    expect(provider.runs[1]?.prompt).toMatch(/^Carry on building T1/);
+    expect(provider.runs[1]?.prompt).not.toContain('## Done when');
+  });
+
+  it('starts afresh, with the full brief, when the session to resume is gone', async () => {
+    const resetsAt = new Date(Date.now() + 50).toISOString();
+    const { provider, status } = await run([
+      { error: { kind: 'usage_limit', message: 'usage limit reached', resetsAt } },
+      'gone',
+      'submit',
+    ]);
+    expect(status).toBe('review');
+    expect(provider.runs.map((r) => r.resumeSessionId)).toEqual([
+      undefined,
+      'session-1',
+      undefined,
+    ]);
+    expect(provider.runs[2]?.prompt).toMatch(/^Continue building T1/);
+    expect(provider.runs[2]?.prompt).toContain('## Done when');
   });
 
   it('retries a crash once, resuming', async () => {

@@ -11,12 +11,16 @@ export interface GreetingContext {
   hasConversation?: boolean;
   /** The code already in the directory, described in a few words. */
   codebase?: string;
+  /** For Slack or Telegram: no terminal commands, and the board is on their computer. */
+  remote?: boolean;
 }
 
 /** What to tell the user when they open `dazza`, based on where the project is at. */
 export function greeting(plan: Plan | undefined, context: GreetingContext = {}): string {
   if (!plan) {
-    if (context.hasConversation) return 'Picking up where we left off.';
+    if (context.remote) return NO_PLAN;
+    if (context.hasConversation)
+      return 'Picking up where we left off: carry on, or /new to start fresh.';
     if (context.codebase) return `This is ${context.codebase}. What do you want to work on?`;
     return (
       'New project. How this goes: you tell me what you want and who it’s for, I ask a few rounds of questions, ' +
@@ -26,10 +30,17 @@ export function greeting(plan: Plan | undefined, context: GreetingContext = {}):
   }
 
   const { closed, total } = progress(plan);
+  const remote = context.remote === true;
   if (!plan.approvedAt) {
-    return `Plan drafted: ${total} tasks, waiting on your approval. Review it on the board (/board), then approve — or tell me what to change.`;
+    return remote
+      ? `Plan drafted: ${total} tasks, waiting on your approval. Look it over on the board on your computer, then tell me to approve it, or what to change.`
+      : `Plan drafted: ${total} tasks, waiting on your approval. Look it over with /scope, then /approve, or tell me what to change.`;
   }
-  if (closed === total) return `All ${total} tasks closed. Nice.`;
+  if (closed === total) {
+    return remote
+      ? `All ${total} tasks closed. The close-out report is on the board.`
+      : `All ${total} tasks closed. The close-out report is on the board (/dashboard). Tell me what’s next, or /report to write it again.`;
+  }
 
   const current = currentTask(plan);
   const next = current ? undefined : nextTask(plan);
@@ -43,8 +54,10 @@ export function greeting(plan: Plan | undefined, context: GreetingContext = {}):
     current && `Building ${current.id} ${current.title}.`,
     waiting(withStatus('review'), 'waiting for your review'),
     waiting(withStatus('blocked'), 'blocked on you'),
-    withStatus('review').length + withStatus('blocked').length > 0 && '/review to go through them.',
-    next && `Next up: ${next.id} ${next.title}. Run /build to start.`,
+    withStatus('review').length + withStatus('blocked').length > 0 &&
+      (remote ? 'Their messages are above.' : '/review to go through them.'),
+    next &&
+      `Next up: ${next.id} ${next.title}. ${remote ? 'Tell me to start building.' : 'Run /build to start.'}`,
   ]
     .filter(Boolean)
     .join(' ');
@@ -59,11 +72,18 @@ function waiting(tasks: Task[], what: string): string | undefined {
     : `${tasks.length} tasks are ${what} (${tasks.map((t) => t.id).join(', ')}).`;
 }
 
+/** What every command says before there's a plan. */
+export const NO_PLAN = 'No plan yet. Tell me what you want to build and I’ll scope it with you.';
+
 /** The task list shown after the plan is saved, so the user can see what they're approving. */
 export function planCard(plan: Plan, wasApproved: boolean, boardUrl: string): string {
   const left = minutesLeft(plan);
   const title = [
-    wasApproved ? 'Plan revised' : 'Plan saved',
+    plan.problems.length > 0
+      ? 'Draft plan, still being finished'
+      : wasApproved
+        ? 'Plan revised'
+        : 'Plan saved',
     `${plan.tasks.length} tasks`,
     left > 0 && `${humanDuration(left)} of building`,
     wasApproved && 'needs your re-approval',

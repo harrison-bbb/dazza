@@ -1,5 +1,6 @@
 import type { TelegramLink } from '../core/config.js';
 import { TelegramApi, TelegramError } from '../telegram/api.js';
+import { errorMessage } from '../util/text.js';
 import type { SetupUI } from './connect.js';
 
 const ATTEMPTS = 3;
@@ -120,8 +121,4 @@ async function findChat(
   return chat
     ? { id: String(chat.id), ...(chat.first_name && { name: chat.first_name }) }
     : undefined;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

@@ -8,6 +8,7 @@ import {
   type Remote,
 } from '../notify/channel.js';
 import type { Notification } from '../notify/notification.js';
+import { errorMessage } from '../util/text.js';
 import { type Keyboard, TelegramApi, TelegramError, type Update } from './api.js';
 
 const POLL_SECONDS = 25;
@@ -253,7 +254,7 @@ export function telegramText(note: Notification): string {
         `🏁 ${note.id} reached: ${note.title}`,
         note.goal,
         `What went into it:\n${note.tasks.map((t) => `• ${t}`).join('\n')}`,
-        note.branch && `It's all on ${note.branch}, so you can try it there.`,
+        note.branch && 'It’s all merged into your project: run /try in the terminal to open it.',
         note.next && `Next up: ${note.next}.`,
       ]
         .filter(Boolean)
@@ -267,7 +268,7 @@ export function telegramText(note: Notification): string {
       ].join('\n\n');
     case 'review':
       return [
-        `✅ ${note.taskId} is ready for your review: ${note.title}`,
+        `📋 ${note.taskId} is ready for your review: ${note.title}`,
         note.summary,
         note.facts.join(' · '),
       ]
@@ -287,8 +288,4 @@ function split(text: string): string[] {
   for (let rest = text; rest.length > 0; rest = rest.slice(MAX_LENGTH))
     parts.push(rest.slice(0, MAX_LENGTH));
   return parts;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

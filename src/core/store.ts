@@ -14,7 +14,8 @@ import { basename, join } from 'node:path';
 import { z } from 'zod';
 import type { ProviderId } from '../providers/types.js';
 import { withLock } from '../util/lock.js';
-import { Event, type EventInput, Plan } from './schema.js';
+import { parseJson } from '../util/text.js';
+import { type Activity, Event, type EventInput, Plan } from './schema.js';
 
 export const STATE_DIR = '.dazza';
 
@@ -170,7 +171,7 @@ export class Store {
    */
   async readManagerSession(provider?: ProviderId): Promise<string | undefined> {
     const raw = await this.readOptional(MANAGER_SESSION_FILE);
-    const parsed = ManagerSession.safeParse(safeJson(raw));
+    const parsed = ManagerSession.safeParse(parseJson(raw));
     if (!parsed.success) return undefined;
     const { sessionId, provider: owner } = parsed.data;
     return provider && owner && owner !== provider ? undefined : sessionId;
@@ -230,7 +231,7 @@ export class Store {
 
   async readUsage(): Promise<ProjectUsage> {
     // A running total: if the file is damaged, starting again from zero is fine.
-    const parsed = ProjectUsage.safeParse(safeJson(await this.readOptional(USAGE_FILE)));
+    const parsed = ProjectUsage.safeParse(parseJson(await this.readOptional(USAGE_FILE)));
     return parsed.success ? parsed.data : { runs: 0, tokens: 0, costUsd: 0 };
   }
 
@@ -271,13 +272,13 @@ export class Store {
   }
 
   async readPermissions(taskId: string): Promise<TaskPermissions> {
-    const all = PermissionState.safeParse(safeJson(await this.readOptional(PERMISSIONS_FILE)));
+    const all = PermissionState.safeParse(parseJson(await this.readOptional(PERMISSIONS_FILE)));
     return (all.success ? all.data[taskId] : undefined) ?? { allowed: [] };
   }
 
   /** Every task's request that's waiting for an answer. */
   async readPendingPermissions(): Promise<Record<string, { command: string; why: string }>> {
-    const all = PermissionState.safeParse(safeJson(await this.readOptional(PERMISSIONS_FILE)));
+    const all = PermissionState.safeParse(parseJson(await this.readOptional(PERMISSIONS_FILE)));
     if (!all.success) return {};
     return Object.fromEntries(
       Object.entries(all.data).flatMap(([id, p]) => (p.pending ? [[id, p.pending]] : [])),
@@ -290,7 +291,9 @@ export class Store {
   ): Promise<void> {
     await this.init();
     await withLock(this.path('permissions.lock'), async () => {
-      const parsed = PermissionState.safeParse(safeJson(await this.readOptional(PERMISSIONS_FILE)));
+      const parsed = PermissionState.safeParse(
+        parseJson(await this.readOptional(PERMISSIONS_FILE)),
+      );
       const all = parsed.success ? parsed.data : {};
       const next = { ...all, [taskId]: change(all[taskId] ?? { allowed: [] }) };
       await this.writeAtomic(PERMISSIONS_FILE, `${JSON.stringify(next, null, 2)}\n`);
@@ -308,17 +311,14 @@ export class Store {
   }
 
   /** A task's latest activity, oldest first. */
-  async readActivity(
-    taskId: string,
-    limit = 200,
-  ): Promise<{ at: string; taskId: string; kind: 'say' | 'do' | 'status'; text: string }[]> {
+  async readActivity(taskId: string, limit = 200): Promise<Activity[]> {
     if (!/^T\d+$/.test(taskId)) return [];
     const raw = (await this.readOptional(`${ACTIVITY}/${taskId}.jsonl`)) ?? '';
     return raw
       .split('\n')
       .slice(-limit - 1)
       .flatMap((line) => {
-        const parsed = ActivityLine.safeParse(safeJson(line));
+        const parsed = ActivityLine.safeParse(parseJson(line));
         return parsed.success ? [parsed.data] : [];
       })
       .slice(-limit);
@@ -343,7 +343,7 @@ export class Store {
     if (raw === undefined) return [];
     // One damaged line (say, from a crash mid-write) mustn't hide the rest.
     return raw.split('\n').flatMap((line) => {
-      const parsed = Event.safeParse(safeJson(line));
+      const parsed = Event.safeParse(parseJson(line));
       return parsed.success ? [parsed.data] : [];
     });
   }
@@ -378,7 +378,7 @@ export class StateError extends Error {
 }
 
 function parseState<T>(file: string, raw: string, schema: z.ZodType<T>): T {
-  const parsed = schema.safeParse(safeJson(raw));
+  const parsed = schema.safeParse(parseJson(raw));
   if (parsed.success) return parsed.data;
   const issue = parsed.error.issues[0];
   const where = issue?.path.length ? ` at ${issue.path.join('.')}` : '';
@@ -386,15 +386,6 @@ function parseState<T>(file: string, raw: string, schema: z.ZodType<T>): T {
     `.dazza/${file} is damaged${where}${issue ? `: ${issue.message}` : ''}. ` +
       'Fix it by hand, or undo whatever last changed it.',
   );
-}
-
-function safeJson(text: string | undefined): unknown {
-  if (text === undefined) return undefined;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
 }
 
 function isNotFound(error: unknown): boolean {

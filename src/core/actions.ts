@@ -19,6 +19,12 @@ export async function approvePlan(store: Store, now = new Date()): Promise<Actio
   const result = await store.updatePlan((plan): [Plan | undefined, ActionResult] => {
     if (!plan) return [undefined, fail('Nothing to approve yet.')];
     if (plan.approvedAt) return [undefined, fail('Already approved.')];
+    if (plan.problems.length > 0) {
+      return [
+        undefined,
+        fail('The plan isn’t finished yet: Dazza is still filling in details. Give it a moment.'),
+      ];
+    }
     return [
       approve(plan, now),
       { ok: true, message: `Approved. ${plan.tasks.length} tasks locked in.` },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeTool, greeting, planCard } from '../../src/chat/describe.js';
+import { describeTool, greeting, NO_PLAN, planCard } from '../../src/chat/describe.js';
 import type { Plan } from '../../src/core/schema.js';
 import { makePlan, makeTask } from '../fixtures.js';
 
@@ -62,10 +62,23 @@ describe('greeting', () => {
     );
   });
 
-  it('celebrates (quietly) when everything is done', () => {
-    expect(greeting(approved(makePlan([makeTask({ id: 'T1', status: 'closed' })])))).toBe(
-      'All 1 tasks closed. Nice.',
-    );
+  it('points at the close-out report when everything is done', () => {
+    const done = approved(makePlan([makeTask({ id: 'T1', status: 'closed' })]));
+    expect(greeting(done)).toContain('All 1 tasks closed. The close-out report is on the board');
+    expect(greeting(done)).toContain('/report');
+  });
+
+  it('speaks phone on Slack and Telegram: no terminal commands', () => {
+    const plan = approved({
+      ...makePlan([
+        makeTask({ id: 'T1', status: 'review' }),
+        makeTask({ id: 'T2', title: 'Auth' }),
+      ]),
+    });
+    const text = greeting(plan, { remote: true });
+    expect(text).toContain('Their messages are above.');
+    expect(text).not.toMatch(/\/(review|build|board)/);
+    expect(greeting(undefined, { remote: true })).toBe(NO_PLAN);
   });
 });
 

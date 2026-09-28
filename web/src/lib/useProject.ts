@@ -6,6 +6,8 @@ export interface ProjectState {
   error: string | undefined;
   /** Whether the live-update stream is connected. */
   live: boolean;
+  /** The connection dropped: Dazza has probably been closed. Not set while first connecting. */
+  offline: boolean;
   refresh(): Promise<void>;
 }
 
@@ -14,6 +16,7 @@ export function useProject(): ProjectState {
   const [project, setProject] = useState<ProjectSnapshot>();
   const [error, setError] = useState<string>();
   const [live, setLive] = useState(false);
+  const [offline, setOffline] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -29,12 +32,16 @@ export function useProject(): ProjectState {
     const stream = new EventSource('/api/stream');
     stream.addEventListener('open', () => {
       setLive(true);
+      setOffline(false);
       void refresh(); // catch anything missed while disconnected
     });
-    stream.addEventListener('error', () => setLive(false));
+    stream.addEventListener('error', () => {
+      setLive(false);
+      setOffline(true);
+    });
     stream.addEventListener('change', () => void refresh());
     return () => stream.close();
   }, [refresh]);
 
-  return { project, error, live, refresh };
+  return { project, error, live, offline, refresh };
 }

@@ -93,9 +93,13 @@ function Row({ task, context, comments }: { task: Task; context: string; comment
       </span>
       {criteria.length > 0 && (
         <span className={cn('shrink-0 text-[12px]', unmet ? 'text-red' : 'text-muted')}>
-          {unmet
-            ? `${unmet} of ${criteria.length} criteria unmet`
-            : `${criteria.length}/${criteria.length} criteria`}
+          {/* On a phone, only what's wrong, and briefly: the title needs the room. */}
+          <span className="hidden sm:inline">
+            {unmet
+              ? `${unmet} of ${criteria.length} criteria unmet`
+              : `${criteria.length}/${criteria.length} criteria`}
+          </span>
+          {unmet > 0 && <span className="sm:hidden">✗ {unmet}</span>}
         </span>
       )}
       {task.size && (

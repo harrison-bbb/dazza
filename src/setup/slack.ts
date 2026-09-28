@@ -6,6 +6,7 @@ import { welcomeMessage } from '../slack/blocks.js';
 import { createAppUrl } from '../slack/manifest.js';
 import { type Envelope, SocketMode } from '../slack/socket.js';
 import { openInBrowser } from '../util/open.js';
+import { errorMessage } from '../util/text.js';
 import type { SetupUI } from './connect.js';
 
 const ATTEMPTS = 3;
@@ -193,7 +194,3 @@ const DmPayload = z.object({
     bot_id: z.string().optional(),
   }),
 });
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

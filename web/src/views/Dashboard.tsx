@@ -1,8 +1,8 @@
 import { Check, ChevronRight, FileText, Flag, ListTodo } from 'lucide-react';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useContext, useState } from 'react';
 import { LiveActivity } from '../components/LiveActivity';
 import { StatusIcon } from '../components/StatusIcon';
-import { Button, Heading, Id, InlineText } from '../components/ui';
+import { Button, Heading, Id, InlineText, Offline } from '../components/ui';
 import { approvePlan, type Event, type Plan, type ProjectSnapshot, type Task } from '../lib/api';
 import { timeAgo } from '../lib/format';
 import { paths } from '../lib/router';
@@ -17,6 +17,7 @@ const RECENT_LIMIT = 6;
  */
 export function Dashboard({ project, onChange }: { project: ProjectSnapshot; onChange(): void }) {
   const { plan, scope, events } = project;
+  const live = !useContext(Offline);
   const tasks = plan?.tasks ?? [];
   const inScope = tasks.filter((t) => t.status !== 'cancelled');
   const closed = inScope.filter((t) => t.status === 'closed').length;
@@ -57,18 +58,40 @@ export function Dashboard({ project, onChange }: { project: ProjectSnapshot; onC
         </p>
       )}
 
-      {plan && !plan.approvedAt && <ApprovalRow count={tasks.length} onApproved={onChange} />}
+      {plan && !plan.approvedAt && (
+        <ApprovalRow
+          count={tasks.length}
+          unfinished={plan.problems.length > 0}
+          onApproved={onChange}
+        />
+      )}
 
       {(review.length > 0 || blocked.length > 0) && (
         <Section title="Needs you" count={review.length + blocked.length}>
-          {blocked.map((task) => (
-            <InboxRow
-              key={task.id}
-              task={task}
-              detail={<span className="text-ink-2">“{blockerFor(events, task)?.message}”</span>}
-              action="Answer"
-            />
-          ))}
+          {blocked.map((task) => {
+            // Waiting for an OK to run a command: say which, and answer on the task.
+            const permission = project.permissions[task.id];
+            return permission ? (
+              <InboxRow
+                key={task.id}
+                task={task}
+                detail={
+                  <span className="text-ink-2">
+                    Wants to run <code className="font-mono">{permission.command}</code>
+                  </span>
+                }
+                action="Allow?"
+              />
+            ) : (
+              <InboxRow
+                key={task.id}
+                task={task}
+                detail={<span className="text-ink-2">“{blockerFor(events, task)?.message}”</span>}
+                action="Answer"
+                href={paths.item(task.id, 'unblock')}
+              />
+            );
+          })}
           {review.map((task) => (
             <InboxRow
               key={task.id}
@@ -86,10 +109,15 @@ export function Dashboard({ project, onChange }: { project: ProjectSnapshot; onC
             building.map((task) => <NowRow key={task.id} task={task} events={events} />)
           ) : (
             <p className="py-3 text-[13px] text-muted">
-              Dazza is idle.{' '}
-              {next
-                ? `Start \`dazza\` in your terminal and it picks up ${next.id} next.`
-                : 'Nothing is ready to build.'}
+              <InlineText>
+                {`Nothing is building. ${
+                  !next
+                    ? 'Nothing is ready to build.'
+                    : live
+                      ? `Type \`/build\` in your terminal to pick up ${next.id}.`
+                      : `Start \`dazza\` in your terminal, then \`/build\` to pick up ${next.id}.`
+                }`}
+              </InlineText>
             </p>
           )}
         </Section>
@@ -177,12 +205,19 @@ function Section({
   );
 }
 
-function InboxRow({ task, detail, action }: { task: Task; detail: ReactNode; action: string }) {
+function InboxRow({
+  task,
+  detail,
+  action,
+  href = paths.item(task.id),
+}: {
+  task: Task;
+  detail: ReactNode;
+  action: string;
+  href?: string;
+}) {
   return (
-    <a
-      href={paths.item(task.id)}
-      className="group flex items-start gap-3 px-1 py-3 hover:bg-hover/50"
-    >
+    <a href={href} className="group flex items-start gap-3 px-1 py-3 hover:bg-hover/50">
       <StatusIcon status={task.status} className="mt-[5px]" />
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-2">
@@ -270,26 +305,41 @@ function Since({ label, at }: { label: string; at: string | undefined }) {
   );
 }
 
-function ApprovalRow({ count, onApproved }: { count: number; onApproved(): void }) {
+function ApprovalRow({
+  count,
+  unfinished,
+  onApproved,
+}: {
+  count: number;
+  /** Dazza is still filling in details the plan check asked for. */
+  unfinished: boolean;
+  onApproved(): void;
+}) {
   const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string>();
   return (
-    <div className="mt-8 flex items-center gap-4 rounded-lg border border-line-strong px-4 py-3">
-      <p className="flex-1 text-[13px] text-ink-2">
-        The plan is ready: {count} tasks. Read the scope and the tasks, then approve. Want changes?
-        Tell Dazza in your terminal.
-      </p>
-      <Button
-        variant="primary"
-        disabled={busy}
-        onClick={async () => {
-          setBusy(true);
-          await approvePlan();
-          setBusy(false);
-          onApproved();
-        }}
-      >
-        Approve plan
-      </Button>
+    <div className="mt-8 rounded-lg border border-line-strong px-4 py-3">
+      <div className="flex items-center gap-4">
+        <p className="flex-1 text-[13px] text-ink-2">
+          {unfinished
+            ? `Dazza is still finishing the plan (${count} tasks). You can approve it once it’s done.`
+            : `The plan is ready: ${count} tasks. Read the scope and the tasks, then approve. Want changes? Tell Dazza in your terminal.`}
+        </p>
+        <Button
+          variant="primary"
+          disabled={busy || unfinished}
+          onClick={async () => {
+            setBusy(true);
+            const result = await approvePlan();
+            setBusy(false);
+            setProblem(result.ok ? undefined : result.message);
+            onApproved();
+          }}
+        >
+          Approve plan
+        </Button>
+      </div>
+      {problem && <p className="mt-2 text-[13px] text-red">{problem}</p>}
     </div>
   );
 }

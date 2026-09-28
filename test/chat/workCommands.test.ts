@@ -20,6 +20,7 @@ describe('work commands', () => {
       confirm: async () => answer,
       stopBuild: async () => {},
       status: () => {},
+      building: () => false,
     } as unknown as CommandContext;
     return { ctx, said };
   }

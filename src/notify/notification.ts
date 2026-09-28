@@ -55,7 +55,9 @@ export async function notificationFor(
   event: BuildEvent,
   store: Store,
 ): Promise<Notification | undefined> {
-  if (event.type === 'stopped') return info(event.reason);
+  // Idle for want of the user's review or answer: they've just been told about
+  // that task, so "nothing else to build" on top is noise. Real stops still go out.
+  if (event.type === 'stopped') return event.idle ? undefined : info(event.reason);
   if (event.type === 'waiting' && event.reason === 'usage_limit') {
     return info(
       `⏸ You’ve hit your usage limit, so I’ve paused ${event.task.id}. ` +

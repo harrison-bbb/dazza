@@ -5,6 +5,7 @@ import workerPrompt from '../prompts/worker.md';
 import type { AgentError, AgentEvent, AgentProvider, McpServerConfig } from '../providers/types.js';
 import { claim } from '../util/lock.js';
 import { stopProcessesIn } from '../util/process.js';
+import { errorMessage } from '../util/text.js';
 import type { Config } from './config.js';
 import { explainAgentError } from './errors.js';
 import { sizeMinutes } from './estimates.js';
@@ -32,8 +33,6 @@ export interface BuilderOptions {
   /** Checks every tool call the builder makes; see src/guard. */
   guard?: McpServerConfig;
   signal?: AbortSignal;
-  /** How many independent tasks to build at once; defaults to the user's setting, or 2. */
-  parallel?: number;
   /** Overrides for the timing policy, e.g. in tests. */
   timing?: Partial<Timing>;
 }
@@ -54,7 +53,23 @@ export interface Timing {
 }
 
 /** Independent tasks built at once, unless the user chose otherwise (/parallel). */
-const DEFAULT_PARALLEL = 2;
+/**
+ * What a builder works with. Subagents and workflows are left out: they
+ * multiply tokens, and a builder works its one task itself.
+ */
+const BUILDER_TOOLS = [
+  'Bash',
+  'Read',
+  'Edit',
+  'Write',
+  'Glob',
+  'Grep',
+  'WebFetch',
+  'WebSearch',
+  'TodoWrite',
+];
+
+export const DEFAULT_PARALLEL = 2;
 const MAX_PARALLEL = 3;
 /** How often a build with free slots looks for newly ready tasks. */
 const REFILL_MS = 5_000;
@@ -100,7 +115,9 @@ type Attempt =
   | { kind: 'aborted' }
   | { kind: 'stalled' }
   | { kind: 'crashed'; message: string }
-  | { kind: 'error'; error: AgentError };
+  | { kind: 'error'; error: AgentError }
+  /** The agent CLI couldn't find the session to resume; it's been forgotten, so try afresh. */
+  | { kind: 'lost' };
 
 /**
  * Build the plan: take the next ready task, build it on its own branch, and move
@@ -155,10 +172,7 @@ async function* buildTasks(options: BuilderOptions): AsyncGenerator<BuildEvent> 
 
   const limit = Math.min(
     MAX_PARALLEL,
-    Math.max(
-      1,
-      options.parallel ?? (await config.readSettings()).parallelTasks ?? DEFAULT_PARALLEL,
-    ),
+    Math.max(1, (await config.readSettings()).parallelTasks ?? DEFAULT_PARALLEL),
   );
   // Independent tasks build side by side, each in its own worktree. Their
   // events are passed on as they come; git setup happens one task at a time.
@@ -282,7 +296,8 @@ async function* buildOne(
   let overloads = 0;
   let announced = false;
   for (;;) {
-    const resumed = (await store.readTaskBuild(task.id)) !== undefined;
+    const before = await store.readTaskBuild(task.id);
+    const resumed = before !== undefined;
     let build: TaskBuild;
     try {
       build = await setup(() => startTask(store, git, task));
@@ -307,7 +322,16 @@ async function* buildOne(
     }
     announced = true;
 
-    const attempt = yield* runWorker(options, plan, task, resumed, build, timing);
+    const attempt = yield* runWorker(
+      options,
+      plan,
+      task,
+      resumed,
+      build,
+      timing,
+      before?.seenEvents,
+    );
+    if (attempt.kind === 'lost') continue;
 
     if (attempt.kind === 'aborted') {
       await pauseTask(store, task.id);
@@ -369,9 +393,14 @@ async function* buildOne(
         error.kind === 'setup' ||
         error.kind === 'overloaded'
       ) {
+        const method = (await config.readConnection())?.method;
         yield {
           type: 'stopped',
-          reason: explainAgentError(error, { taskId: task.id, provider: options.provider.id }),
+          reason: explainAgentError(error, {
+            taskId: task.id,
+            provider: options.provider.id,
+            ...(method && { method }),
+          }),
         };
         return 'end';
       }
@@ -420,6 +449,8 @@ async function* runWorker(
   resumed: boolean,
   build: TaskBuild,
   timing: Timing,
+  /** How much of the event log the builder had seen when it last stopped. */
+  seen?: number,
 ): AsyncGenerator<BuildEvent, Attempt> {
   const { store, config, provider, mcpServer, signal } = options;
   const run = new AbortController();
@@ -439,22 +470,21 @@ async function* runWorker(
   };
 
   const { model } = await config.readSettings();
+  let started = false;
   let finalText = '';
   let error: AgentError | undefined;
   try {
     feedWatchdog();
+    const log = await store.readEvents();
     const events = provider.run({
-      prompt: taskBrief(
-        plan,
-        task,
-        await store.readScope(),
-        await store.readEvents(),
-        resumed,
-        await store.readNotes(),
-      ),
+      // A resumed session already has the brief: send only what's new, not a second copy.
+      prompt: build.sessionId
+        ? resumeBrief(task, log.slice(seen ?? log.length), await store.readScope())
+        : taskBrief(plan, task, await store.readScope(), log, resumed, await store.readNotes()),
       cwd: build.dir ?? store.root,
       systemPrompt: workerPrompt,
       autonomous: true,
+      tools: BUILDER_TOOLS,
       allowedTools: WORKER_TOOLS,
       // Each builder is told its task: tasks can build side by side.
       mcpServers: { [MCP_SERVER_NAME]: forTask(mcpServer, task.id) },
@@ -465,8 +495,10 @@ async function* runWorker(
     });
     for await (const event of events) {
       feedWatchdog();
-      if (event.type === 'started')
+      if (event.type === 'started') {
+        started = true;
         await store.writeTaskBuild(task.id, { ...build, sessionId: event.sessionId });
+      }
       if (event.type === 'finished') {
         finalText = event.output;
         error = event.error;
@@ -479,7 +511,7 @@ async function* runWorker(
     if (stalled) return { kind: 'stalled' };
     return {
       kind: 'crashed',
-      message: thrown instanceof Error ? thrown.message.slice(0, 300) : String(thrown),
+      message: errorMessage(thrown).slice(0, 300),
     };
   } finally {
     clearTimeout(watchdog);
@@ -489,6 +521,13 @@ async function* runWorker(
   }
   if (signal?.aborted) return { kind: 'aborted' };
   if (stalled) return { kind: 'stalled' };
+  // Agent CLIs delete old sessions. A resume that fails before it starts means
+  // that: forget the session, and the next attempt starts afresh with the full brief.
+  if (build.sessionId && !started && error?.kind === 'failed') {
+    const { sessionId: _, ...rest } = build;
+    await store.writeTaskBuild(task.id, rest);
+    return { kind: 'lost' };
+  }
   return error && error.kind !== 'failed'
     ? { kind: 'error', error }
     : { kind: 'finished', finalText };
@@ -515,6 +554,42 @@ function inFuture(ms: number): string {
 async function sleepUntil(time: number, signal: AbortSignal | undefined): Promise<void> {
   const ms = Math.max(0, time - Date.now());
   await sleep(ms, undefined, signal ? { signal } : {}).catch(() => {});
+}
+
+/**
+ * For a builder picking its own session back up: it has the brief already, so
+ * just what happened since it stopped, and where the subtasks stand.
+ */
+export function resumeBrief(task: Task, since: Event[], scope?: string): string {
+  const ids = new Set([task.id, ...task.subtasks.map((s) => s.id)]);
+  const mine = (e: Event) => !e.taskId || ids.has(e.taskId);
+  const said = since
+    .filter((e) => e.type === 'comment' && e.actor === 'user' && mine(e))
+    .map((e) => `- ${e.taskId ?? 'On the project'}: ${e.message}`);
+  const edited = since.some((e) => e.type === 'task_edited' && e.taskId && ids.has(e.taskId));
+  const rescoped = since.some((e) => e.type === 'scope_changed');
+  return [
+    `Carry on building ${task.id} where you left off. Don't re-check what you already know.`,
+    ...(said.length > 0 ? ['', '## New from the user since you stopped (follow it)', ...said] : []),
+    ...(edited
+      ? [
+          '',
+          '## The task was changed since you stopped; this is the current version',
+          task.description,
+          '',
+          'Done when:',
+          ...task.acceptanceCriteria.map((c) => `- ${c}`),
+        ]
+      : []),
+    ...(rescoped && scope
+      ? ['', '## The project scope changed since you stopped; this is the current version', scope]
+      : []),
+    '',
+    '## Subtasks now',
+    ...task.subtasks
+      .filter((s) => s.status !== 'cancelled')
+      .map((s) => `- ${s.id} [${s.status}] ${s.title}`),
+  ].join('\n');
 }
 
 /** Everything the worker needs to know about its task, in one message. */
@@ -584,12 +659,23 @@ function idleReason(plan: Plan): string {
   if (plan.tasks.every((t) => t.status === 'closed' || t.status === 'cancelled')) {
     return 'Everything is built and closed.';
   }
+  const ids = (status: Task['status']) =>
+    plan.tasks
+      .filter((t) => t.status === status)
+      .map((t) => t.id)
+      .join(', ');
+  const later = count('planned');
   const waiting = [
-    count('review') && `${count('review')} waiting for your review`,
-    count('blocked') && `${count('blocked')} blocked on you`,
-    count('planned') && `${count('planned')} waiting on those`,
+    count('review') &&
+      `${ids('review')} ${count('review') === 1 ? 'is' : 'are'} waiting for your review`,
+    count('blocked') &&
+      `${ids('blocked')} ${count('blocked') === 1 ? 'needs' : 'need'} your answer`,
   ].filter(Boolean);
-  return `Nothing else is ready to build: ${waiting.join(', ')}.`;
+  if (waiting.length === 0) return 'Nothing else I can build yet.';
+  return (
+    `Nothing else I can build yet: ${waiting.join(', and ')}` +
+    `${later ? `. ${later} more ${later === 1 ? 'task depends' : 'tasks depend'} on ${count('review') + count('blocked') === 1 ? 'it' : 'them'}` : ''}.`
+  );
 }
 
 /** Notes grow task by task; the latest matter most, and the brief shouldn't balloon. */
@@ -599,10 +685,6 @@ function recentNotes(notes: string): string {
   const body = notes.replace(/^# Project notes\s*/, '').trim();
   if (body.length <= MAX_NOTES) return body;
   return `…(earlier notes are in .dazza/notes.md)\n${body.slice(-MAX_NOTES).replace(/^[^\n]*\n/, '')}`;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function forTask(server: McpServerConfig, taskId: string): McpServerConfig {

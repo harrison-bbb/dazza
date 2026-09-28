@@ -9,6 +9,7 @@ import { McpTools } from '../mcp/server.js';
 import type { Remote } from '../notify/channel.js';
 import type { AgentEvent, AgentProvider, McpServerConfig } from '../providers/types.js';
 import { openInBrowser } from '../util/open.js';
+import { errorMessage } from '../util/text.js';
 import { BRAND } from './banner.js';
 import { createBuildRenderer } from './buildView.js';
 import type { Usage } from './commands.js';
@@ -99,6 +100,11 @@ export class ChatSession {
 
   get isBuilding(): boolean {
     return this.building !== undefined;
+  }
+
+  /** Building now, or will pick the build back up by itself when something's ready. */
+  get isOnTheJob(): boolean {
+    return this.keepBuilding || this.building !== undefined;
   }
 
   get isChatting(): boolean {
@@ -200,6 +206,8 @@ export class ChatSession {
     /** save_plan calls awaiting their result, and whether one was just sent back. */
     const saves = new Set<string>();
     let fixingPlan = false;
+    /** The rejected plan was saved as a draft, and is being fixed item by item. */
+    let fixingDraft = false;
     output.status('chat', 'Thinking');
 
     try {
@@ -233,9 +241,18 @@ export class ChatSession {
           output.status('chat', describeTool(event.tool, event.input));
         } else if (event.type === 'tool_result' && saves.delete(event.id)) {
           fixingPlan = !event.ok;
+          fixingDraft = fixingPlan && ((await store.readPlan())?.problems.length ?? 0) > 0;
+        } else if (event.type === 'tool_result' && fixingDraft) {
+          // A draft the check sent back is being fixed item by item: quiet until it passes.
+          fixingDraft = ((await store.readPlan())?.problems.length ?? 0) > 0;
+          fixingPlan = fixingDraft;
         } else if (event.type === 'finished' && !event.ok) {
+          const method = (await this.options.config.readConnection())?.method;
           failure = event.error
-            ? explainAgentError(event.error, { provider: this.options.provider.id })
+            ? explainAgentError(event.error, {
+                provider: this.options.provider.id,
+                ...(method && { method }),
+              })
             : event.output || 'Something went wrong on my end.';
           output.say(paint.red(failure));
         }
@@ -354,8 +371,4 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { isAllowed } from '../core/permissions.js';
 import { Store } from '../core/store.js';
+import { errorMessage } from '../util/text.js';
 import { type Decision, judge, patchedFiles } from './policy.js';
 
 /**
@@ -30,7 +31,7 @@ export async function runGuard(
   } catch (error) {
     // Fail closed: an unchecked call doesn't run.
     return refuse(
-      `Dazza's guard couldn't check this (${error instanceof Error ? error.message : String(error)}). Try it another way.`,
+      `Dazza's guard couldn't check this (${errorMessage(error)}). Try it another way.`,
     );
   }
 }

@@ -1,5 +1,6 @@
 import { type KeyboardEvent, useState } from 'react';
 import { editTask, type Task } from '../lib/api';
+import { useUnsaved } from '../lib/useUnsaved';
 import { Button } from './ui';
 
 /**
@@ -23,6 +24,7 @@ export function TaskEditor({ task, onDone }: { task: Task; onDone(saved: boolean
     size !== (task.size ?? '') ||
     description !== task.description ||
     lines.join('\n') !== task.acceptanceCriteria.join('\n');
+  const discard = useUnsaved(changed);
 
   const save = async () => {
     if (!changed || busy) return;
@@ -100,7 +102,7 @@ export function TaskEditor({ task, onDone }: { task: Task; onDone(saved: boolean
         <Button variant="primary" onClick={save} disabled={!changed || busy}>
           {busy ? 'Saving…' : 'Save'}
         </Button>
-        <Button variant="quiet" onClick={() => onDone(false)} disabled={busy}>
+        <Button variant="quiet" onClick={() => discard() && onDone(false)} disabled={busy}>
           Cancel
         </Button>
         <span className="ml-auto text-[12px] text-faint">⌘S to save</span>

@@ -8,6 +8,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { type KeyboardEvent, type ReactNode, useState } from 'react';
+import { splitChangeLog } from '../../../src/core/scope.js';
 import { Markdown } from '../components/Markdown';
 import { StatusIcon } from '../components/StatusIcon';
 import { Button, Id, InlineText } from '../components/ui';
@@ -24,8 +25,10 @@ import {
 } from '../lib/api';
 import { cn, timeAgo } from '../lib/format';
 import { paths } from '../lib/router';
-import { planDocument, splitChangeLog } from '../lib/scope';
+import { planDocument } from '../lib/scope';
 import { STATUS_LABEL } from '../lib/status';
+import { criterionReport } from '../lib/timeline';
+import { useUnsaved } from '../lib/useUnsaved';
 
 const REVISION_TYPES: Event['type'][] = [
   'plan_created',
@@ -64,18 +67,28 @@ export function DocView({ project, onChange }: { project: ProjectSnapshot; onCha
               <Pencil className="size-3.5" />
               Edit
             </Button>
-            <Button variant="quiet" onClick={() => download(project)} title="Download as Markdown">
+            <Button
+              variant="quiet"
+              onClick={() => download(project)}
+              title="Download as Markdown"
+              aria-label="Download as Markdown"
+            >
               <Download className="size-3.5" />
             </Button>
-            <Button variant="quiet" onClick={() => window.print()} title="Print, or save as PDF">
+            <Button
+              variant="quiet"
+              onClick={() => window.print()}
+              title="Print, or save as PDF"
+              aria-label="Print, or save as PDF"
+            >
               <Printer className="size-3.5" />
             </Button>
           </div>
         )}
       </div>
-      {history.length > 0 && !editing && !viewing && <History events={history} />}
       {!editing && !viewing && scope && (
         <Versions
+          updated={history[0]?.at}
           onView={async (version) => {
             const markdown = await fetchScopeVersion(version.id);
             if (markdown !== undefined) setViewing({ version, markdown });
@@ -123,7 +136,15 @@ export function DocView({ project, onChange }: { project: ProjectSnapshot; onCha
 }
 
 /** Every saved version of the scope, newest first, each one viewable. */
-function Versions({ onView }: { onView(version: ScopeVersion): void }) {
+/** Every version of the scope, newest first, each one viewable and restorable. */
+function Versions({
+  updated,
+  onView,
+}: {
+  /** When the scope last changed. */
+  updated: string | undefined;
+  onView(version: ScopeVersion): void;
+}) {
   const [open, setOpen] = useState(false);
   const [versions, setVersions] = useState<ScopeVersion[]>();
   const toggle = async () => {
@@ -131,7 +152,7 @@ function Versions({ onView }: { onView(version: ScopeVersion): void }) {
     setOpen(!open);
   };
   return (
-    <div className="mt-1 text-[13px] text-muted print:hidden">
+    <div className="mt-2 text-[13px] text-muted print:hidden">
       <button
         type="button"
         onClick={toggle}
@@ -139,7 +160,7 @@ function Versions({ onView }: { onView(version: ScopeVersion): void }) {
         className="inline-flex items-center gap-1 hover:text-ink"
       >
         <HistoryIcon className="size-3.5" />
-        Earlier versions
+        History{updated && ` · updated ${timeAgo(updated)}`}
         <ChevronDown className={cn('size-3.5 transition-transform', open && 'rotate-180')} />
       </button>
       {open && versions && (
@@ -183,8 +204,11 @@ function OldVersion({
 }) {
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
   const restore = async () => {
+    setBusy(true);
     const result = await restoreScopeVersion(version.id);
+    setBusy(false);
     if (result.ok) onRestored();
     else setError(result.message);
   };
@@ -198,7 +222,7 @@ function OldVersion({
         {confirming ? (
           <>
             <span className="text-muted">Make this the current scope?</span>
-            <Button variant="primary" onClick={restore}>
+            <Button variant="primary" disabled={busy} onClick={restore}>
               Restore it
             </Button>
             <Button variant="quiet" onClick={() => setConfirming(false)}>
@@ -249,6 +273,7 @@ function Editor({
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const changed = text !== body;
+  const discard = useUnsaved(changed);
 
   const save = async () => {
     if (!changed || busy) return;
@@ -313,7 +338,7 @@ function Editor({
           />
         )}
         <div className="ml-auto flex gap-2">
-          <Button variant="quiet" onClick={() => onDone(false)} disabled={busy}>
+          <Button variant="quiet" onClick={() => discard() && onDone(false)} disabled={busy}>
             Cancel
           </Button>
           <Button variant="primary" onClick={save} disabled={!changed || busy}>
@@ -375,7 +400,8 @@ function Deliverables({ plan }: { plan: Plan }) {
           )}
           {group.goal && <p className="mt-0.5 mb-3 text-[13px] text-muted">{group.goal}</p>}
           <div className="overflow-x-auto">
-            <table className="w-full text-[13px]">
+            {/* On a phone, each task stacks: task, then its criteria, then its status. */}
+            <table className="w-full text-[13px] max-sm:[&_td]:block max-sm:[&_td]:py-1 max-sm:[&_thead]:hidden max-sm:[&_tr]:block max-sm:[&_tr]:py-2">
               <thead>
                 <tr className="border-b border-line text-left text-muted">
                   <th className="w-[38%] py-2 pr-4 font-medium">Task</th>
@@ -419,7 +445,7 @@ function Row({ task }: { task: Task }) {
       <td className="py-2.5 pr-4">
         <ul className="space-y-1">
           {task.acceptanceCriteria.map((criterion, i) => {
-            const report = task.handoff?.criteria[i];
+            const report = criterionReport(task, criterion, i);
             return (
               <li key={criterion} className={cn('text-ink-2', cancelled && 'text-muted')}>
                 <span className={report ? (report.met ? 'text-accent' : 'text-red') : 'text-faint'}>
@@ -451,35 +477,4 @@ function download(project: ProjectSnapshot): void {
   link.download = `${project.name}-scope-of-work.md`;
   link.click();
   URL.revokeObjectURL(link.href);
-}
-
-/** Who wrote, revised and approved the scope, and why it changed. */
-function History({ events }: { events: Event[] }) {
-  const [open, setOpen] = useState(false);
-  const latest = events[0];
-  if (!latest) return null;
-
-  return (
-    <div className="mt-2 text-[13px] text-muted print:hidden">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        aria-expanded={open}
-        className="inline-flex items-center gap-1 hover:text-ink"
-      >
-        Updated {timeAgo(latest.at)} · {events.length} {events.length === 1 ? 'change' : 'changes'}
-        <ChevronDown className={cn('size-3.5 transition-transform', open && 'rotate-180')} />
-      </button>
-      {open && (
-        <ol className="mt-3 space-y-2 border-l border-line pl-4">
-          {events.map((event) => (
-            <li key={`${event.at}-${event.type}`}>
-              <span className="text-ink-2">{event.actor === 'dazza' ? 'Dazza' : 'You'}</span> ·{' '}
-              {event.message} <span className="text-faint">· {timeAgo(event.at)}</span>
-            </li>
-          ))}
-        </ol>
-      )}
-    </div>
-  );
 }

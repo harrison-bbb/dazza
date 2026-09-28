@@ -19,6 +19,14 @@ export interface ProjectSnapshot {
   permissions: Record<string, { command: string; why: string }>;
 }
 
+/** One saved version of the scope, as the History list shows it. */
+export interface ScopeVersion {
+  id: string;
+  at: string;
+  /** What that version was: its newest change-log entry, or the first plan. */
+  label: string;
+}
+
 export interface ActionResponse {
   ok: boolean;
   message: string;

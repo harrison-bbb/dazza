@@ -34,9 +34,11 @@ import { connectSlack } from '../setup/slack.js';
 import { connectTelegram } from '../setup/telegram.js';
 import { SlackBridge } from '../slack/bridge.js';
 import { TelegramBridge } from '../telegram/bridge.js';
+import { debounce } from '../util/debounce.js';
+import { errorMessage } from '../util/text.js';
 import { BRAND, logo, sessionInfo } from './banner.js';
 import { type CommandContext, commandMenu, parseCommand, suggest } from './commands.js';
-import { greeting } from './describe.js';
+import { greeting, NO_PLAN } from './describe.js';
 import { ChatSession } from './session.js';
 import { paint, stripAnsi } from './style.js';
 import { Terminal } from './terminal.js';
@@ -72,7 +74,7 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
   const config = new Config();
   const connection = (await config.readConnection()) ?? (await firstConnect(terminal, config));
   if (!connection) {
-    say('No problem. Run `dazza` again whenever you’re ready to connect.');
+    say('Not connected yet. Run `dazza` again whenever you’re ready.');
     return;
   }
 
@@ -161,7 +163,7 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
         .then((note) => note && notify(note))
         .catch(() => {}); // a notification is a nicety; the terminal shows the event anyway
     },
-    onStartBuild: () => void startBuild(session, provider, config),
+    onStartBuild: () => void startBuild(session, provider, config, store),
     onBuildEnd: () => {
       refresh();
       void resumeIfReady();
@@ -181,12 +183,9 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
   const remoteCommand = async (command: RemoteCommand): Promise<string> => {
     switch (command) {
       case 'status':
-        return stripAnsi(greeting(await store.readPlan(), { hasConversation: true }));
+        return stripAnsi(greeting(await store.readPlan(), { remote: true }));
       case 'build':
-        await startBuild(session, provider, config);
-        return session.isBuilding
-          ? 'Building. I’ll message you as tasks are ready.'
-          : 'I couldn’t start the build; check the terminal.';
+        return stripAnsi(await startBuild(session, provider, config, store));
       case 'stop':
         if (!session.isBuilding) return 'Not building right now.';
         await session.stopBuild();
@@ -327,8 +326,11 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
     connection,
     session: session.usage,
     boardUrl: board.url,
-    startBuild: () => startBuild(session, provider, config),
+    startBuild: async () => {
+      await startBuild(session, provider, config, store);
+    },
     requestReport,
+    building: () => session.isOnTheJob,
     stopBuild: async () => {
       if (!session.isBuilding) return say('Not building right now.');
       // A paused task reports itself; only say so when nothing was underway.
@@ -401,23 +403,32 @@ async function startBuild(
   session: ChatSession,
   provider: AgentProvider,
   config: Config,
-): Promise<void> {
-  if (session.isBuilding) {
-    say('Already building. Keep talking to me, or Ctrl-C to stop the build.');
-    return;
+  store: Store,
+): Promise<string> {
+  /** Say it here, and hand it back for a phone that asked. */
+  const tell = (text: string) => {
+    say(text);
+    return text;
+  };
+  if (session.isBuilding) return tell('Already building. Keep talking to me; /stop stops it.');
+  // Say what's missing before announcing a build that can't happen.
+  const plan = await store.readPlan();
+  if (!plan) return tell(NO_PLAN);
+  if (!plan.approvedAt) {
+    return tell('The plan needs your OK first: look it over with /scope, then /approve.');
   }
   const models = await provider.listModels();
   const chosen = (await config.readSettings()).model;
   const model = models.find((m) => m.id === chosen) ?? models[0];
   if (model && !model.autonomous) {
-    say(
+    return tell(
       `${model.name} can’t build on its own: it doesn’t support ${provider.name}’s auto mode. ` +
         'Switch to one that does, like Opus or Sonnet, with /model.',
     );
-    return;
   }
   session.startBuild();
   say(paint.dim('Building in the background. Keep talking to me while I work; /stop stops it.'));
+  return 'Building. I’ll message you as tasks are ready.';
 }
 
 /** First launch, or after /logout: pick how Dazza connects, and remember it. */
@@ -521,16 +532,4 @@ function cliPath(): string {
   const path = process.argv[1];
   if (!path) throw new Error('Cannot determine the dazza executable path');
   return path;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function debounce(fn: () => Promise<void>, ms: number): () => void {
-  let timer: NodeJS.Timeout | undefined;
-  return () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => void fn(), ms);
-  };
 }

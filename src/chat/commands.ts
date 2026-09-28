@@ -1,12 +1,14 @@
 import { approvePlan } from '../core/actions.js';
+import { DEFAULT_PARALLEL } from '../core/builder.js';
 import type { Config, Connection, Limits } from '../core/config.js';
+import { clock } from '../core/errors.js';
 import type { Store } from '../core/store.js';
 import type { ChannelId } from '../notify/channel.js';
 import { PROVIDER_HELP } from '../providers/index.js';
 import type { AgentProvider, ModelOption, ProviderId } from '../providers/types.js';
 import { openInBrowser } from '../util/open.js';
 import { BRAND } from './banner.js';
-import { greeting } from './describe.js';
+import { greeting, NO_PLAN } from './describe.js';
 import type { MenuItem } from './editor.js';
 import { paint } from './style.js';
 import { WORK_COMMANDS } from './workCommands.js';
@@ -24,6 +26,8 @@ export interface CommandContext {
   startBuild(): Promise<void>;
   /** Have Dazza write the progress (or close-out) report. */
   requestReport(): Promise<void>;
+  /** Whether a build is on, so work put back in the queue gets picked up by itself. */
+  building(): boolean;
   /** Stop the build; the current task is paused. */
   stopBuild(): Promise<void>;
   /** Ask the user a yes/no question. */
@@ -73,7 +77,7 @@ export const COMMANDS: Command[] = [
     description: 'Where the project is at',
     async run({ store, say }) {
       const plan = await store.readPlan();
-      say(plan ? greeting(plan) : 'No plan yet. Tell me what you want to build or change.');
+      say(plan ? greeting(plan) : NO_PLAN);
     },
   },
   ...WORK_COMMANDS,
@@ -81,17 +85,20 @@ export const COMMANDS: Command[] = [
     name: 'report',
     description: 'Write up where the project is: a progress report, or the close-out at the end',
     async run({ store, say, requestReport }) {
-      if (!(await store.readPlan())?.approvedAt) {
-        say('There’s nothing to report yet: the plan isn’t approved.');
-        return;
-      }
+      const plan = await store.readPlan();
+      if (!plan) return say(NO_PLAN);
+      if (!plan.approvedAt) return say('There’s nothing to report yet: the plan isn’t approved.');
       await requestReport();
     },
   },
   {
     name: 'approve',
     description: 'Approve the drafted plan so Dazza can start',
-    async run({ store, say }) {
+    async run({ store, say }, args) {
+      // Tasks are approved with /accept; "/approve T3" is an easy slip to make.
+      const task = args.trim().toUpperCase();
+      if (/^T\d+$/.test(task))
+        return say(`To approve ${task}’s work and merge it, use /accept ${task}.`);
       const result = await approvePlan(store);
       say(
         result.ok
@@ -147,7 +154,7 @@ export const COMMANDS: Command[] = [
     args: '[1–3]',
     description: 'How many independent tasks to build at once',
     async run({ config, say }, args) {
-      const current = (await config.readSettings()).parallelTasks ?? 2;
+      const current = (await config.readSettings()).parallelTasks ?? DEFAULT_PARALLEL;
       const wanted = Number(args.trim());
       if (!args.trim()) {
         say(
@@ -214,57 +221,51 @@ export const COMMANDS: Command[] = [
   },
   {
     name: 'slack',
-    description: 'See your Slack link, or connect Slack',
+    description: 'See your Slack link, or connect Slack (/slack-disconnect to unlink)',
     async run({ config, say, link }) {
       const slack = await config.readSlack();
       if (!slack) return link('slack');
       say(
         `Connected to ${slack.teamName}. I message you there about reviews and blockers, ` +
           'and you can reply, approve work and start builds from Slack.\n' +
-          paint.dim('Run /slack-disconnect to link a different workspace.'),
+          paint.dim('/slack-disconnect unlinks it; then /slack links a different workspace.'),
       );
     },
   },
   {
     name: 'slack-disconnect',
-    description: 'Unlink Slack, then link it again if you like',
-    async run({ config, say, link, unlink }) {
+    description: 'Unlink Slack',
+    async run({ config, say, unlink }) {
       const slack = await config.readSlack();
-      if (slack) {
-        await unlink('slack');
-        say(
-          `Disconnected from ${slack.teamName}. Let’s link it again, or press Ctrl-C to stay unlinked. ` +
-            paint.dim('To remove the app itself, delete it at https://api.slack.com/apps.'),
-        );
-      }
-      await link('slack');
+      if (!slack) return say('Slack isn’t linked. /slack links it.');
+      await unlink('slack');
+      say(
+        `Disconnected from ${slack.teamName}. /slack links it again. ` +
+          paint.dim('To remove the app itself, delete it at https://api.slack.com/apps.'),
+      );
     },
   },
   {
     name: 'telegram',
-    description: 'See your Telegram link, or connect Telegram',
+    description: 'See your Telegram link, or connect Telegram (/telegram-disconnect to unlink)',
     async run({ config, say, link }) {
       const telegram = await config.readTelegram();
       if (!telegram) return link('telegram');
       say(
         `Connected to @${telegram.botUsername}. I message you there about reviews and blockers, ` +
           'and you can reply from your phone.\n' +
-          paint.dim('Run /telegram-disconnect to link a different bot.'),
+          paint.dim('/telegram-disconnect unlinks it; then /telegram links a different bot.'),
       );
     },
   },
   {
     name: 'telegram-disconnect',
-    description: 'Unlink your Telegram bot and link a new one',
-    async run({ config, say, link, unlink }) {
+    description: 'Unlink your Telegram bot',
+    async run({ config, say, unlink }) {
       const telegram = await config.readTelegram();
-      if (telegram) {
-        await unlink('telegram');
-        say(
-          `Disconnected @${telegram.botUsername}. Let’s link a new one, or press Ctrl-C to stay unlinked.`,
-        );
-      }
-      await link('telegram');
+      if (!telegram) return say('Telegram isn’t linked. /telegram links it.');
+      await unlink('telegram');
+      say(`Disconnected @${telegram.botUsername}. /telegram links a bot again.`);
     },
   },
   {
@@ -310,12 +311,30 @@ export function commandMenu(text: string): MenuItem[] {
   ).map((c) => ({ value: `/${c.name}`, hint: c.description }));
 }
 
+/** /help's sections, in the README's order. Anything unlisted goes under Setup. */
+const HELP_GROUPS: [string, string[]][] = [
+  ['The work', ['build', 'stop', 'status', 'tasks', 'next', 'parallel']],
+  ['Reviewing', ['review', 'try', 'accept', 'changes', 'diff', 'allow', 'deny', 'redo', 'cancel']],
+  ['The project', ['approve', 'scope', 'dashboard', 'report', 'new']],
+  ['Setup', ['model', 'usage', 'notify', 'slack', 'telegram', 'logout', 'help', 'exit']],
+];
+/** In the menu as you type, but not worth a row in /help. */
+const HELP_HIDDEN = new Set(['slack-disconnect', 'telegram-disconnect']);
+
 export function helpText(): string {
-  const rows = COMMANDS.map((c) => {
+  const row = (c: Command) => {
     const usage = `/${c.name}${c.args ? ` ${c.args}` : ''}`;
     return `  ${paint.hex(BRAND, usage.padEnd(26))}${paint.dim(c.description)}`;
+  };
+  const listed = new Set(HELP_GROUPS.flatMap(([, names]) => names));
+  const sections = HELP_GROUPS.map(([title, names]) => {
+    const commands = names.flatMap((name) => COMMANDS.filter((c) => c.name === name));
+    if (title === 'Setup') {
+      commands.push(...COMMANDS.filter((c) => !listed.has(c.name) && !HELP_HIDDEN.has(c.name)));
+    }
+    return [paint.bold(title), ...commands.map(row)].join('\n');
   });
-  return `Just type to talk to me. Or use a command:\n${rows.join('\n')}`;
+  return `Just type to talk to me. Or use a command:\n\n${sections.join('\n\n')}`;
 }
 
 export function modelList(models: ModelOption[], current: string | undefined): string {
@@ -370,7 +389,7 @@ export function limitsReport(
       '',
       WINDOW_NAMES[window.id] ?? window.id,
       `${bar(window.utilization)}  ${percent}% used`,
-      paint.dim(`Resets ${when(window.resetsAt, now)}`),
+      paint.dim(`Resets ${clock(window.resetsAt, now)}`),
     );
   }
   lines.push(
@@ -411,14 +430,6 @@ function bar(fraction: number, width = BAR_WIDTH): string {
   const partial = eighths % 8 ? (' ▏▎▍▌▋▊▉'[eighths % 8] ?? '') : '';
   const filled = '█'.repeat(full) + partial;
   return paint.hex(BRAND, filled) + paint.dim('░'.repeat(width - filled.length));
-}
-
-function when(iso: string, now: Date): string {
-  const date = new Date(iso);
-  const time = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  return date.toDateString() === now.toDateString()
-    ? time
-    : `${date.toLocaleDateString(undefined, { weekday: 'short' })} ${time}`;
 }
 
 function ago(iso: string, now: Date): string {

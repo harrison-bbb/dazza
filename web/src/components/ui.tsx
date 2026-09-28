@@ -1,9 +1,14 @@
-import type { ComponentProps, ReactNode } from 'react';
+import { type ComponentProps, createContext, type ReactNode, useContext } from 'react';
 import { cn } from '../lib/format';
+
+/** Set while Dazza isn't running: actions would only fail, so they're switched off. */
+export const Offline = createContext(false);
 
 type ButtonProps = ComponentProps<'button'> & { variant?: 'primary' | 'secondary' | 'quiet' };
 
 export function Button({ variant = 'secondary', className, ...props }: ButtonProps) {
+  // Quiet buttons only show or hide things on the page; the rest need Dazza.
+  const offline = useContext(Offline) && variant !== 'quiet';
   return (
     <button
       type="button"
@@ -18,6 +23,8 @@ export function Button({ variant = 'secondary', className, ...props }: ButtonPro
         className,
       )}
       {...props}
+      disabled={props.disabled || offline}
+      {...(offline && { title: 'Dazza isn’t running' })}
     />
   );
 }

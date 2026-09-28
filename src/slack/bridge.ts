@@ -9,6 +9,7 @@ import {
 } from '../notify/channel.js';
 import type { Notification } from '../notify/notification.js';
 import { claim } from '../util/lock.js';
+import { errorMessage, parseJson } from '../util/text.js';
 import { type Block, SlackApi } from './api.js';
 import {
   Actions,
@@ -115,7 +116,7 @@ export class SlackBridge implements Channel {
   }
 
   async reply(text: string, to: Remote): Promise<void> {
-    const ref = Ref.safeParse(safeJson(to.ref));
+    const ref = Ref.safeParse(parseJson(to.ref));
     const channel = ref.success ? ref.data.channel : this.link.channelId;
     await this.guard(async () => {
       for (const part of replyMessages(text)) {
@@ -236,7 +237,7 @@ export class SlackBridge implements Channel {
       if (!note) {
         return { response_action: 'errors', errors: { [NOTE_INPUT]: 'Say what needs to change.' } };
       }
-      const meta = ChangesMeta.safeParse(safeJson(submission.data.view.private_metadata));
+      const meta = ChangesMeta.safeParse(parseJson(submission.data.view.private_metadata));
       if (meta.success) void this.sendBack(meta.data, note);
       return undefined;
     }
@@ -408,19 +409,6 @@ export class SlackBridge implements Channel {
       }
     }
   }
-}
-
-function safeJson(text: string | undefined): unknown {
-  if (!text) return undefined;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 const SlackEvent = z.looseObject({

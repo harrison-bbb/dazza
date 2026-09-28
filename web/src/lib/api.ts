@@ -1,7 +1,22 @@
-import { type ActionResponse, CSRF_HEADER, type ProjectSnapshot } from '../../../src/board/api.js';
+import {
+  type ActionResponse,
+  CSRF_HEADER,
+  type ProjectSnapshot,
+  type ScopeVersion,
+} from '../../../src/board/api.js';
+import type { TaskChanges } from '../../../src/core/edits.js';
+import type { Activity } from '../../../src/core/schema.js';
 
-export type { Event, Handoff, Plan, Subtask, Task, TaskStatus } from '../../../src/core/schema.js';
-export type { ProjectSnapshot };
+export type {
+  Activity,
+  Event,
+  Handoff,
+  Plan,
+  Subtask,
+  Task,
+  TaskStatus,
+} from '../../../src/core/schema.js';
+export type { ProjectSnapshot, ScopeVersion };
 
 export async function fetchProject(): Promise<ProjectSnapshot> {
   const res = await fetch('/api/project');
@@ -18,39 +33,22 @@ export const addComment = (id: string, body: string) => post(`${task(id)}/commen
 export const setStatus = (id: string, status: 'backlog' | 'planned', note?: string) =>
   post(`${task(id)}/status`, { status, ...(note && { note }) });
 
-export interface Activity {
-  at: string;
-  taskId: string;
-  kind: 'say' | 'do' | 'status';
-  text: string;
-}
-
-export async function fetchActivity(taskId: string, limit = 200): Promise<Activity[]> {
+/** A task's build log, or undefined if Dazza can't be reached (keep showing what's there). */
+export async function fetchActivity(taskId: string, limit = 200): Promise<Activity[] | undefined> {
   try {
     const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/activity?limit=${limit}`);
-    return res.ok ? ((await res.json()) as Activity[]) : [];
+    return res.ok ? ((await res.json()) as Activity[]) : undefined;
   } catch {
-    return [];
+    return undefined;
   }
 }
 
-export interface TaskEdits {
-  title?: string;
-  description?: string;
-  acceptanceCriteria?: string[];
-  size?: 'S' | 'M' | 'L';
-}
+export type TaskEdits = TaskChanges;
 export const editTask = (id: string, changes: TaskEdits) => send('PATCH', task(id), changes);
 export const redoTask = (id: string, note: string) => post(`${task(id)}/redo`, { note });
 export const buildNext = (id: string) => post(`${task(id)}/next`);
 export const answerPermission = (id: string, allow: boolean) =>
   post(`${task(id)}/permission`, { allow });
-
-export interface ScopeVersion {
-  id: string;
-  at: string;
-  label: string;
-}
 
 export async function fetchScopeVersions(): Promise<ScopeVersion[]> {
   const res = await fetch('/api/scope/versions');

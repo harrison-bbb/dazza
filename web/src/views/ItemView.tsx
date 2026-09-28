@@ -21,7 +21,7 @@ import {
 } from '../lib/api';
 import { cn, timeAgo } from '../lib/format';
 import { paths } from '../lib/router';
-import { blockerFor, milestones } from '../lib/timeline';
+import { blockerFor, criterionReport, milestones } from '../lib/timeline';
 
 interface ItemViewProps {
   task: Task;
@@ -33,6 +33,8 @@ interface ItemViewProps {
   milestone?: { id: string; title: string } | undefined;
   /** A command this task is waiting on the user's OK to run. */
   permission?: { command: string; why: string } | undefined;
+  /** Opened to answer a question: start with the reply box ready. */
+  focus?: 'unblock' | undefined;
   onChange(): void;
 }
 
@@ -51,19 +53,23 @@ export function ItemView({
   events,
   permission,
   milestone,
+  focus,
   onChange,
 }: ItemViewProps) {
-  const [mode, setMode] = useState<ComposerMode>('comment');
+  const [mode, setMode] = useState<ComposerMode>(focus ?? 'comment');
   const [editing, setEditing] = useState(false);
   const item = subtask ?? task;
   const thread = events.filter((e) => e.taskId === item.id);
   const siblings = subtask ? task.subtasks : tasks;
   const blocker = subtask ? undefined : blockerFor(events, task);
+  const reviewing = !subtask && task.status === 'review';
 
   useKeyboardNavigation(
     siblings.map((s) => s.id),
     item.id,
     subtask ? paths.item(task.id) : paths.tasks,
+    // Moving away mid-edit would throw the edit away.
+    !editing,
   );
 
   return (
@@ -117,14 +123,30 @@ export function ItemView({
             blocker && <BlockerNote question={blocker} onReply={() => setMode('unblock')} />
           )}
 
-          {!editing && item.description && (
-            // Descriptions are Markdown: the scope of a task, with details and boundaries.
-            <div className="mt-6">
-              <Markdown>{item.description}</Markdown>
-            </div>
-          )}
+          {/* In review, what was delivered comes first; what was asked folds away. */}
+          {reviewing && task.handoff && <HandoffSection taskId={task.id} handoff={task.handoff} />}
 
-          {!subtask && task.handoff && <HandoffSection handoff={task.handoff} />}
+          {!editing &&
+            item.description &&
+            (reviewing ? (
+              <details className="mt-8 text-[13px]">
+                <summary className="cursor-pointer text-muted hover:text-ink">
+                  What was asked
+                </summary>
+                <div className="mt-3">
+                  <Markdown>{item.description}</Markdown>
+                </div>
+              </details>
+            ) : (
+              // Descriptions are Markdown: the scope of a task, with details and boundaries.
+              <div className="mt-6">
+                <Markdown>{item.description}</Markdown>
+              </div>
+            ))}
+
+          {!reviewing && !subtask && task.handoff && (
+            <HandoffSection taskId={task.id} handoff={task.handoff} />
+          )}
 
           <dl className="mt-8 divide-y divide-line border-y border-line text-[13px]">
             {subtask ? (
@@ -179,7 +201,7 @@ export function ItemView({
                 <ul className="space-y-2.5">
                   {task.acceptanceCriteria.map((criterion, i) => {
                     // The builder's own account of each criterion, from the handoff.
-                    const report = task.handoff?.criteria[i];
+                    const report = criterionReport(task, criterion, i);
                     return (
                       <li key={criterion} className="flex gap-3 leading-6">
                         <Checkbox checked={task.status === 'closed' || Boolean(report?.met)} />
@@ -240,6 +262,7 @@ function TaskActions(props: {
 }) {
   const { task, onRequestChanges, onEdit, onChange } = props;
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmAccept, setConfirmAccept] = useState(false);
   const [redoing, setRedoing] = useState(false);
   const [redoNote, setRedoNote] = useState('');
   const [problem, setProblem] = useState<string>();
@@ -274,7 +297,7 @@ function TaskActions(props: {
         />
         <div className="mt-3 flex gap-2">
           <Button
-            variant="primary"
+            className="text-red"
             disabled={busy}
             onClick={() =>
               run(async () => {
@@ -297,17 +320,30 @@ function TaskActions(props: {
 
   return (
     <div className="mt-5 flex flex-wrap items-center gap-3">
-      {task.status === 'review' && (
-        <>
-          <Button variant="primary" disabled={busy} onClick={() => run(() => closeTask(task.id))}>
-            <Check className="size-3.5" strokeWidth={2.5} />
-            Approve & close
-          </Button>
-          <Button disabled={busy} onClick={onRequestChanges}>
-            Request changes
-          </Button>
-        </>
-      )}
+      {task.status === 'review' &&
+        (confirmAccept ? (
+          // Merging lands the work on the user's branch: worth a second click.
+          <span className="flex items-center gap-2 text-[13px] text-ink-2">
+            Merge {task.id} into your branch?
+            <Button variant="primary" disabled={busy} onClick={() => run(() => closeTask(task.id))}>
+              <Check className="size-3.5" strokeWidth={2.5} />
+              Yes, merge
+            </Button>
+            <Button variant="quiet" onClick={() => setConfirmAccept(false)}>
+              Not yet
+            </Button>
+          </span>
+        ) : (
+          <>
+            <Button variant="primary" disabled={busy} onClick={() => setConfirmAccept(true)}>
+              <Check className="size-3.5" strokeWidth={2.5} />
+              Accept & merge
+            </Button>
+            <Button disabled={busy} onClick={onRequestChanges}>
+              Request changes
+            </Button>
+          </>
+        ))}
       {task.status === 'planned' && (
         <>
           <Button disabled={busy} onClick={() => run(() => buildNext(task.id))}>
@@ -329,22 +365,22 @@ function TaskActions(props: {
       )}
       {confirmCancel ? (
         <span className="flex items-center gap-1 text-[13px] text-muted">
-          Cancel this task?
+          Drop {task.id} from the plan?
           <Button
             variant="quiet"
             className="text-red hover:text-red"
             disabled={busy}
             onClick={() => run(() => cancelTask(task.id))}
           >
-            Yes, cancel
+            Yes, drop it
           </Button>
           <Button variant="quiet" onClick={() => setConfirmCancel(false)}>
-            Keep
+            Keep it
           </Button>
         </span>
       ) : (
         <Button variant="quiet" onClick={() => setConfirmCancel(true)}>
-          Cancel task
+          Drop task…
         </Button>
       )}
       {editable && (
@@ -397,14 +433,13 @@ function PermissionNote({
   onChange(): void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string>();
   const answer = async (allow: boolean) => {
     setBusy(true);
-    try {
-      await answerPermission(taskId, allow);
-    } finally {
-      setBusy(false);
-      onChange();
-    }
+    const result = await answerPermission(taskId, allow);
+    setBusy(false);
+    setProblem(result.ok ? undefined : result.message);
+    onChange();
   };
   return (
     <div className="mt-6 rounded-lg border border-red/30 px-4 py-3">
@@ -428,12 +463,14 @@ function PermissionNote({
           Don’t allow
         </Button>
       </div>
+      {problem && <p className="mt-2 text-[13px] text-red">{problem}</p>}
     </div>
   );
 }
 
 /** What Dazza delivered: the summary, how to check it, the evidence, and the technical detail. */
-function HandoffSection({ handoff }: { handoff: Handoff }) {
+function HandoffSection({ taskId, handoff }: { taskId: string; handoff: Handoff }) {
+  const technical = handoff.details || handoff.branch || handoff.worktree;
   return (
     <section className="mt-10">
       <Heading aside={`Submitted ${timeAgo(handoff.submittedAt)}`}>Handoff</Heading>
@@ -442,9 +479,8 @@ function HandoffSection({ handoff }: { handoff: Handoff }) {
           <InlineText>{handoff.summary}</InlineText>
         </p>
 
-        {(handoff.branch || handoff.filesChanged !== undefined || handoff.checks.length > 0) && (
+        {(handoff.filesChanged !== undefined || handoff.checks.length > 0) && (
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 border-t border-line px-4 py-2.5 text-[12px] text-muted">
-            {handoff.branch && <span className="font-mono text-ink-2">{handoff.branch}</span>}
             {handoff.filesChanged !== undefined && (
               <span>
                 {handoff.filesChanged} {handoff.filesChanged === 1 ? 'file' : 'files'} changed
@@ -466,12 +502,9 @@ function HandoffSection({ handoff }: { handoff: Handoff }) {
         {handoff.howToVerify.length > 0 && (
           <div className="border-t border-line px-4 py-3">
             <div className="mb-1.5 text-[12px] text-muted">How to check it</div>
-            {handoff.worktree && (
-              // Until it's approved, the work only exists in its own checkout.
-              <p className="mb-2 text-[13px] leading-6 text-ink-2">
-                In its checkout: <InlineText>{`\`cd ${handoff.worktree}\``}</InlineText>
-              </p>
-            )}
+            <p className="mb-2 text-[13px] leading-6 text-ink-2">
+              <InlineText>{`Try it: type \`/try ${taskId}\` in your terminal and it opens in your browser.`}</InlineText>
+            </p>
             <ol className="list-decimal space-y-1 pl-5 text-[13px] leading-6 text-ink-2 marker:text-faint">
               {handoff.howToVerify.map((step) => (
                 <li key={step}>
@@ -486,14 +519,25 @@ function HandoffSection({ handoff }: { handoff: Handoff }) {
           <Screenshots paths={handoff.screenshots} className="border-t border-line p-2" />
         )}
 
-        {handoff.details && (
+        {technical && (
           // For a developer reviewing it; the summary above is the plain version.
           <details className="group border-t border-line px-4 py-3">
             <summary className="cursor-pointer text-[12px] text-muted hover:text-ink">
               Technical details
             </summary>
             <div className="mt-2 text-[13px] leading-6 text-ink-2">
-              <Markdown>{handoff.details}</Markdown>
+              {handoff.details && <Markdown>{handoff.details}</Markdown>}
+              {handoff.branch && (
+                <p className="mt-2 text-[12px] text-muted">
+                  Branch <span className="font-mono text-ink-2">{handoff.branch}</span>
+                  {handoff.worktree && (
+                    <>
+                      {' '}
+                      · checkout <span className="font-mono text-ink-2">{handoff.worktree}</span>
+                    </>
+                  )}
+                </p>
+              )}
             </div>
           </details>
         )}
@@ -524,12 +568,13 @@ function Pager({ ids, current }: { ids: string[]; current: string }) {
   const link = 'grid size-7 place-items-center rounded-md text-muted hover:bg-hover hover:text-ink';
   return (
     <span className="ml-auto flex items-center gap-0.5" title="k / j to move, Esc to go back">
+      <span className="mr-1.5 hidden font-mono text-[11px] text-faint lg:inline">j / k</span>
       {prev ? (
         <a href={paths.item(prev)} className={link} aria-label={`Previous: ${prev}`}>
           <ChevronLeft className="size-4" />
         </a>
       ) : (
-        <span className={cn(link, 'pointer-events-none opacity-30')}>
+        <span aria-hidden className={cn(link, 'pointer-events-none opacity-30')}>
           <ChevronLeft className="size-4" />
         </span>
       )}
@@ -538,7 +583,7 @@ function Pager({ ids, current }: { ids: string[]; current: string }) {
           <ChevronRight className="size-4" />
         </a>
       ) : (
-        <span className={cn(link, 'pointer-events-none opacity-30')}>
+        <span aria-hidden className={cn(link, 'pointer-events-none opacity-30')}>
           <ChevronRight className="size-4" />
         </span>
       )}
@@ -546,14 +591,21 @@ function Pager({ ids, current }: { ids: string[]; current: string }) {
   );
 }
 
-/** j / k to step through items, Esc to go back up. Ignored while typing. */
-function useKeyboardNavigation(ids: string[], current: string, backTo: string): void {
+/** j / k to step through items, Esc to go back up. Ignored while typing or editing. */
+function useKeyboardNavigation(
+  ids: string[],
+  current: string,
+  backTo: string,
+  enabled: boolean,
+): void {
   const key = ids.join(',');
   useEffect(() => {
+    if (!enabled) return;
     const list = key.split(',');
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (target.closest('input, textarea, [contenteditable]') || e.metaKey || e.ctrlKey) return;
+      if (target.closest('input, textarea, select, button, [contenteditable]')) return;
+      if (e.metaKey || e.ctrlKey) return;
       const i = list.indexOf(current);
       const go = (id: string | undefined) => {
         if (id) window.location.hash = paths.item(id);
@@ -564,7 +616,7 @@ function useKeyboardNavigation(ids: string[], current: string, backTo: string): 
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [key, current, backTo]);
+  }, [key, current, backTo, enabled]);
 }
 
 function SubtaskList({ subtasks, current }: { subtasks: Subtask[]; current?: string }) {

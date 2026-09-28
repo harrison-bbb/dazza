@@ -23,12 +23,13 @@ import {
 import { editTask, TaskChanges } from '../core/edits.js';
 import { humanDuration, minutesLeft } from '../core/estimates.js';
 import { answerPermission } from '../core/permissions.js';
-import { MediaPath } from '../core/schema.js';
+import { type Event, MediaPath, type Plan } from '../core/schema.js';
 import { changeLogEntries } from '../core/scope.js';
 import type { Store } from '../core/store.js';
 import { redoTask } from '../core/work.js';
 import { Git } from '../git/git.js';
-import { CSRF_HEADER, type ProjectSnapshot } from './api.js';
+import { debounce } from '../util/debounce.js';
+import { CSRF_HEADER, type ProjectSnapshot, type ScopeVersion } from './api.js';
 
 export const DEFAULT_PORT = 4777;
 const PORT_ATTEMPTS = 10;
@@ -59,18 +60,26 @@ export function createBoardApp(store: Store, projectRoot: string, webRoot: strin
     await next();
   });
 
-  app.get('/api/project', async (c) =>
-    c.json<ProjectSnapshot>({
+  app.get('/api/project', async (c) => {
+    // Each file once: this runs on every change, in every open tab.
+    const [scope, plan, events, permissions, report] = await Promise.all([
+      store.readScope(),
+      store.readPlan(),
+      store.readEvents(),
+      store.readPendingPermissions(),
+      store.readReport(),
+    ]);
+    return c.json<ProjectSnapshot>({
       name: basename(projectRoot),
-      scope: (await store.readScope()) ?? null,
-      scopeVersion: scopeVersion(await store.readScope()),
-      plan: (await store.readPlan()) ?? null,
-      events: await store.readEvents(),
-      permissions: await store.readPendingPermissions(),
-      report: (await store.readReport()) ?? null,
-      buildLeft: await buildLeft(store),
-    }),
-  );
+      scope: scope ?? null,
+      scopeVersion: scopeVersion(scope),
+      plan: plan ?? null,
+      events,
+      permissions,
+      report: report ?? null,
+      buildLeft: buildLeft(plan, events),
+    });
+  });
 
   app.post('/api/approve', async (c) => {
     const result = await approvePlan(store);
@@ -103,7 +112,7 @@ export function createBoardApp(store: Store, projectRoot: string, webRoot: strin
 
   app.get('/api/scope/versions', async (c) => {
     const versions = await store.scopeVersions();
-    return c.json(
+    return c.json<ScopeVersion[]>(
       await Promise.all(
         versions.map(async (v) => ({
           ...v,
@@ -285,16 +294,7 @@ function versionLabel(markdown: string | undefined): string {
     : 'v1: The first plan';
 }
 
-async function buildLeft(store: Store): Promise<string | null> {
-  const plan = await store.readPlan();
-  const minutes = plan ? minutesLeft(plan, await store.readEvents()) : 0;
+function buildLeft(plan: Plan | undefined, events: Event[]): string | null {
+  const minutes = plan ? minutesLeft(plan, events) : 0;
   return minutes > 0 ? humanDuration(minutes) : null;
-}
-
-function debounce(fn: () => void, ms: number): () => void {
-  let timer: NodeJS.Timeout | undefined;
-  return () => {
-    clearTimeout(timer);
-    timer = setTimeout(fn, ms);
-  };
 }

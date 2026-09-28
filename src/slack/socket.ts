@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { z } from 'zod';
+import { parseJson } from '../util/text.js';
 import { SlackError } from './api.js';
 
 /** One delivery from Slack: an event, a click, or a slash command. */
@@ -94,7 +95,7 @@ export class SocketMode {
       this.socket = socket;
       let greeted = false;
       socket.addEventListener('message', ({ data }) => {
-        const parsed = Envelope.safeParse(safeJson(String(data)));
+        const parsed = Envelope.safeParse(parseJson(String(data)));
         if (!parsed.success) return;
         const envelope = parsed.data;
         if (envelope.type === 'hello') greeted = true;
@@ -120,13 +121,5 @@ export class SocketMode {
       });
       socket.addEventListener('error', () => socket.close());
     });
-  }
-}
-
-function safeJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
   }
 }

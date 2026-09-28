@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { type Browser, chromium } from 'playwright-core';
+// Loaded only when a screenshot is taken: it's heavy, and most Dazza processes never need it.
+import type { Browser } from 'playwright-core';
 
 export type Device = 'desktop' | 'mobile';
 
@@ -120,13 +121,14 @@ export class Camera {
 
   private launch(): Promise<Browser> {
     this.browser ??= (async () => {
-      const executablePath = findBrowser();
+      const executablePath = await findBrowser();
       if (!executablePath) {
         throw new Error(
           'Screenshots need Google Chrome (or Chromium/Edge) installed. ' +
             'Install Chrome, or run `npx playwright install chromium`.',
         );
       }
+      const { chromium } = await import('playwright-core');
       return chromium.launch({ executablePath, headless: true });
     })();
     return this.browser;
@@ -134,7 +136,7 @@ export class Camera {
 }
 
 /** A Chromium-based browser already on this machine, if there is one. */
-export function findBrowser(): string | undefined {
+export async function findBrowser(): Promise<string | undefined> {
   const candidates = [
     process.env.DAZZA_BROWSER,
     // macOS
@@ -156,6 +158,7 @@ export function findBrowser(): string | undefined {
   const found = candidates.find((path) => path && existsSync(path));
   if (found) return found;
   // Fall back to a browser installed through Playwright, if any.
+  const { chromium } = await import('playwright-core');
   const managed = chromium.executablePath();
   return managed && existsSync(managed) ? managed : undefined;
 }

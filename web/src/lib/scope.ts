@@ -1,3 +1,4 @@
+import { splitChangeLog } from '../../../src/core/scope.js';
 import type { Plan, Task } from './api';
 import { slugify } from './format';
 import { STATUS_LABEL } from './status';
@@ -28,14 +29,6 @@ export function scopeSummary(markdown: string): string | undefined {
       .match(/^.*?[.!?](\s|$)/)?.[0]
       .trim() ?? overview
   );
-}
-
-const CHANGE_LOG = /^## Change log[ \t]*$/m;
-
-/** The scope's editable body, and the change log Dazza keeps after it. */
-export function splitChangeLog(markdown: string): { body: string; log: string | undefined } {
-  const [body = '', log] = markdown.split(CHANGE_LOG);
-  return { body: body.trimEnd(), log: log === undefined ? undefined : `## Change log${log}` };
 }
 
 /**

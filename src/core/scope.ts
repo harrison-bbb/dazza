@@ -42,15 +42,25 @@ export function keepChangeLog(next: string, previous: string | undefined): strin
     : `${body}\n`;
 }
 
+/** The change log's heading line. Shared with the board, which has no copy of its own. */
+const LOG_HEADING = new RegExp(`^## ${CHANGE_LOG}[ \\t]*$`, 'm');
+
 /** The log's entries, newest first, as written. */
 export function changeLogEntries(scope: string | undefined): string[] {
-  const log = scope?.split(new RegExp(`^## ${CHANGE_LOG}[ \\t]*$`, 'm'))[1];
-  return (log ?? '').split('\n').filter((line) => line.startsWith('- '));
+  return (splitChangeLog(scope ?? '').log ?? '')
+    .split('\n')
+    .filter((line) => line.startsWith('- '));
 }
 
 /** The scope without its change log: the part people edit. */
 export function withoutChangeLog(scope: string): string {
-  return scope.split(new RegExp(`^## ${CHANGE_LOG}[ \\t]*$`, 'm'))[0] ?? scope;
+  return scope.split(LOG_HEADING)[0] ?? scope;
+}
+
+/** The scope's editable body, and the change log Dazza keeps after it (heading included). */
+export function splitChangeLog(markdown: string): { body: string; log: string | undefined } {
+  const [body = '', log] = markdown.split(LOG_HEADING);
+  return { body: body.trimEnd(), log: log === undefined ? undefined : `## ${CHANGE_LOG}${log}` };
 }
 
 /** The user's own date, e.g. "2026-09-28", not UTC's. */

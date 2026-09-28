@@ -4,17 +4,17 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
   backlog: 'Backlog',
   planned: 'Planned',
   building: 'Building',
-  review: 'In review',
+  review: 'Ready for review',
   blocked: 'Blocked',
   cancelled: 'Cancelled',
   closed: 'Closed',
 };
 
-/** List order: what's moving first, finished work last. */
+/** List order: what needs the user first, then what's moving, finished work last. */
 export const STATUS_ORDER: readonly TaskStatus[] = [
-  'building',
   'review',
   'blocked',
+  'building',
   'planned',
   'backlog',
   'closed',

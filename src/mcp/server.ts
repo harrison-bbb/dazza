@@ -39,6 +39,7 @@ import {
 import { Git } from '../git/git.js';
 import { judge } from '../guard/policy.js';
 import { ScreenshotRequest, Screenshots } from '../preview/screenshots.js';
+import { errorMessage } from '../util/text.js';
 
 export const MCP_SERVER_NAME = 'dazza';
 
@@ -126,16 +127,9 @@ export type SavePlanInput = z.input<typeof SavePlanInput>;
  */
 export async function savePlan(store: Store, raw: SavePlanInput): Promise<CallToolResult> {
   const input = SavePlanInput.parse(raw);
+  // A plan that's missing detail is still saved, as a draft that can't be
+  // approved: fixing it item by item costs far less than writing it all again.
   const problems = reviewPlan(input.scope, input.tasks, input.milestones);
-  if (problems.length > 0) {
-    return failure(
-      `Not saved. The builder works from the plan alone, and it's missing detail:\n${problems
-        .map((p) => `- ${p}`)
-        .join(
-          '\n',
-        )}\nFix these and call save_plan again with the whole plan. Don’t tell the user about this check: no message until the plan is saved.`,
-    );
-  }
   const outcome = await store.updatePlan(
     (current): [Plan | undefined, { error: string } | { count: number; rescoped: boolean }] => {
       const tasks = carryOverProgress(current, input.tasks);
@@ -145,6 +139,7 @@ export async function savePlan(store: Store, raw: SavePlanInput): Promise<CallTo
         approvedAt: null,
         tasks,
         milestones: input.milestones,
+        problems,
       });
       if (!result.success) {
         return [undefined, { error: `The plan is invalid:\n${z.prettifyError(result.error)}` }];
@@ -179,10 +174,47 @@ export async function savePlan(store: Store, raw: SavePlanInput): Promise<CallTo
       `${outcome.rescoped ? 'Revised the approved plan' : 'Drafted a plan'}: ${tasks}`,
   });
 
+  if (problems.length > 0) return failure(draftProblems(problems));
   const text = outcome.rescoped
     ? `Saved ${tasks}. The plan needs the user's approval again.`
     : `Saved ${tasks}.`;
   return { content: [{ type: 'text', text: `${text}\n${await buildingTime(store)}` }] };
+}
+
+/** What the manager is told while a draft still misses detail. */
+function draftProblems(problems: string[]): string {
+  return (
+    `Saved as a draft, but it's missing detail the builder needs (it works from the plan alone):\n${problems
+      .map((p) => `- ${p}`)
+      .join('\n')}\n` +
+    'Fix just these: update_item for descriptions, criteria and sizes (subtask ids for subtask ' +
+    'descriptions), add_subtask for more subtasks, update_scope for missing sections. Only call ' +
+    'save_plan again to change milestones. The user can’t approve it until these are fixed. ' +
+    'Don’t tell the user about this check: no message until it passes.'
+  );
+}
+
+/**
+ * After a change to a draft that was missing detail, check it again: the
+ * manager hears what's left, and the plan can be approved once nothing is.
+ */
+async function recheckDraft(store: Store): Promise<string | undefined> {
+  const plan = await store.readPlan();
+  if (!plan || plan.problems.length === 0) return undefined;
+  const problems = reviewPlan((await store.readScope()) ?? '', plan.tasks, plan.milestones);
+  await store.updatePlan((current): [Plan | undefined, undefined] => [
+    current && { ...current, problems },
+    undefined,
+  ]);
+  return problems.length > 0
+    ? draftProblems(problems)
+    : `The plan now passes the check.\n${await buildingTime(store)}`;
+}
+
+/** A change's result, plus where a draft's check stands if it was being fixed. */
+async function withRecheck(store: Store, result: ActionResult): Promise<CallToolResult> {
+  const recheck = result.ok ? await recheckDraft(store) : undefined;
+  return toResult(recheck ? { ...result, message: `${result.message}\n\n${recheck}` } : result);
 }
 
 /**
@@ -278,9 +310,7 @@ function registerScreenshotTool(
             `To show the user, attach it with screenshots: ["${shot.path}"].`,
         });
       } catch (error) {
-        return failure(
-          `Couldn’t take the screenshot: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        return failure(`Couldn’t take the screenshot: ${errorMessage(error)}`);
       }
     },
   );
@@ -316,7 +346,8 @@ function registerManagerTools(server: McpServer, store: Store): void {
       inputSchema: { id: z.string(), ...TaskChanges.shape },
     },
     async ({ id, ...changes }) =>
-      toResult(
+      withRecheck(
+        store,
         id.includes('.')
           ? await editSubtask(store, id, pickSubtaskChanges(changes))
           : await editTask(store, id, changes),
@@ -343,7 +374,10 @@ function registerManagerTools(server: McpServer, store: Store): void {
       },
     },
     async ({ taskId, title, description }) =>
-      toResult(await addSubtask(store, taskId, { title, ...(description && { description }) })),
+      withRecheck(
+        store,
+        await addSubtask(store, taskId, { title, ...(description && { description }) }),
+      ),
   );
 
   server.registerTool(
@@ -483,7 +517,7 @@ function registerManagerTools(server: McpServer, store: Store): void {
         message: `${summary}${tasks.length ? ` (${tasks.join(', ')})` : ''}`,
       });
       const version = changeLogEntries(updated).length + 1;
-      return toResult({
+      return withRecheck(store, {
         ok: true,
         message: plan?.approvedAt
           ? `Scope updated to v${version}, with the change logged.`

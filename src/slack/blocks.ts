@@ -54,7 +54,7 @@ export function notificationMessage(note: Notification, where: Where): Rendered 
           context([
             where.project,
             note.images.length > 0 && screenshotsInThread(note.images.length),
-            'Reply in this thread and I’ll pick it back up next build',
+            'Reply in this thread and I’ll pick it back up',
           ]),
         ],
       };
@@ -66,7 +66,7 @@ export function notificationMessage(note: Notification, where: Where): Rendered 
           markdown(note.tasks.map((t) => `- ${t}`).join('\n')),
           context([
             where.project,
-            note.branch && `On ${note.branch}, ready to try`,
+            note.branch && 'Merged into your project: /try in the terminal opens it',
             note.next && `Next up: ${note.next}`,
             note.images.length > 0 && screenshotsInThread(note.images.length),
           ]),
@@ -116,7 +116,7 @@ export function notificationMessage(note: Notification, where: Where): Rendered 
               },
               button('Request changes', Actions.requestChanges, note.taskId),
               {
-                ...button('Open on board', Actions.board, note.taskId),
+                ...button('Open on board (on your computer)', Actions.board, note.taskId),
                 url: `${where.boardUrl}/#/tasks/${note.taskId}`,
               },
             ],
@@ -224,7 +224,7 @@ export function homeView(state: HomeState): Block {
       type: 'actions',
       elements: [
         { ...button('Approve plan', Actions.approvePlan), style: 'primary' },
-        { ...button('Review on board', Actions.board), url: state.boardUrl },
+        { ...button('Review on board (on your computer)', Actions.board), url: state.boardUrl },
       ],
     });
   } else {
@@ -247,7 +247,7 @@ export function homeView(state: HomeState): Block {
           state.building
             ? button('Stop building', Actions.stop)
             : { ...button('Start building', Actions.build), style: 'primary' },
-          { ...button('Open board', Actions.board), url: state.boardUrl },
+          { ...button('Open board (on your computer)', Actions.board), url: state.boardUrl },
         ],
       },
     );

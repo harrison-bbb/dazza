@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { type Activity, fetchActivity } from '../lib/api';
 import { cn, timeAgo } from '../lib/format';
+import { Offline } from './ui';
 
 /** How often to look for new steps while a task is building. */
 const POLL_MS = 1_500;
@@ -11,7 +12,7 @@ const POLL_MS = 1_500;
  */
 export function LiveActivity({
   taskId,
-  live,
+  live: building,
   limit = 200,
   compact = false,
 }: {
@@ -22,6 +23,9 @@ export function LiveActivity({
   /** A few lines, for the dashboard. */
   compact?: boolean;
 }) {
+  // With Dazza closed, nothing is building, whatever the plan last said.
+  const offline = useContext(Offline);
+  const live = building && !offline;
   const [entries, setEntries] = useState<Activity[]>();
   const list = useRef<HTMLOListElement>(null);
 
@@ -29,7 +33,7 @@ export function LiveActivity({
     let stopped = false;
     const load = async () => {
       const next = await fetchActivity(taskId, limit);
-      if (!stopped) setEntries(next);
+      if (!stopped && next) setEntries(next);
     };
     void load();
     if (!live)

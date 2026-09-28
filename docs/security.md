@@ -27,7 +27,7 @@ Project state in `.dazza/` holds no secrets unless you paste one into the chat o
 There are two agent sessions. See [architecture.md](architecture.md).
 
 **The manager** (the conversation) can read your code and use Dazza's planning tools. It can't edit code or run commands.
-- Claude Code: `--allowedTools Read,Glob,Grep,<dazza tools>`. In a headless run, anything else that needs permission is denied.
+- Claude Code: `--tools Read,Glob,Grep` (it has no other built-in tools at all) and `--allowedTools Read,Glob,Grep,<dazza tools>`. In a headless run, anything else that needs permission is denied.
 - Codex: `-s read-only` with `approval_policy="never"`.
 
 **The worker** (the builder) edits files and runs commands without asking you.

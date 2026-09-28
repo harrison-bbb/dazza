@@ -25,24 +25,14 @@ const plan = makePlan([
 ]);
 
 describe('toolLine', () => {
-  it('shows edits with a short diff, relative to the project', () => {
+  it('shows an edit as the file and how much changed, relative to the project', () => {
     const line = toolLine(
       'Edit',
       { file_path: '/p/src/a.ts', old_string: 'a', new_string: 'b\nc' },
       plan,
       '/p',
     );
-    expect(line).toBe('  • Edit src/a.ts\n      - a\n      + b\n      + c');
-  });
-
-  it('caps long diffs', () => {
-    const line = toolLine(
-      'Edit',
-      { file_path: '/p/a', old_string: '', new_string: 'x\n'.repeat(20) },
-      plan,
-      '/p',
-    );
-    expect(line).toContain('… 13 more lines');
+    expect(stripAnsi(line ?? '')).toBe('  • Edit src/a.ts (+2 −1)');
   });
 
   it('shows commands, writes and subtasks closing', () => {
@@ -66,14 +56,15 @@ describe('toolLine', () => {
 describe('renderBuildEvent', () => {
   const task = plan.tasks[0] as (typeof plan.tasks)[number];
 
-  it('announces a task with its branch', () => {
+  it('announces a task, with how long it usually takes and how to stop it', () => {
     const out = renderBuildEvent(
       { type: 'task_started', task, branch: 'dazza/T1-setup', resumed: false },
       plan,
       '/p',
     );
     expect(out).toContain('Building T1 · Setup');
-    expect(out).toContain('on branch dazza/T1-setup');
+    expect(out).not.toContain('dazza/T1-setup');
+    expect(stripAnsi(out ?? '')).toContain('\n  /stop to stop');
   });
 
   it('says when a usage limit pauses the build and when it resumes', () => {
@@ -147,19 +138,19 @@ describe('createBuildRenderer', () => {
     expect(render(result('b', true), plan)).toContain('Handing over for review');
   });
 
-  it('shows edits and commands straight away, and hides plumbing', () => {
+  it('folds looking around into one line before the next real step, and hides plumbing', () => {
     const render = createBuildRenderer('/p');
-    const bash = agent({
-      type: 'agent',
-      task,
-      event: { type: 'tool_use', id: 'x', tool: 'Bash', input: { command: 'ls' } },
-    });
-    expect(render(bash, plan)).toBe('  • Run ls');
-    const search = agent({
-      type: 'agent',
-      task,
-      event: { type: 'tool_use', id: 'y', tool: 'ToolSearch', input: {} },
-    });
-    expect(render(search, plan)).toBeUndefined();
+    const use = (id: string, tool: string, input: object) =>
+      render(agent({ type: 'agent', task, event: { type: 'tool_use', id, tool, input } }), plan);
+    expect(use('a', 'Read', { file_path: '/p/a.ts' })).toBeUndefined();
+    expect(use('b', 'Read', { file_path: '/p/b.ts' })).toBeUndefined();
+    expect(use('c', 'Bash', { command: 'ls -la && cat package.json | head' })).toBeUndefined();
+    expect(use('d', 'Grep', { pattern: 'todo' })).toBeUndefined();
+    expect(use('e', 'ToolSearch', {})).toBeUndefined();
+    expect(stripAnsi(use('f', 'Bash', { command: 'npm test' }) ?? '')).toBe(
+      '  • Read 2 files · 2 searches\n  • Run npm test',
+    );
+    // A command that writes isn't just looking.
+    expect(stripAnsi(use('g', 'Bash', { command: 'cat a > b' }) ?? '')).toBe('  • Run cat a > b');
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { splitChangeLog } from '../../../src/core/scope.js';
 import type { Plan, Task } from './api';
-import { planDocument, splitChangeLog } from './scope';
+import { planDocument } from './scope';
 
 const task = (id: string, fields: Partial<Task> = {}): Task => ({
   id,
@@ -32,6 +33,7 @@ describe('the scope as a project plan', () => {
     const plan: Plan = {
       version: 1,
       approvedAt: null,
+      problems: [],
       tasks: [
         task('T1', {
           title: 'Setup',

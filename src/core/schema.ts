@@ -107,6 +107,11 @@ export const Plan = z
     /** Tasks in priority order: the builder takes the first one that's ready. */
     tasks: z.array(Task),
     milestones: z.array(Milestone).default([]),
+    /**
+     * What Dazza's plan check still finds missing in a draft. The manager fixes
+     * these item by item; the plan can't be approved until they're gone.
+     */
+    problems: z.array(z.string()).default([]),
   })
   .superRefine((plan, ctx) => {
     const ids = new Set<string>();
@@ -201,3 +206,16 @@ export type EventType = z.infer<typeof EventType>;
 export type Event = z.infer<typeof Event>;
 /** An event as written, before defaults are applied. */
 export type EventInput = z.input<typeof Event>;
+
+/**
+ * What a builder is doing, step by step, in plain words: for watching a build
+ * live on the board, and for looking back at how a task was built. Kept per
+ * task in `.dazza/activity/`.
+ */
+export interface Activity {
+  at: string;
+  taskId: string;
+  /** say: the builder's own words; do: a step it took; status: where the task is. */
+  kind: 'say' | 'do' | 'status';
+  text: string;
+}

@@ -81,3 +81,16 @@ function findLastIndex<T>(items: T[], match: (item: T) => boolean): number {
   }
   return -1;
 }
+
+/**
+ * The handoff's report on a criterion: matched by its text, so criteria edited
+ * or reordered since don't pick up another one's evidence. By position only
+ * when the list still lines up.
+ */
+export function criterionReport(task: Task, criterion: string, index: number) {
+  const reports = task.handoff?.criteria ?? [];
+  return (
+    reports.find((r) => r.criterion === criterion) ??
+    (reports.length === task.acceptanceCriteria.length ? reports[index] : undefined)
+  );
+}

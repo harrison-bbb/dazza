@@ -34,25 +34,31 @@ const KEY_SOURCES: Record<ProviderId, { label: string; url: string }> = {
  */
 export async function connect(ui: SetupUI, deps: SetupDeps): Promise<Connection | undefined> {
   ui.say('First, connect Dazza to the AI that will do the coding.');
+  // Say up front which agent CLIs are here, rather than after they've picked one.
+  const [claude, codex] = await Promise.all([deps.detect('claude'), deps.detect('codex')]);
+  const missing = (installed: boolean, cli: string) =>
+    installed ? '' : ` · ${cli} isn’t installed yet`;
+  const noClaude = missing(claude.installed, 'Claude Code');
+  const noCodex = missing(codex.installed, 'Codex');
   const choice = await ui.select('How do you want to connect?', [
     {
       label: 'Claude subscription',
-      hint: 'Pro or Max, through Claude Code',
+      hint: `Pro or Max, through Claude Code${noClaude}`,
       value: ['claude', 'subscription'] as const,
     },
     {
       label: 'Anthropic API key',
-      hint: 'pay as you go, with Claude Code',
+      hint: `pay as you go, with Claude Code${noClaude}`,
       value: ['claude', 'api-key'] as const,
     },
     {
       label: 'ChatGPT subscription',
-      hint: 'Plus or Pro, through Codex',
+      hint: `Plus or Pro, through Codex${noCodex}`,
       value: ['codex', 'subscription'] as const,
     },
     {
       label: 'OpenAI API key',
-      hint: 'pay as you go, with Codex',
+      hint: `pay as you go, with Codex${noCodex}`,
       value: ['codex', 'api-key'] as const,
     },
   ]);

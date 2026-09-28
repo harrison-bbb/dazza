@@ -6,6 +6,7 @@ import { createProvider, PROVIDER_HELP, providerFor } from '../providers/index.j
 import type { ProviderId } from '../providers/types.js';
 import { SlackApi } from '../slack/api.js';
 import { execCommand } from '../util/process.js';
+import { errorMessage } from '../util/text.js';
 
 interface Check {
   label: string;
@@ -34,7 +35,12 @@ export async function doctor(): Promise<void> {
     console.log(`${mark} ${check.label.padEnd(12)} ${styleText('dim', check.detail)}`);
   }
 
-  if (checks.some((check) => !check.ok)) process.exitCode = 1;
+  if (checks.some((check) => !check.ok)) {
+    process.exitCode = 1;
+    console.log('\nFix the ✖ items above, then run `dazza doctor` again.');
+  } else {
+    console.log('\nAll set. Run `dazza` in your project folder to start.');
+  }
 }
 
 async function checkNode(): Promise<Check> {
@@ -83,7 +89,7 @@ async function checkSlack(): Promise<Check> {
     return {
       label: 'Slack',
       ok: false,
-      detail: `linked to ${link.teamName}, but ${errorMessage(error)} (run /slack-disconnect, then /slack)`,
+      detail: `linked to ${link.teamName}, but ${errorMessage(error)} (in the chat, run /slack-disconnect, then /slack)`,
     };
   }
 }
@@ -101,7 +107,7 @@ async function checkTelegram(): Promise<Check> {
 }
 
 async function checkBrowser(): Promise<Check> {
-  const browser = findBrowser();
+  const browser = await findBrowser();
   return {
     label: 'Screenshots',
     // Optional: only needed to show the user UI.
@@ -132,8 +138,4 @@ async function checkAgent(id: ProviderId, connection: Connection | undefined): P
       ? `v${status.version}, signed in${status.authMethod ? ` via ${status.authMethod}` : ''}${status.plan ? ` · ${status.plan}` : ''}`
       : `v${status.version}, not signed in (run ${help.signIn})`,
   };
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

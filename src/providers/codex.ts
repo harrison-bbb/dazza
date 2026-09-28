@@ -2,6 +2,7 @@ import { z } from 'zod';
 import pkg from '../../package.json' with { type: 'json' };
 import type { Connection } from '../core/config.js';
 import { execCommand, runInteractive, shellCommand, spawnLines } from '../util/process.js';
+import { capitalize, parseJson } from '../util/text.js';
 import { classifyError, isHopeless } from './errors.js';
 import type {
   AgentError,
@@ -569,16 +570,4 @@ function windowId(minutes: number | null): string {
 /** A value as TOML, for Codex's -c overrides. JSON strings and arrays are valid TOML. */
 function toml(value: string | string[]): string {
   return JSON.stringify(value);
-}
-
-function parseJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-}
-
-function capitalize(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
 }

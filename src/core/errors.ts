@@ -4,7 +4,11 @@ import type { AgentError, ProviderId } from '../providers/types.js';
 /** A failure explained for the user, with what to do about it. */
 export function explainAgentError(
   error: AgentError,
-  { taskId, provider = 'claude' }: { taskId?: string; provider?: ProviderId } = {},
+  {
+    taskId,
+    provider = 'claude',
+    method,
+  }: { taskId?: string; provider?: ProviderId; method?: 'subscription' | 'api-key' } = {},
 ): string {
   const help = PROVIDER_HELP[provider];
   const paused = taskId ? `I’ve paused ${taskId}. ` : '';
@@ -15,11 +19,15 @@ export function explainAgentError(
         : `You’ve hit your ${help.brand} usage limit. ${paused}`.trim();
     case 'credits':
       return `Your API credit has run out. ${paused}Top up at ${help.billing}, then /build to carry on.`;
-    case 'auth':
-      return (
-        `${help.brand} couldn’t sign in (${error.message}). ${paused}On an API key, /logout and connect ` +
-        `again with a working key; on a subscription, run ${help.signIn} to sign back in. Then /build.`
-      );
+    case 'auth': {
+      const fix =
+        method === 'api-key'
+          ? 'Run /logout and connect again with a working key.'
+          : method === 'subscription'
+            ? `Run ${help.signIn} in a terminal to sign back in.`
+            : `On an API key, /logout and connect again with a working key; on a subscription, run ${help.signIn} to sign back in.`;
+      return `${help.brand} couldn’t sign in (${error.message}). ${paused}${fix}${taskId ? ' Then /build.' : ''}`;
+    }
     case 'overloaded':
       return `${help.brand} is overloaded right now. ${paused}Try again in a few minutes.`;
     case 'setup':

@@ -2,20 +2,18 @@ import { MANAGER_TOOLS, MCP_SERVER_NAME } from '../mcp/server.js';
 import type { ChannelId } from '../notify/channel.js';
 import managerPrompt from '../prompts/manager.md';
 import type { AgentEvent, AgentProvider, McpServerConfig } from '../providers/types.js';
-import type { Activity } from './activity.js';
 import type { Config } from './config.js';
 import { humanDuration, minutesLeft, sizeMinutes } from './estimates.js';
 import { milestoneProgress } from './milestones.js';
 import { progress } from './plan.js';
-import type { Event, Plan } from './schema.js';
+import type { Activity, Event, Plan } from './schema.js';
 import type { Store } from './store.js';
 import { trackUsage } from './usage.js';
 
-/**
- * Read-only tools to inspect the codebase, plus Dazza's own tools to plan and to
- * change the project when the user asks. No tools that edit code.
- */
-const TOOLS = ['Read', 'Glob', 'Grep', ...MANAGER_TOOLS];
+/** Read-only tools to inspect the codebase. No tools that edit code, and nothing else to pay for. */
+const BUILT_IN_TOOLS = ['Read', 'Glob', 'Grep'];
+/** Those, plus Dazza's own tools to plan and to change the project when the user asks. */
+const TOOLS = [...BUILT_IN_TOOLS, ...MANAGER_TOOLS];
 
 export interface ManagerOptions {
   store: Store;
@@ -97,6 +95,7 @@ export class Manager {
       prompt: `<project-state>\n${state}\n</project-state>\n\n${message}`,
       cwd: projectRoot,
       systemPrompt: managerPrompt,
+      tools: BUILT_IN_TOOLS,
       allowedTools: TOOLS,
       mcpServers: { [MCP_SERVER_NAME]: mcpServer },
       ...(this.options.guard && { guard: this.options.guard }),

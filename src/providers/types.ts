@@ -47,6 +47,12 @@ export interface AgentRunOptions {
   model?: string;
   /** Tools the agent may use without asking. Anything else needing permission is denied. */
   allowedTools?: string[];
+  /**
+   * The agent CLI's own built-in tools the session has at all (Claude Code's
+   * --tools). Every tool it has is described in every request, so fewer is
+   * cheaper. Leave out for the CLI's full set.
+   */
+  tools?: string[];
   /** The only MCP servers the session may use, keyed by server name. */
   mcpServers?: Record<string, McpServerConfig>;
   /**

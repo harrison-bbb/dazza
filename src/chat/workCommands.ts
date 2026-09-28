@@ -15,7 +15,9 @@ import {
   packageManager,
 } from '../preview/app.js';
 import { openInBrowser } from '../util/open.js';
+import { errorMessage } from '../util/text.js';
 import type { Command, CommandContext } from './commands.js';
+import { NO_PLAN } from './describe.js';
 import { paint } from './style.js';
 
 /**
@@ -26,8 +28,9 @@ import { paint } from './style.js';
 
 const ICON: Record<Task['status'], string> = {
   closed: paint.green('●'),
-  review: paint.cyan('◉'),
-  building: paint.cyan('◐'),
+  // Waiting on the user stands out; the rest stays calm. No blues.
+  review: paint.amber('◉'),
+  building: paint.green('◐'),
   blocked: paint.red('⊘'),
   planned: '○',
   backlog: paint.dim('◌'),
@@ -50,7 +53,7 @@ export const WORK_COMMANDS: Command[] = [
     description: 'Every task, by milestone, with its status and size',
     async run({ store, say }) {
       const plan = await store.readPlan();
-      say(plan ? taskList(plan) : 'No plan yet. Tell me what you want to build.');
+      say(plan ? taskList(plan) : NO_PLAN);
     },
   },
   {
@@ -75,7 +78,7 @@ export const WORK_COMMANDS: Command[] = [
     name: 'changes',
     args: '<task> <what to change>',
     description: 'Send work in review back, with what to change',
-    async run({ store, say }, args) {
+    async run({ store, say, building }, args) {
       const [first = '', ...rest] = args.trim().split(/\s+/);
       const id = taskArg(first);
       const note = rest.join(' ');
@@ -83,7 +86,7 @@ export const WORK_COMMANDS: Command[] = [
         return say(
           'Which task, and what should change? For example: /changes T3 make the button bigger',
         );
-      say(result(await requestChanges(store, id, note)));
+      say(requeued(await requestChanges(store, id, note), building()));
     },
   },
   {
@@ -198,9 +201,7 @@ export const WORK_COMMANDS: Command[] = [
           await installDependencies(dir);
         } catch (error) {
           status(undefined);
-          return say(
-            `Couldn’t install them: ${error instanceof Error ? error.message : String(error)}`,
-          );
+          return say(`Couldn’t install them: ${errorMessage(error)}`);
         }
       }
       await stopTrying();
@@ -218,7 +219,7 @@ export const WORK_COMMANDS: Command[] = [
         );
       } catch (error) {
         await app.stop();
-        say(`${task.id} didn’t start: ${error instanceof Error ? error.message : String(error)}`);
+        say(`${task.id} didn’t start: ${errorMessage(error)}`);
       } finally {
         status(undefined);
       }
@@ -228,20 +229,20 @@ export const WORK_COMMANDS: Command[] = [
     name: 'allow',
     args: '<task>',
     description: 'Let a task run the command it asked permission for',
-    async run({ store, say }, args) {
+    async run({ store, say, building }, args) {
       const id = taskArg(args);
       if (!id) return say('Which task? For example: /allow T3');
-      say(result(await answerPermission(store, id, true)));
+      say(requeued(await answerPermission(store, id, true), building()));
     },
   },
   {
     name: 'deny',
     args: '<task>',
     description: 'Refuse the command a task asked permission for',
-    async run({ store, say }, args) {
+    async run({ store, say, building }, args) {
       const id = taskArg(args);
       if (!id) return say('Which task? For example: /deny T3');
-      say(result(await answerPermission(store, id, false)));
+      say(requeued(await answerPermission(store, id, false), building()));
     },
   },
   {
@@ -271,6 +272,12 @@ function result(outcome: { ok: boolean; message: string }): string {
   return outcome.ok ? `${paint.green('✔')} ${outcome.message}` : outcome.message;
 }
 
+/** For work put back in the queue: what happens next. */
+function requeued(outcome: { ok: boolean; message: string }, building: boolean): string {
+  if (!outcome.ok) return outcome.message;
+  return `${result(outcome)} ${paint.dim(building ? 'I’ll get on it now.' : 'Run /build when you want me to get on it.')}`;
+}
+
 /** Tasks grouped by milestone, each with its status, id, title and size. */
 export function taskList(plan: Plan): string {
   const line = (t: Task) =>
@@ -293,12 +300,13 @@ export function taskList(plan: Plan): string {
 /** Everything waiting on the user, each with what to do about it. */
 export async function inbox(store: Store): Promise<string> {
   const plan = await store.readPlan();
-  if (!plan) return 'Nothing yet: there’s no plan.';
+  if (!plan) return NO_PLAN;
   if (!plan.approvedAt)
     return 'The plan is waiting for your approval: look it over with /scope, then /approve.';
   const events = await store.readEvents();
   const permissions = await store.readPendingPermissions();
   const items: string[] = [];
+  const blocked = plan.tasks.filter((t) => t.status === 'blocked' && !permissions[t.id]).length;
 
   for (const task of plan.tasks.filter((t) => t.status === 'review')) {
     const h = task.handoff;
@@ -324,7 +332,7 @@ export async function inbox(store: Store): Promise<string> {
       items.push(
         [
           `${ICON.blocked} ${paint.bold(`${task.id} ${task.title}`)} wants to run a command that needs your OK:`,
-          `  ${paint.cyan(permission.command)}`,
+          `  ${paint.bold(permission.command)}`,
           `  Why: ${permission.why}`,
           paint.dim(`  /allow ${task.id} · /deny ${task.id}`),
         ].join('\n'),
@@ -338,7 +346,11 @@ export async function inbox(store: Store): Promise<string> {
       [
         `${ICON.blocked} ${paint.bold(`${task.id} ${task.title}`)} needs you`,
         question && `  ${question}`,
-        paint.dim('  Just answer here, and I’ll pick it back up.'),
+        paint.dim(
+          blocked > 1
+            ? `  Answer here, naming it (e.g. “${task.id}: …”), and I’ll pick it back up.`
+            : '  Just answer here, and I’ll pick it back up.',
+        ),
       ]
         .filter(Boolean)
         .join('\n'),

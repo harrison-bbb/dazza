@@ -6,6 +6,9 @@ import { Button, InlineText } from './ui';
 
 export type ComposerMode = 'comment' | 'changes' | 'unblock';
 
+/** The send shortcut, as this keyboard labels it. */
+const SEND_KEYS = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ Enter' : 'Ctrl Enter';
+
 interface ActivityProps {
   itemId: string;
   events: Event[];
@@ -200,7 +203,7 @@ function Composer({ itemId, mode, onModeChange, onSent }: ComposerProps) {
           className="block w-full resize-none bg-transparent px-3 pt-2.5 text-[13px] leading-6 outline-none placeholder:text-faint"
         />
         <div className="flex items-center justify-between px-2 pb-2">
-          <span className="px-1 text-[11px] text-faint">{error ?? '⌘ Enter'}</span>
+          <span className="px-1 text-[11px] text-faint">{SEND_KEYS}</span>
           <Button
             type="submit"
             variant={mode === 'comment' ? 'primary' : 'secondary'}
@@ -211,6 +214,7 @@ function Composer({ itemId, mode, onModeChange, onSent }: ComposerProps) {
           </Button>
         </div>
       </div>
+      {error && <p className="mt-2 px-1 text-[13px] text-red">{error}</p>}
     </form>
   );
 }

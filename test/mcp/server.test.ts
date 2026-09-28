@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it } from 'vitest';
-import { addComment } from '../../src/core/actions.js';
+import { addComment, approvePlan } from '../../src/core/actions.js';
 import { REPORT_SECTIONS } from '../../src/core/report.js';
 import { createMcpServer, type McpRole, savePlan } from '../../src/mcp/server.js';
 import { makePlan, makeTask, plannedTask, SCOPE } from '../fixtures.js';
@@ -28,17 +28,18 @@ describe('savePlan', () => {
     expect((await project.store.readEvents()).map((e) => e.type)).toEqual(['plan_created']);
   });
 
-  it('sends a thin plan back with what it’s missing', async () => {
+  it('saves a thin plan as a draft that can’t be approved, with what it’s missing', async () => {
     const result = await savePlan(project.store, {
       scope: '# Todo app\n\n## Overview\nTodos.',
       tasks: [makeTask({ id: 'T1', description: 'Set it up.' })],
     });
     const text = JSON.stringify(result.content);
     expect(result.isError).toBe(true);
+    expect(text).toContain('Saved as a draft');
     expect(text).toContain('missing sections: ## Users');
     expect(text).toContain('T1: the description is 10 characters');
-    expect(text).toContain('T1: has 0 subtasks');
-    expect(await project.store.readPlan()).toBeUndefined();
+    expect((await project.store.readPlan())?.problems.length).toBeGreaterThan(0);
+    expect(await approvePlan(project.store)).toMatchObject({ ok: false });
   });
 
   it('returns validation problems to the agent instead of saving', async () => {
@@ -57,6 +58,7 @@ describe('savePlan', () => {
       version: 1,
       approvedAt: '2026-09-27T10:00:00Z',
       milestones: [],
+      problems: [],
       tasks: [plannedTask({ id: 'T1', status: 'closed' }), plannedTask({ id: 'T2' })],
     });
     const result = await savePlan(project.store, {
@@ -80,6 +82,7 @@ describe('savePlan', () => {
       version: 1,
       approvedAt: '2026-09-27T10:00:00Z',
       milestones: [],
+      problems: [],
       tasks: [plannedTask({ id: 'T1', status: 'building' })],
     });
     const result = await savePlan(project.store, {
@@ -114,6 +117,21 @@ describe('MCP tools, called through a real client', () => {
     return client;
   };
   const text = (result: Awaited<ReturnType<Client['callTool']>>) => JSON.stringify(result.content);
+
+  it('fixes a draft item by item, and it can be approved once it passes', async () => {
+    const thin = plannedTask({ id: 'T2', description: 'Too short.' });
+    await savePlan(project.store, { scope: SCOPE, tasks: [plannedTask({ id: 'T1' }), thin] });
+    const manager = await connect();
+    const fixed = text(
+      await manager.callTool({
+        name: 'update_item',
+        arguments: { id: 'T2', description: plannedTask({ id: 'T2' }).description },
+      }),
+    );
+    expect(fixed).toContain('The plan now passes the check');
+    expect((await project.store.readPlan())?.problems).toEqual([]);
+    expect(await approvePlan(project.store)).toMatchObject({ ok: true });
+  });
 
   it('gives each role only its own tools', async () => {
     const names = async (role: McpRole) =>

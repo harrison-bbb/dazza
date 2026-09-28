@@ -11,7 +11,7 @@ export const paint = {
   dim: wrap('2', '22'),
   red: wrap('31', '39'),
   green: wrap('32', '39'),
-  cyan: wrap('36', '39'),
+  amber: wrap('33', '39'),
   hex(color: string, text: string): string {
     const [r, g, b] = [1, 3, 5].map((i) => Number.parseInt(color.slice(i, i + 2), 16));
     return wrap(`38;2;${r};${g};${b}`, '39')(text);
@@ -22,7 +22,7 @@ export const paint = {
 export function renderInline(text: string): string {
   return text
     .replace(/\*\*(.+?)\*\*/g, (_, bold: string) => paint.bold(bold))
-    .replace(/`([^`]+)`/g, (_, code: string) => paint.cyan(code));
+    .replace(/`([^`]+)`/g, (_, code: string) => paint.bold(code));
 }
 
 /** Plain text for places that can't show colour, e.g. Telegram. */
