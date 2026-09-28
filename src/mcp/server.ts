@@ -196,7 +196,7 @@ export function createMcpServer(
     role === 'worker'
       ? (await store.readPlan())?.tasks.find((t) => t.status === 'building')?.id
       : undefined;
-  registerScreenshotTool(server, screenshots, defaultTask);
+  registerScreenshotTool(server, screenshots, defaultTask, (path) => store.mediaFile(path));
   return server;
 }
 
@@ -217,6 +217,8 @@ function registerScreenshotTool(
   server: McpServer,
   screenshots: Pick<Screenshots, 'take'>,
   defaultTask: () => Promise<string | undefined>,
+  /** Where a screenshot is on disk, so the agent can look at it. */
+  mediaFile: (path: string) => string,
 ): void {
   server.registerTool(
     'screenshot',
@@ -234,7 +236,9 @@ function registerScreenshotTool(
         const shot = await screenshots.take({ ...request, ...(taskId && { taskId }) });
         return toResult({
           ok: true,
-          message: `Saved ${shot.path} (${shot.width}×${shot.height}). Attach it with screenshots: ["${shot.path}"].`,
+          message:
+            `Saved ${shot.path} (${shot.width}×${shot.height}). To look at it yourself, Read ${mediaFile(shot.path)}. ` +
+            `To show the user, attach it with screenshots: ["${shot.path}"].`,
         });
       } catch (error) {
         return failure(

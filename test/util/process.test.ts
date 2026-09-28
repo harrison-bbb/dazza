@@ -1,5 +1,9 @@
+import { spawn } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CommandError, execCommand, spawnLines } from '../../src/util/process.js';
+import { CommandError, execCommand, spawnLines, stopProcessesIn } from '../../src/util/process.js';
 
 const node = process.execPath;
 const cwd = process.cwd();
@@ -95,5 +99,25 @@ describe('spawnLines abort', () => {
     for (let i = 0; i < 50 && alive(); i++) await new Promise((r) => setTimeout(r, 20));
     expect(grandchild).toBeGreaterThan(0);
     expect(alive()).toBe(false);
+  });
+});
+
+describe('stopProcessesIn', () => {
+  it('stops what was started in a folder during the run, and leaves older processes alone', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dazza-stray-'));
+    const idle = ['-e', 'setInterval(() => {}, 1000)'];
+    const older = spawn(node, idle, { cwd: dir, detached: true, stdio: 'ignore' });
+    await new Promise((r) => setTimeout(r, 1500)); // ps start times are to the second
+    const since = new Date();
+    const stray = spawn(node, idle, { cwd: dir, detached: true, stdio: 'ignore' });
+    await new Promise((r) => setTimeout(r, 300));
+
+    const stopped = await stopProcessesIn(dir, since);
+    expect(stopped).toEqual([stray.pid]);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(stray.exitCode !== null || stray.signalCode !== null).toBe(true);
+    expect(older.exitCode).toBeNull();
+    older.kill();
+    await rm(dir, { recursive: true, force: true });
   });
 });

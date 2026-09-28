@@ -66,7 +66,7 @@ function judgeWrite(path: string, ctx: Ctx): Decision {
   if (inside(target, `${ctx.workspace}/.git`) || /\/\.git\/hooks\//.test(target)) {
     return never('Git internals and hooks are off limits.');
   }
-  if (inside(target, ctx.workspace) || inside(target, ctx.tmp)) return allow;
+  if (inside(target, ctx.workspace) || isScratch(target, ctx)) return allow;
   return never(`${path} is outside this task's checkout (${ctx.workspace}).`);
 }
 
@@ -189,17 +189,14 @@ function judgeSegment(segment: string, ctx: Ctx): Decision {
       return outsideTargets(args, ctx) || (has('-R') && args.includes('/'))
         ? never('Changing permissions outside this task’s checkout.')
         : allow;
-    case 'find':
-      return (has('-delete') || args.includes('-exec') || args.includes('-execdir')) &&
-        outsideTargets(
-          args.slice(
-            0,
-            args.findIndex((a) => a.startsWith('-')),
-          ),
-          ctx,
-        )
+    case 'find': {
+      const firstFlag = args.findIndex((a) => a.startsWith('-'));
+      const starts = firstFlag < 0 ? args : args.slice(0, firstFlag);
+      if (!outsideTargets(starts, ctx)) return allow;
+      return has('-delete') || args.includes('-exec') || args.includes('-execdir')
         ? never('Deleting or changing files outside this task’s checkout.')
-        : allow;
+        : never('Searching outside this task’s checkout. Everything the task needs is in it.');
+    }
     case 'dd':
     case 'mkfs':
     case 'fdisk':
@@ -221,16 +218,19 @@ function judgeSegment(segment: string, ctx: Ctx): Decision {
     case 'npm':
     case 'pnpm':
     case 'yarn':
-    case 'bun':
+    case 'bun': {
       if (['publish', 'unpublish', 'deprecate', 'owner', 'access', 'dist-tag'].includes(verb)) {
         return never('Publishing packages is the user’s call, and a release.');
       }
       if (['login', 'adduser', 'token'].includes(verb))
         return never('Registry accounts are off limits.');
-      if (has('-g', '--global') || verb === 'link') {
+      // Changing what's installed for the whole machine; listing it is fine.
+      const installs = ['install', 'i', 'add', 'uninstall', 'remove', 'rm', 'update', 'upgrade'];
+      if ((has('-g', '--global') && installs.includes(verb)) || verb === 'link') {
         return ask('It installs outside the project, for the whole machine.');
       }
       return allow;
+    }
     case 'pip':
     case 'pip3':
       return has('--user', '--break-system-packages')
@@ -401,7 +401,7 @@ function outsideTargets(args: string[], ctx: Ctx): boolean {
       if (arg === '/' || arg === '~' || arg === '*' || /^\/\*?$/.test(arg)) return true;
       if (/^\$(HOME|\{HOME\})/.test(arg)) return true;
       const target = resolve(ctx.cwd, expandHome(arg, ctx.home));
-      return !inside(target, ctx.workspace) && !inside(target, ctx.tmp);
+      return !inside(target, ctx.workspace) && !isScratch(target, ctx);
     });
 }
 
@@ -448,6 +448,14 @@ function splitWords(segment: string): string[] {
     words.push(match[1] ?? match[2] ?? match[3] ?? '');
   }
   return words;
+}
+
+/**
+ * Scratch space anyone may use: the system temp folders. On macOS Node's
+ * tmpdir() is under /var/folders, while tools write to /tmp (really /private/tmp).
+ */
+function isScratch(target: string, ctx: Ctx): boolean {
+  return [ctx.tmp, '/tmp', '/private/tmp', '/var/tmp'].some((dir) => inside(target, dir));
 }
 
 function unquote(text: string): string {

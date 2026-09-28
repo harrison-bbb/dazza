@@ -4,6 +4,7 @@ import { MCP_SERVER_NAME, WORKER_TOOLS } from '../mcp/server.js';
 import workerPrompt from '../prompts/worker.md';
 import type { AgentError, AgentEvent, AgentProvider, McpServerConfig } from '../providers/types.js';
 import { claim } from '../util/lock.js';
+import { stopProcessesIn } from '../util/process.js';
 import type { Config } from './config.js';
 import { explainAgentError } from './errors.js';
 import { nextTask } from './plan.js';
@@ -274,6 +275,7 @@ async function* runWorker(
   // A stop that came while the task was being set up still counts.
   if (signal?.aborted) run.abort();
   let stalled = false;
+  const runStarted = new Date();
   let watchdog: NodeJS.Timeout | undefined;
   const feedWatchdog = () => {
     clearTimeout(watchdog);
@@ -321,6 +323,8 @@ async function* runWorker(
   } finally {
     clearTimeout(watchdog);
     signal?.removeEventListener('abort', stopRun);
+    // Dev servers and watchers the worker started in the background don't outlive its run.
+    if (build.dir) await stopProcessesIn(build.dir, runStarted).catch(() => []);
   }
   if (signal?.aborted) return { kind: 'aborted' };
   if (stalled) return { kind: 'stalled' };

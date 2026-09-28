@@ -1,4 +1,5 @@
 import { type ChildProcess, execFile, spawn } from 'node:child_process';
+import { readdir, readlink, realpath } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
 
@@ -152,4 +153,75 @@ function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
 
 function isExecError(error: unknown): error is Error & CommandResult & { code: number } {
   return error instanceof Error && 'code' in error && typeof error.code === 'number';
+}
+
+/**
+ * Stop processes running from inside `dir` that started after `since`: what an
+ * agent left behind in its worktree, like a dev server it started in the
+ * background. Agent CLIs run each shell command in its own process group, so
+ * stopping the agent's group doesn't reach these. Anything started before the
+ * run (the user trying the work in that folder, say) is left alone.
+ * Resolves the pids stopped.
+ */
+export async function stopProcessesIn(dir: string, since: Date): Promise<number[]> {
+  const roots = [dir, await realpath(dir).catch(() => dir)];
+  const inDir = (path: string) =>
+    roots.some((root) => path === root || path.startsWith(`${root}/`));
+  const pids = (await workingDirectories())
+    .filter(({ pid, cwd }) => pid !== process.pid && inDir(cwd))
+    .map(({ pid }) => pid);
+  const started = await startTimes(pids);
+  const stray = pids.filter((pid) => (started.get(pid) ?? 0) >= since.getTime() - START_SLACK_MS);
+  for (const pid of stray) {
+    signal(pid, 'SIGTERM');
+    setTimeout(() => signal(pid, 'SIGKILL'), KILL_AFTER_MS).unref();
+  }
+  return stray;
+}
+
+/** `ps` start times are to the second. */
+const START_SLACK_MS = 1_000;
+
+/** Every process's working directory. */
+async function workingDirectories(): Promise<{ pid: number; cwd: string }[]> {
+  if (process.platform === 'linux') {
+    const entries = await readdir('/proc').catch(() => []);
+    const found = await Promise.all(
+      entries
+        .filter((e) => /^\d+$/.test(e))
+        .map(async (e) => ({
+          pid: Number(e),
+          cwd: await readlink(`/proc/${e}/cwd`).catch(() => ''),
+        })),
+    );
+    return found.filter((p) => p.cwd);
+  }
+  // macOS and the BSDs: lsof reports each process's cwd as "p<pid>" then "n<path>".
+  const result = await execCommand('lsof', ['-d', 'cwd', '-Fpn']);
+  const found: { pid: number; cwd: string }[] = [];
+  let pid = 0;
+  for (const line of result?.stdout.split('\n') ?? []) {
+    if (line.startsWith('p')) pid = Number(line.slice(1));
+    else if (line.startsWith('n') && pid) found.push({ pid, cwd: line.slice(1) });
+  }
+  return found;
+}
+
+async function startTimes(pids: number[]): Promise<Map<number, number>> {
+  if (pids.length === 0) return new Map();
+  const result = await execCommand('ps', ['-o', 'pid=,lstart=', '-p', pids.join(',')]);
+  const times = new Map<number, number>();
+  for (const line of result?.stdout.split('\n') ?? []) {
+    const match = /^\s*(\d+)\s+(.+)$/.exec(line);
+    if (match?.[1] && match[2]) times.set(Number(match[1]), Date.parse(match[2]));
+  }
+  return times;
+}
+
+function signal(pid: number, name: NodeJS.Signals): void {
+  try {
+    process.kill(pid, name);
+  } catch {
+    // Already gone.
+  }
 }

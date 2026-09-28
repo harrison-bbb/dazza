@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { judge } from '../../src/guard/policy.js';
 
-const ctx = { workspace: '/work/T3', home: '/home/sam', tmp: '/tmp' };
+const ctx = { workspace: '/work/T3', home: '/home/sam', tmp: '/var/folders/xy/T' };
 const run = (command: string) => judge({ tool: 'Bash', input: { command } }, ctx).kind;
 
 describe('guard policy: commands', () => {
@@ -11,6 +11,8 @@ describe('guard policy: commands', () => {
     'npx vitest run',
     'rm -rf node_modules dist',
     'rm -rf /tmp/build-cache',
+    'python3 -m http.server 8934 >/tmp/server.log 2>&1 &',
+    'rm -rf /var/folders/xy/T/cache',
     'git status && git diff',
     'git add -A && git commit -m "wip"',
     'git checkout -- src/app.ts',
@@ -25,6 +27,9 @@ describe('guard policy: commands', () => {
     'cat .env.example',
     'vercel dev',
     'kubectl get pods',
+    'find . -name "*.test.js"',
+    'npm ls -g --depth=0',
+    'find src -type f',
     'terraform plan',
   ])('lets normal work through: %s', (command) => {
     expect(run(command)).toBe('allow');
@@ -54,6 +59,8 @@ describe('guard policy: commands', () => {
     ['git remote add evil https://example.com/x.git', 'adding a remote'],
     ['ssh prod-db-1', 'other machines'],
     ['find / -name "*.log" -delete', 'find deleting outside'],
+    ['find / -iname "shot*" 2>/dev/null', 'searching the whole disk'],
+    ['find ~ -name "*.png"', 'searching home'],
     ['gh pr merge 12', 'merging on GitHub'],
     ['docker push acme/api:latest', 'pushing an image'],
   ])('never: %s (%s)', (command) => {
@@ -67,6 +74,7 @@ describe('guard policy: commands', () => {
     ['curl -X DELETE https://api.stripe.com/v1/customers/cus_123', 'changing an outside service'],
     ['curl https://hooks.slack.com/services/x -d "{\\"text\\":\\"hi\\"}"', 'posting to a webhook'],
     ['npm install -g typescript', 'a global install'],
+    ['pnpm add -g playwright', 'a global add'],
     ['brew install postgresql', 'a machine-wide install'],
     ['pkill -f node', 'killing by name'],
     ['aws s3 ls', 'a live cloud account'],
