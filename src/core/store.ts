@@ -1,14 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import {
-  access,
-  appendFile,
-  mkdir,
-  readdir,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from 'node:fs/promises';
+import { access, appendFile, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { z } from 'zod';
@@ -69,10 +60,21 @@ export const TaskPermissions = z.object({
 export type TaskPermissions = z.infer<typeof TaskPermissions>;
 const PermissionState = z.record(z.string(), TaskPermissions);
 
-const ManagerSession = z.object({
+const Conversation = z.object({
   sessionId: z.string().min(1),
   provider: z.enum(['claude', 'codex']).optional(),
 });
+
+/**
+ * The conversation with Dazza: the current one, and the one before it, kept
+ * so `/continue` (or `dazza --continue`) can go back to it. Each launch starts
+ * a new one, as Claude Code does.
+ */
+const ManagerSession = Conversation.extend({
+  sessionId: z.string().min(1).optional(),
+  previous: Conversation.optional(),
+});
+type ManagerSession = z.infer<typeof ManagerSession>;
 
 /** Running totals of what Dazza has used on this project. */
 export const ProjectUsage = z.object({
@@ -170,23 +172,60 @@ export class Store {
    * off. A session belongs to one agent CLI: after switching, there's none.
    */
   async readManagerSession(provider?: ProviderId): Promise<string | undefined> {
-    const raw = await this.readOptional(MANAGER_SESSION_FILE);
-    const parsed = ManagerSession.safeParse(parseJson(raw));
-    if (!parsed.success) return undefined;
-    const { sessionId, provider: owner } = parsed.data;
+    const { sessionId, provider: owner } = await this.readConversations();
     return provider && owner && owner !== provider ? undefined : sessionId;
   }
 
   async writeManagerSession(sessionId: string, provider: ProviderId): Promise<void> {
-    await this.writeAtomic(
-      MANAGER_SESSION_FILE,
-      `${JSON.stringify({ sessionId, provider }, null, 2)}\n`,
-    );
+    const { previous } = await this.readConversations();
+    await this.writeConversations({ sessionId, provider, ...(previous && { previous }) });
   }
 
-  /** Forget the conversation, e.g. to start fresh. The plan and board stay. */
+  /** Whether there's an earlier conversation to go back to, for this agent. */
+  async hasPreviousConversation(provider: ProviderId): Promise<boolean> {
+    const { previous } = await this.readConversations();
+    return previous !== undefined && (!previous.provider || previous.provider === provider);
+  }
+
+  /**
+   * Start a new conversation, keeping the current one (if it got going) as the
+   * one `/continue` goes back to. The plan and board stay.
+   */
+  async newConversation(): Promise<void> {
+    const { sessionId, provider, previous } = await this.readConversations();
+    const current = sessionId ? { sessionId, ...(provider && { provider }) } : undefined;
+    const keep = current ?? previous;
+    await this.writeConversations(keep ? { previous: keep } : {});
+  }
+
+  /**
+   * Go back to the previous conversation. The current one, if it got going,
+   * becomes the previous, so switching back and forth loses nothing. False
+   * when there's nothing to go back to.
+   */
+  async continueConversation(provider: ProviderId): Promise<boolean> {
+    const { sessionId, provider: owner, previous } = await this.readConversations();
+    if (!previous || (previous.provider && previous.provider !== provider)) return false;
+    const current = sessionId ? { sessionId, ...(owner && { provider: owner }) } : undefined;
+    await this.writeConversations({ ...previous, ...(current && { previous: current }) });
+    return true;
+  }
+
+  /** Forget the current conversation, e.g. when its agent session is gone. The plan and board stay. */
   async clearManagerSession(): Promise<void> {
-    await rm(this.path(MANAGER_SESSION_FILE), { force: true });
+    const { previous } = await this.readConversations();
+    await this.writeConversations(previous ? { previous } : {});
+  }
+
+  private async readConversations(): Promise<ManagerSession> {
+    const parsed = ManagerSession.safeParse(
+      parseJson(await this.readOptional(MANAGER_SESSION_FILE)),
+    );
+    return parsed.success ? parsed.data : {};
+  }
+
+  private async writeConversations(state: ManagerSession): Promise<void> {
+    await this.writeAtomic(MANAGER_SESSION_FILE, `${JSON.stringify(state, null, 2)}\n`);
   }
 
   /**

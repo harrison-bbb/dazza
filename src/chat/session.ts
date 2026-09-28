@@ -11,10 +11,10 @@ import type { AgentEvent, AgentProvider, McpServerConfig } from '../providers/ty
 import { openInBrowser } from '../util/open.js';
 import { errorMessage } from '../util/text.js';
 import { BRAND } from './banner.js';
-import { createBuildRenderer } from './buildView.js';
+import { compactedLine, createBuildRenderer, createStepTracker } from './buildView.js';
 import type { Usage } from './commands.js';
 import { describeTool, planCard } from './describe.js';
-import { paint, renderInline } from './style.js';
+import { paint, renderInline, stripAnsi } from './style.js';
 
 /** Where the session's output goes. The terminal in practice; a recorder in tests. */
 export interface SessionOutput {
@@ -163,6 +163,21 @@ export class ChatSession {
     await this.chat.done;
   }
 
+  /** `/compact`: summarise the conversation to free up room. Says how it went. */
+  async compact(): Promise<string> {
+    if (this.chat) return 'I’m still replying. Try /compact once I’ve answered.';
+    this.options.output.status('chat', 'Compacting our conversation');
+    try {
+      const result = await this.options.manager.compact();
+      if (!result) return 'Nothing to compact yet: we haven’t talked in this project.';
+      return `${stripAnsi(compactedLine(result, 'our conversation')).trim().replace(/^• /, '')}. The plan and the board are as they were.`;
+    } catch (error) {
+      return `Couldn’t compact: ${errorMessage(error)}`;
+    } finally {
+      this.options.output.status('chat', undefined);
+    }
+  }
+
   /** Wait until nothing is running, e.g. before exiting when input was piped in. */
   async idle(): Promise<void> {
     while (this.chat || this.building) await Promise.all([this.chat?.done, this.building?.done]);
@@ -208,6 +223,12 @@ export class ChatSession {
     let fixingPlan = false;
     /** The rejected plan was saved as a draft, and is being fixed item by item. */
     let fixingDraft = false;
+    /** What Dazza reads, looks up and changes, shown as it goes, like Claude Code does. */
+    const steps = createStepTracker();
+    // In grey, so its own look-ups don't read like a builder's work.
+    const showStep = (line: string | undefined) => {
+      if (line && !fixingPlan) output.print(paint.dim(stripAnsi(line)));
+    };
     output.status('chat', 'Thinking');
 
     try {
@@ -218,6 +239,11 @@ export class ChatSession {
       )) {
         this.countUsage(event);
         this.noticeShares(event);
+        if (event.type === 'tool_use' || event.type === 'tool_result') {
+          showStep(steps.step(event, undefined, store.root));
+        }
+        // It ran out of room and summarised itself, as Claude Code does.
+        if (event.type === 'compacted') showStep(compactedLine(event, 'our conversation'));
         if (event.type === 'retry')
           output.status('chat', retryStatus(event, this.options.provider.name));
         if (event.type === 'text') {
@@ -229,6 +255,7 @@ export class ChatSession {
             this.isBuilding && reply.length === 0
               ? `${paint.hex(BRAND, paint.bold('Dazza:'))} `
               : '';
+          showStep(steps.flush());
           reply.push(event.text);
           output.say(label + renderInline(event.text));
         } else if (event.type === 'tool_use') {

@@ -62,6 +62,15 @@ describe('greeting', () => {
     );
   });
 
+  it('mentions /continue when there’s an earlier conversation, above all mid-scoping', () => {
+    expect(greeting(undefined, { canContinue: true })).toMatch(
+      /We were talking last time: \/continue/,
+    );
+    const plan = approved(makePlan([makeTask({ id: 'T1' })]));
+    expect(greeting(plan, { canContinue: true })).toContain('/continue picks up the last one');
+    expect(greeting(plan, { canContinue: true, hasConversation: true })).not.toContain('/continue');
+  });
+
   it('points at the close-out report when everything is done', () => {
     const done = approved(makePlan([makeTask({ id: 'T1', status: 'closed' })]));
     expect(greeting(done)).toContain('All 1 tasks closed. The close-out report is on the board');

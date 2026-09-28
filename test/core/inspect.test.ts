@@ -11,9 +11,15 @@ describe('inspectCodebase', () => {
     await writeFile(join(project.root, path), contents);
   };
 
-  it('treats a folder without source code as new', async () => {
-    await file('README.md', '# idea');
+  it('says when a folder has files but no code yet, rather than calling it empty', async () => {
     expect(await inspectCodebase(project.root)).toBeUndefined();
+    await file('README.md', '# idea');
+    await file('package.json', JSON.stringify({ name: 'recipes' }));
+    const found = await inspectCodebase(project.root);
+    expect(found?.languages).toEqual([]);
+    expect(describeCodebase(found as NonNullable<typeof found>)).toBe(
+      'a folder with 2 files and no code yet (recipes)',
+    );
   });
 
   it('counts source files and ignores dependencies and hidden folders', async () => {

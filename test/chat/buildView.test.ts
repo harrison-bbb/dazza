@@ -25,14 +25,23 @@ const plan = makePlan([
 ]);
 
 describe('toolLine', () => {
-  it('shows an edit as the file and how much changed, relative to the project', () => {
+  it('shows an edit as the file, how much changed, and the first lines of the diff', () => {
     const line = toolLine(
       'Edit',
       { file_path: '/p/src/a.ts', old_string: 'a', new_string: 'b\nc' },
       plan,
       '/p',
     );
-    expect(stripAnsi(line ?? '')).toBe('  • Edit src/a.ts (+2 −1)');
+    expect(stripAnsi(line ?? '')).toBe(
+      '  • Edit src/a.ts (+2 −1)\n      - a\n      + b\n      + c',
+    );
+    const long = toolLine(
+      'Edit',
+      { file_path: '/p/a', old_string: '', new_string: 'x\n'.repeat(20) },
+      plan,
+      '/p',
+    );
+    expect(stripAnsi(long ?? '')).toContain('… 15 more lines');
   });
 
   it('shows commands, writes and subtasks closing', () => {
@@ -47,6 +56,10 @@ describe('toolLine', () => {
       '  ! Needs you: Which DB?',
     );
     expect(toolLine('TodoWrite', {}, plan, '/p')).toBeUndefined();
+    expect(toolLine('mcp__claude_ai_Claude_Docs__guide', {}, plan, '/p')).toBe(
+      '  • Claude Docs · guide',
+    );
+    expect(toolLine('ToolSearch', {}, plan, '/p')).toBeUndefined();
     // Codex reports file changes without their text: just the file.
     expect(toolLine('Edit', { file_path: '/p/a.ts' }, plan, '/p')).toBe('  • Edit a.ts');
     expect(toolLine('Delete', { file_path: '/p/old.ts' }, plan, '/p')).toBe('  • Delete old.ts');

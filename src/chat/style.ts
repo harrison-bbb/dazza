@@ -22,9 +22,26 @@ export const paint = {
 
 /** Render the inline Markdown agents commonly emit: **bold** and `code`. */
 export function renderInline(text: string): string {
-  return text
-    .replace(/\*\*(.+?)\*\*/g, (_, bold: string) => paint.bold(bold))
-    .replace(/`([^`]+)`/g, (_, code: string) => paint.bold(code));
+  return (
+    text
+      // [text](url): the text, with a short form of where it goes.
+      .replace(
+        /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+        (_, label: string, url: string) => `${label} ${paint.dim(`(${shortUrl(url)})`)}`,
+      )
+      .replace(/\*\*(.+?)\*\*/g, (_, bold: string) => paint.bold(bold))
+      .replace(/`([^`]+)`/g, (_, code: string) => paint.bold(code))
+  );
+}
+
+/** "npmjs.com/package/zod": a link without its scheme, www, query or fragment. */
+function shortUrl(url: string): string {
+  try {
+    const { hostname, pathname } = new URL(url);
+    return `${hostname.replace(/^www\./, '')}${pathname === '/' ? '' : pathname.replace(/\/$/, '')}`;
+  } catch {
+    return url;
+  }
 }
 
 /** Plain text for places that can't show colour, e.g. Telegram. */

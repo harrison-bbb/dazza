@@ -8,6 +8,7 @@ import type {
   AgentEvent,
   AgentProvider,
   AgentRunOptions,
+  Compacted,
   ModelOption,
   ProviderStatus,
   RunUsage,
@@ -102,6 +103,34 @@ export class ClaudeProvider implements AgentProvider {
     throw new Error('Claude Code did not report its models');
   }
 
+  /** From `claude mcp list`, which checks each server (it takes a few seconds). */
+  async listMcpServers(cwd: string): Promise<{ name: string; status: string }[]> {
+    const listed = await execCommand(this.bin, ['mcp', 'list'], this.env(), cwd);
+    return (listed?.stdout ?? '')
+      .split('\n')
+      .map((line) => /^(.+?): .* - (.+)$/.exec(line.trim()))
+      .flatMap((m) =>
+        m?.[1] && m[2] ? [{ name: m[1], status: m[2].replace(/^[✔✗!]\s*/, '') }] : [],
+      );
+  }
+
+  /** `/compact`, sent to the conversation as Claude Code's terminal would. */
+  async compact(sessionId: string, cwd: string, signal?: AbortSignal): Promise<Compacted> {
+    let compacted: Compacted | undefined;
+    for await (const event of this.run({
+      prompt: '/compact',
+      cwd,
+      resumeSessionId: sessionId,
+      ...(signal && { signal }),
+    })) {
+      if (event.type === 'compacted') compacted = event;
+      if (event.type === 'finished' && !event.ok && !compacted) {
+        throw new Error(event.output || 'Claude Code couldn’t compact the conversation.');
+      }
+    }
+    return compacted ?? { type: 'compacted', trigger: 'manual' };
+  }
+
   async *run(options: AgentRunOptions): AsyncGenerator<AgentEvent> {
     let finished = false;
     // A "rejected" rate-limit reading tells us when a usage limit resets.
@@ -175,11 +204,9 @@ export function buildClaudeArgs(options: Omit<AgentRunOptions, 'prompt'>): strin
   if (options.model) args.push('--model', options.model);
   if (options.mcpServers) {
     // Strict: the agent gets exactly the servers Dazza hands it, not the user's personal ones.
-    args.push(
-      '--mcp-config',
-      JSON.stringify({ mcpServers: options.mcpServers }),
-      '--strict-mcp-config',
-    );
+    args.push('--mcp-config', JSON.stringify({ mcpServers: options.mcpServers }));
+    // Strict unless asked: the user's own servers stay out of the session.
+    if (!options.userMcp) args.push('--strict-mcp-config');
   }
   if (options.tools) args.push('--tools', options.tools.join(','));
   if (options.allowedTools?.length) args.push('--allowedTools', options.allowedTools.join(','));
@@ -212,17 +239,30 @@ export function parseClaudeLine(line: string): AgentEvent[] {
 
   const message = parsed.data;
   switch (message.type) {
-    case 'system':
-      return message.subtype === 'init'
-        ? [{ type: 'started', sessionId: message.session_id, model: message.model }]
-        : [
-            {
-              type: 'retry',
-              attempt: message.attempt,
-              maxRetries: message.max_retries,
-              reason: message.error ?? 'API error',
-            },
-          ];
+    case 'system': {
+      if (message.subtype === 'init') {
+        return [{ type: 'started', sessionId: message.session_id, model: message.model }];
+      }
+      if (message.subtype === 'compact_boundary') {
+        const { trigger, pre_tokens, post_tokens } = message.compact_metadata;
+        return [
+          {
+            type: 'compacted',
+            trigger: trigger === 'manual' ? 'manual' : 'auto',
+            ...(pre_tokens !== undefined && { before: pre_tokens }),
+            ...(post_tokens !== undefined && { after: post_tokens }),
+          },
+        ];
+      }
+      return [
+        {
+          type: 'retry',
+          attempt: message.attempt,
+          maxRetries: message.max_retries,
+          reason: message.error ?? 'API error',
+        },
+      ];
+    }
     case 'assistant':
       return message.message.content.flatMap(toContentEvent);
     case 'user':
@@ -285,6 +325,17 @@ const StreamLine = z.discriminatedUnion('type', [
       subtype: z.literal('init'),
       session_id: z.string(),
       model: z.string(),
+    }),
+    z.object({
+      type: z.literal('system'),
+      subtype: z.literal('compact_boundary'),
+      compact_metadata: z
+        .object({
+          trigger: z.string().optional(),
+          pre_tokens: z.number().optional(),
+          post_tokens: z.number().optional(),
+        })
+        .default({}),
     }),
     z.object({
       type: z.literal('system'),

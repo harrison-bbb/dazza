@@ -205,3 +205,27 @@ describe('ClaudeProvider', () => {
     });
   });
 });
+
+describe('compaction', () => {
+  it('reports a compaction, and how much room it made', () => {
+    const line = JSON.stringify({
+      type: 'system',
+      subtype: 'compact_boundary',
+      session_id: 's',
+      compact_metadata: { trigger: 'auto', pre_tokens: 55131, post_tokens: 1654 },
+    });
+    expect(parseClaudeLine(line)).toEqual([
+      { type: 'compacted', trigger: 'auto', before: 55131, after: 1654 },
+    ]);
+  });
+});
+
+describe('the user’s own MCP servers', () => {
+  it('are kept out unless asked for', () => {
+    const dazza = { dazza: { command: 'node', args: ['cli.js', 'mcp'] } };
+    expect(buildClaudeArgs({ cwd: '/p', mcpServers: dazza })).toContain('--strict-mcp-config');
+    expect(buildClaudeArgs({ cwd: '/p', mcpServers: dazza, userMcp: true })).not.toContain(
+      '--strict-mcp-config',
+    );
+  });
+});

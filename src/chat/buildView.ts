@@ -3,7 +3,9 @@ import type { BuildEvent } from '../core/builder.js';
 import { clock } from '../core/errors.js';
 import { humanDuration } from '../core/estimates.js';
 import { type Plan, SIZE_MINUTES } from '../core/schema.js';
+import { MCP_SERVER_NAME } from '../mcp/name.js';
 import { McpTools } from '../mcp/server.js';
+import type { AgentEvent, Compacted } from '../providers/types.js';
 import { BRAND } from './banner.js';
 import { paint, renderInline } from './style.js';
 
@@ -14,6 +16,17 @@ const REPORTED_ON_SUCCESS = new Set<string>([
   McpTools.block,
   McpTools.askPermission,
   McpTools.submit,
+  McpTools.savePlan,
+  McpTools.updateItem,
+  McpTools.addTask,
+  McpTools.addSubtask,
+  McpTools.setStatus,
+  McpTools.updateScope,
+  McpTools.approvePlan,
+  McpTools.prioritise,
+  McpTools.writeReport,
+  McpTools.redoTask,
+  McpTools.answerPermission,
 ]);
 
 /** Once a builder has asked the user something, it's waiting; anything it adds is noise. */
@@ -22,65 +35,92 @@ const ASKING = new Set<string>([McpTools.block, McpTools.askPermission]);
 export type BuildRenderer = (event: BuildEvent, plan: Plan | undefined) => string | undefined;
 
 /**
- * Turn build events into terminal output: the agent's narration, each file it
- * changes, the commands that do something, and subtasks as they close. Looking
- * around (reading files, searching, `ls`) is folded into one line, shown when
- * the builder next does something. Remembers Dazza's own tool calls until their
- * result arrives, so only successful ones are shown.
+ * One agent's steps as terminal lines, the way Claude Code shows them: its
+ * narration, each file it changes (with a short diff), the commands that do
+ * something, and Dazza's own actions once they succeed. Looking around (reading
+ * files, searching, `ls`) is grouped into one line, shown before whatever it
+ * does next. Used for each builder, and for the chat.
+ */
+export interface StepTracker {
+  /** The line(s) for one agent event, if it's worth showing. */
+  step(event: AgentEvent, plan: Plan | undefined, dir: string): string | undefined;
+  /** The grouped "Read 3 files" line not shown yet, e.g. before a reply. */
+  flush(): string | undefined;
+}
+
+export function createStepTracker(): StepTracker {
+  const pending = new Map<string, { tool: string; input: unknown }>();
+  let looked = { files: 0, searches: 0 };
+  /** It asked the user something: it's waiting, and anything it adds is noise. */
+  let asked = false;
+  const flush = () => {
+    const line = looked.files + looked.searches > 0 ? lookedLine(looked) : undefined;
+    looked = { files: 0, searches: 0 };
+    return line;
+  };
+  // Whatever it looked at first, in one line, then what it did.
+  const withLooked = (text: string | undefined) => {
+    if (!text) return undefined;
+    const seen = flush();
+    return seen ? `${seen}\n${text}` : text;
+  };
+  return {
+    flush,
+    step(event, plan, dir) {
+      const looking = event.type === 'tool_use' && lookKind(event.tool, event.input);
+      if (looking) {
+        looked[looking === 'file' ? 'files' : 'searches'] += 1;
+        return undefined;
+      }
+      if (event.type === 'tool_use' && REPORTED_ON_SUCCESS.has(event.tool)) {
+        pending.set(event.id, event);
+        return undefined;
+      }
+      if (event.type === 'tool_result') {
+        const call = pending.get(event.id);
+        pending.delete(event.id);
+        if (call && event.ok && ASKING.has(call.tool)) asked = true;
+        return withLooked(
+          call && event.ok ? toolLine(call.tool, call.input, plan, dir) : undefined,
+        );
+      }
+      if (event.type === 'text' && asked) return undefined;
+      return withLooked(agentLine(event, plan, dir));
+    },
+  };
+}
+
+/**
+ * Build events as terminal output: each task's steps (see StepTracker), and the
+ * build's own news (a task starting, finishing, waiting on a limit).
  */
 export function createBuildRenderer(root: string): BuildRenderer {
-  const pending = new Map<string, { tool: string; input: unknown }>();
   /** Tasks being built, and the worktree each is in, so paths read relative to it. */
   const active = new Map<string, string>();
-  /** Tasks whose builder has asked the user something this run. */
-  const asked = new Set<string>();
-  /** How much each builder has looked around since its last line. */
-  const looked = new Map<string, { files: number; searches: number }>();
+  const steps = new Map<string, StepTracker>();
+  const stepsFor = (taskId: string) => {
+    const existing = steps.get(taskId);
+    if (existing) return existing;
+    const tracker = createStepTracker();
+    steps.set(taskId, tracker);
+    return tracker;
+  };
   return (event, plan) => {
     if (event.type === 'task_started') active.set(event.task.id, event.dir ?? root);
-    if (event.type === 'task_started' || event.type === 'task_finished') {
-      asked.delete(event.task.id);
-      looked.delete(event.task.id);
-    }
+    // Each run of a task starts afresh.
+    if (event.type === 'task_started' || event.type === 'task_finished')
+      steps.delete(event.task.id);
     if (event.type === 'task_finished') active.delete(event.task.id);
     if (event.type !== 'agent') return renderBuildEvent(event, plan, root);
 
-    const dir = active.get(event.task.id) ?? root;
+    const text = stepsFor(event.task.id).step(event.event, plan, active.get(event.task.id) ?? root);
     // With tasks building side by side, say which one each line is about.
-    const tagged = (text: string) =>
-      active.size > 1
-        ? text
-            .split('\n')
-            .map((line) => (line.trim() ? `${paint.dim(event.task.id)} ${line}` : line))
-            .join('\n')
-        : text;
-    // Whatever the builder looked at first, in one line, then what it did.
-    const tag = (text: string | undefined) => {
-      if (!text) return undefined;
-      const seen = looked.get(event.task.id);
-      looked.delete(event.task.id);
-      return tagged(seen ? `${lookedLine(seen)}\n${text}` : text);
-    };
-    const agentEvent = event.event;
-    const looking = agentEvent.type === 'tool_use' && lookKind(agentEvent.tool, agentEvent.input);
-    if (looking) {
-      const seen = looked.get(event.task.id) ?? { files: 0, searches: 0 };
-      seen[looking === 'file' ? 'files' : 'searches'] += 1;
-      looked.set(event.task.id, seen);
-      return undefined;
-    }
-    if (agentEvent.type === 'tool_use' && REPORTED_ON_SUCCESS.has(agentEvent.tool)) {
-      pending.set(agentEvent.id, agentEvent);
-      return undefined;
-    }
-    if (agentEvent.type === 'tool_result') {
-      const call = pending.get(agentEvent.id);
-      pending.delete(agentEvent.id);
-      if (call && agentEvent.ok && ASKING.has(call.tool)) asked.add(event.task.id);
-      return tag(call && agentEvent.ok ? toolLine(call.tool, call.input, plan, dir) : undefined);
-    }
-    if (agentEvent.type === 'text' && asked.has(event.task.id)) return undefined;
-    return tag(renderBuildEvent(event, plan, dir));
+    return text && active.size > 1
+      ? text
+          .split('\n')
+          .map((line) => (line.trim() ? `${paint.dim(event.task.id)} ${line}` : line))
+          .join('\n')
+      : text;
   };
 }
 
@@ -124,11 +164,27 @@ export function renderBuildEvent(
   }
 }
 
+/** "Compacted to make room (55k → 2k tokens)": the agent summarised its conversation. */
+export function compactedLine(event: Compacted, what = 'its context'): string {
+  const sizes =
+    event.before !== undefined && event.after !== undefined
+      ? ` (${tokens(event.before)} → ${tokens(event.after)} tokens)`
+      : '';
+  const why = event.trigger === 'auto' ? ' to make room' : '';
+  return `  ${paint.dim(`• Compacted ${what}${why}${sizes}`)}`;
+}
+
+/** 55131 → "55k". */
+function tokens(count: number): string {
+  return count >= 1000 ? `${Math.round(count / 1000)}k` : String(count);
+}
+
 function agentLine(
   event: Extract<BuildEvent, { type: 'agent' }>['event'],
   plan: Plan | undefined,
   root: string,
 ): string | undefined {
+  if (event.type === 'compacted') return compactedLine(event);
   if (event.type === 'text') {
     const text = event.text.trim();
     return text ? indent(renderInline(text)) : undefined;
@@ -163,8 +219,10 @@ export function toolLine(
     case 'Read':
       return step('Read', paint.dim(path()));
     case 'Edit':
-    case 'MultiEdit':
-      return step('Edit', `${path()}${changeSize(field('old_string'), field('new_string'))}`);
+      return [
+        step('Edit', `${path()}${changeSize(field('old_string'), field('new_string'))}`),
+        ...diffPreview(field('old_string') ?? '', field('new_string') ?? ''),
+      ].join('\n');
     case 'Delete':
       return step('Delete', path());
     case 'NotebookEdit':
@@ -201,9 +259,41 @@ export function toolLine(
       return `  ${paint.red('!')} ${paint.bold('Asks to run:')} ${field('command') ?? ''}${field('why') ? paint.dim(` · ${field('why')}`) : ''}`;
     case McpTools.submit:
       return `  ${paint.green('✔')} ${paint.bold('Handing over for review')}`;
-    default:
-      // Plumbing, or a tool this view doesn't know: not worth a line.
+    // The chat's own changes to the project.
+    case McpTools.savePlan:
+      return step('Saved the plan');
+    case McpTools.updateItem:
+      return step('Updated', field('id') ?? '');
+    case McpTools.addTask:
+      return step('Added a task', field('title') ?? '');
+    case McpTools.addSubtask:
+      return step('Added a subtask to', field('taskId') ?? '');
+    case McpTools.setStatus:
+      return step('Moved', `${field('id') ?? ''} to ${field('status') ?? ''}`);
+    case McpTools.updateScope:
+      return step('Updated the scope', paint.dim(field('summary') ?? ''));
+    case McpTools.approvePlan:
+      return step('Approved the plan');
+    case McpTools.prioritise:
+      return step('Reordered the tasks');
+    case McpTools.writeReport:
+      return step('Wrote the report');
+    case McpTools.redoTask:
+      return step('Started over', field('id') ?? '');
+    case McpTools.answerPermission:
+      return step(
+        (input as { allow?: unknown } | undefined)?.allow === true ? 'Allowed' : 'Didn’t allow',
+        `${field('taskId') ?? ''}’s command`,
+      );
+    default: {
+      // The user's own MCP servers: "Claude Docs · guide", "Gmail · search_threads".
+      const mcp = /^mcp__(.+?)__(.+)$/.exec(tool);
+      if (mcp?.[1] && mcp[2] && mcp[1] !== MCP_SERVER_NAME) {
+        return step(mcp[1].replace(/^claude_ai_/, '').replace(/_/g, ' '), paint.dim(`· ${mcp[2]}`));
+      }
+      // Plumbing (ToolSearch, say), or a tool this view doesn't know: not worth a line.
       return undefined;
+    }
   }
 }
 
@@ -237,7 +327,20 @@ function lookedLine({ files, searches }: { files: number; searches: number }): s
   return `  ${paint.dim(`• ${parts.join(' · ')}`)}`;
 }
 
-/** " (+12 −3)": how much an edit changed, instead of the diff itself. */
+/** The first few lines of an edit, red and green, as Claude Code shows them. */
+const DIFF_LINES = 6;
+
+function diffPreview(before: string, after: string): string[] {
+  const lines = [
+    ...(before ? before.split('\n') : []).map((l) => paint.red(`- ${truncate(l, 100)}`)),
+    ...(after ? after.split('\n') : []).map((l) => paint.green(`+ ${truncate(l, 100)}`)),
+  ];
+  const shown = lines.slice(0, DIFF_LINES).map((l) => `      ${l}`);
+  const more = lines.length - shown.length;
+  return more > 0 ? [...shown, paint.dim(`      … ${more} more lines`)] : shown;
+}
+
+/** " (+12 −3)": how much an edit changed. */
 function changeSize(before: string | undefined, after: string | undefined): string {
   const lines = (text: string | undefined) => (text ? text.split('\n').length : 0);
   const added = lines(after);

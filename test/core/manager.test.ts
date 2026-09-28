@@ -29,10 +29,27 @@ describe('Manager', () => {
   it('can read the code and the web, but has nothing that edits code', async () => {
     const { provider, manager } = setup();
     await drain(manager.send('hi'));
-    expect(provider.runs[0]?.tools).toEqual(['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch']);
+    // ToolSearch finds the user's own MCP tools when needed (on by default).
+    expect(provider.runs[0]?.tools).toEqual([
+      'Read',
+      'Glob',
+      'Grep',
+      'WebSearch',
+      'WebFetch',
+      'ToolSearch',
+    ]);
+    expect(provider.runs[0]?.userMcp).toBe(true);
     expect(provider.runs[0]?.allowedTools).toEqual(
       expect.arrayContaining(['WebSearch', 'WebFetch', 'mcp__dazza__save_plan']),
     );
+  });
+
+  it('keeps to Dazza’s own tools when the user’s MCP servers are switched off', async () => {
+    const { provider, manager } = setup();
+    await project.config.updateSettings({ userMcp: false });
+    await drain(manager.send('hi'));
+    expect(provider.runs[0]?.userMcp).toBe(false);
+    expect(provider.runs[0]?.tools).not.toContain('ToolSearch');
   });
 
   it('relays agent events', async () => {

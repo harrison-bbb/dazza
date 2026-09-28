@@ -40,8 +40,9 @@ import { Git } from '../git/git.js';
 import { judge } from '../guard/policy.js';
 import { ScreenshotRequest, Screenshots } from '../preview/screenshots.js';
 import { errorMessage } from '../util/text.js';
+import { MCP_SERVER_NAME } from './name.js';
 
-export const MCP_SERVER_NAME = 'dazza';
+export { MCP_SERVER_NAME };
 
 /** Fully-qualified tool names as agents see them, for allow-listing. */
 export const McpTools = {

@@ -51,14 +51,19 @@ const PLAN_POLL_MS = 500;
 const PLAN_SETTLE_MS = 300;
 
 /** `dazza`: the conversation with your developer. */
-export async function startChat(projectRoot: string): Promise<void> {
+export interface ChatOptions {
+  /** Pick up the last conversation (`dazza --continue`), instead of starting a new one. */
+  continue?: boolean;
+}
+
+export async function startChat(projectRoot: string, options: ChatOptions = {}): Promise<void> {
   const terminal = new Terminal();
   // A long-running chat shouldn't die over one failed background task: say so and carry on.
   const onRejection = (error: unknown) =>
     say(paint.red(`Something went wrong: ${errorMessage(error)}`));
   process.on('unhandledRejection', onRejection);
   try {
-    await chat(projectRoot, terminal);
+    await chat(projectRoot, terminal, options);
   } catch (error) {
     if (!(error instanceof StateError)) throw error;
     say(paint.red(error.message));
@@ -69,7 +74,7 @@ export async function startChat(projectRoot: string): Promise<void> {
   }
 }
 
-async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
+async function chat(projectRoot: string, terminal: Terminal, options: ChatOptions): Promise<void> {
   write = (text) => terminal.print(text);
   console.log(`\n${logo()}\n`);
   const config = new Config();
@@ -124,8 +129,20 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
   );
   const newer = await update;
   if (newer) console.log(paint.amber(updateNotice(newer)));
+  // A new conversation each time, as in Claude Code; --continue picks up the last one.
+  if (!options.continue) await store.newConversation();
+  else if (!(await store.readManagerSession(provider.id)))
+    await store.continueConversation(provider.id);
   const hasConversation = (await store.readManagerSession(provider.id)) !== undefined;
-  say(greeting(await store.readPlan(), { hasConversation, ...(codebase && { codebase }) }));
+  const canContinue = !hasConversation && (await store.hasPreviousConversation(provider.id));
+  say(
+    greeting(await store.readPlan(), {
+      hasConversation,
+      canContinue,
+      // A folder with no code yet gets the new-project greeting.
+      ...(codebase && found?.languages.length && { codebase }),
+    }),
+  );
 
   // Slack and Telegram: notifications out, the user's messages in, same conversation.
   const channels = new Map<ChannelId, Channel>();
@@ -336,6 +353,8 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
     },
     requestReport,
     building: () => session.isOnTheJob,
+    compact: () => session.compact(),
+    chatting: () => session.isChatting,
     stopBuild: async () => {
       if (!session.isBuilding) return say('Not building right now.');
       // A paused task reports itself; only say so when nothing was underway.
@@ -370,7 +389,15 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
 
   const history: string[] = [];
   while (!exiting) {
-    const input = await terminal.readLine({ prompt: PROMPT, menu: commandMenu, history });
+    const input = await terminal.readLine({
+      prompt: PROMPT,
+      menu: commandMenu,
+      history,
+      // Esc stops Dazza's reply (not the build), as it does in Claude Code.
+      onInterrupt: () => {
+        if (session.isChatting) void session.stopChat();
+      },
+    });
     if (input === undefined) {
       // Piped input ran out: let queued work finish. In a terminal, Ctrl-C stops
       // whatever is running first, and only exits once nothing is.

@@ -58,7 +58,9 @@ Before a handoff is committed, Dazza also checks the changes themselves: it refu
 
 Build with the credentials a developer on the project would have, not production ones. Keep production keys out of the environment you run Dazza in; the guard asks before remote databases, but the safest secret is one the agent never had.
 
-Both sessions get only Dazza's MCP server. On Claude Code that's `--strict-mcp-config`. On Codex, Dazza lists the servers Codex would load (`codex mcp list`) and switches off every one but its own for the run. Your personal MCP servers aren't exposed to them.
+Builders get only Dazza's MCP server. On Claude Code that's `--strict-mcp-config`; on Codex, Dazza lists the servers Codex would load (`codex mcp list`) and switches off every one but its own for the run. Your personal MCP servers never reach a builder: the guard can't judge what a call to your email or database would do.
+
+The chat is different, because you're in the conversation. By default it can use the MCP servers you have in Claude Code or Codex (email, calendar, documents, trackers), so it can read the spec in your Drive or last week's call notes. On Claude Code, Dazza's guard approves those calls itself, since a headless run would otherwise refuse them. The chat is told to ask you before anything that sends, posts, changes, deletes or spends there. `/mcp off` switches them off.
 
 ## Why each task gets its own branch and worktree
 

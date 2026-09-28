@@ -26,6 +26,10 @@ export interface CommandContext {
   startBuild(): Promise<void>;
   /** Have Dazza write the progress (or close-out) report. */
   requestReport(): Promise<void>;
+  /** Summarise the conversation to free up room; says how it went. */
+  compact(): Promise<string>;
+  /** Whether Dazza is in the middle of a reply. */
+  chatting(): boolean;
   /** Whether a build is on, so work put back in the queue gets picked up by itself. */
   building(): boolean;
   /** Stop the build; the current task is paused. */
@@ -105,6 +109,45 @@ export const COMMANDS: Command[] = [
           ? `${paint.green('✔')} ${result.message} Run ${paint.bold('/build')} when you want me to start.`
           : result.message,
       );
+    },
+  },
+  {
+    name: 'mcp',
+    args: '[on|off]',
+    description:
+      'Your Claude Code or Codex MCP servers: list them, or switch them on or off for Dazza',
+    async run({ config, provider, store, say, status }, args) {
+      const choice = args.trim().toLowerCase();
+      if (choice === 'on' || choice === 'off') {
+        await config.updateSettings({ userMcp: choice === 'on' });
+        return say(
+          choice === 'on'
+            ? 'Dazza can use your MCP servers again, from your next message. Builders never get them.'
+            : 'Dazza won’t use your MCP servers. /mcp on switches them back on.',
+        );
+      }
+      const on = (await config.readSettings()).userMcp !== false;
+      status(`Checking your ${provider.name} MCP servers`);
+      const servers = await provider.listMcpServers(store.root).finally(() => status(undefined));
+      if (servers.length === 0) {
+        return say(`You have no MCP servers set up in ${provider.name}.`);
+      }
+      say(
+        [
+          `Your ${provider.name} MCP servers, which Dazza ${on ? 'can use in our conversation' : 'isn’t using (/mcp on)'}:`,
+          ...servers.map((s) => `  ${s.name} ${paint.dim(`· ${s.status}`)}`),
+          paint.dim(
+            `Builders don’t get these. Add or sign in to servers in ${provider.name} itself.${on ? ' /mcp off switches them off here.' : ''}`,
+          ),
+        ].join('\n'),
+      );
+    },
+  },
+  {
+    name: 'compact',
+    description: 'Summarise our conversation to free up room, like /compact in Claude Code',
+    async run({ compact, say }) {
+      say(await compact());
     },
   },
   {
@@ -203,9 +246,26 @@ export const COMMANDS: Command[] = [
     name: 'new',
     aliases: ['clear'],
     description: 'Start a fresh conversation (the plan and board stay as they are)',
-    async run({ store, say }) {
-      await store.clearManagerSession();
-      say('Fresh conversation. The plan and the board are as they were. What’s next?');
+    async run({ store, say, chatting }) {
+      if (chatting()) return say('I’m still replying. Try /new once I’ve answered.');
+      await store.newConversation();
+      say(
+        'Fresh conversation. The plan and the board are as they were. What’s next? ' +
+          paint.dim('(/continue goes back to the last one.)'),
+      );
+    },
+  },
+  {
+    name: 'continue',
+    aliases: ['resume'],
+    description: 'Pick up our last conversation, like dazza --continue',
+    async run({ store, provider, say, chatting }) {
+      if (chatting()) return say('I’m still replying. Try /continue once I’ve answered.');
+      say(
+        (await store.continueConversation(provider.id))
+          ? 'Back to our last conversation. Carry on where we left off.'
+          : 'There’s no earlier conversation here to go back to.',
+      );
     },
   },
   {
@@ -315,8 +375,8 @@ export function commandMenu(text: string): MenuItem[] {
 const HELP_GROUPS: [string, string[]][] = [
   ['The work', ['build', 'stop', 'status', 'tasks', 'next', 'parallel']],
   ['Reviewing', ['review', 'try', 'accept', 'changes', 'diff', 'allow', 'deny', 'redo', 'cancel']],
-  ['The project', ['approve', 'scope', 'dashboard', 'report', 'new']],
-  ['Setup', ['model', 'usage', 'notify', 'slack', 'telegram', 'logout', 'help', 'exit']],
+  ['The project', ['approve', 'scope', 'dashboard', 'report', 'continue', 'new', 'compact']],
+  ['Setup', ['model', 'mcp', 'usage', 'notify', 'slack', 'telegram', 'logout', 'help', 'exit']],
 ];
 /** In the menu as you type, but not worth a row in /help. */
 const HELP_HIDDEN = new Set(['slack-disconnect', 'telegram-disconnect']);

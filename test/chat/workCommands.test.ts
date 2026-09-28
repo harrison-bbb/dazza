@@ -21,6 +21,8 @@ describe('work commands', () => {
       stopBuild: async () => {},
       status: () => {},
       building: () => false,
+      chatting: () => false,
+      compact: async () => '',
     } as unknown as CommandContext;
     return { ctx, said };
   }

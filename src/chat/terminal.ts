@@ -26,6 +26,8 @@ export interface ReadOptions {
   history?: readonly string[];
   /** Show typed characters as dots, for secrets. */
   mask?: boolean;
+  /** Esc on an empty line: stop what's replying, as in Claude Code. */
+  onInterrupt?: () => void;
 }
 
 export interface Choice<T> {
@@ -51,6 +53,8 @@ export class Terminal {
   private readonly statuses = new Map<string, { text: string; since: number }>();
   private statusTimer: NodeJS.Timeout | undefined;
   private frame = 0;
+  /** The line being read stops a reply on Esc, so the status line can say so. */
+  private interruptible = false;
   /** What's been pasted so far, while a paste is arriving. */
   private pasting: string | undefined;
   /** Keys typed while nothing was reading them, e.g. during a command. */
@@ -100,11 +104,12 @@ export class Terminal {
   private statusLine(): string | undefined {
     if (this.statuses.size === 0) return undefined;
     const now = Date.now();
-    const parts = [...this.statuses.values()].map(({ text, since }) => {
+    const parts = [...this.statuses.entries()].map(([key, { text, since }]) => {
       const seconds = Math.floor((now - since) / 1000);
       const elapsed =
         seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
-      return `${text} ${paint.dim(`· ${elapsed}`)}`;
+      const hint = key === 'chat' && this.interruptible ? ' · esc to interrupt' : '';
+      return `${text} ${paint.dim(`· ${elapsed}${hint}`)}`;
     });
     return `${paint.hex(BRAND, FRAMES[this.frame % FRAMES.length] ?? '')} ${parts.join(paint.dim('  ·  '))}`;
   }
@@ -120,6 +125,7 @@ export class Terminal {
 
     let state = initialState(options.history);
     const menuFor: MenuSource = options.menu ?? (() => []);
+    this.interruptible = options.onInterrupt !== undefined;
     const redraw = (showMenu = true) =>
       this.draw(
         layout(
@@ -138,6 +144,10 @@ export class Terminal {
       const onResize = () => redraw();
       stdout.on('resize', onResize);
       this.onKey = (key) => {
+        if (key.name === 'escape' && !state.text && options.onInterrupt) {
+          options.onInterrupt();
+          return;
+        }
         const outcome = reduce(state, key, menuFor);
         if (outcome.type === 'edit') {
           state = outcome.state;

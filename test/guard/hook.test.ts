@@ -24,6 +24,16 @@ describe('the guard hook', () => {
     });
   });
 
+  it('approves the chat’s calls to the user’s own MCP servers, but not a builder’s', async () => {
+    const call = (role: 'manager' | 'worker', tool: string) =>
+      runGuard(project.root, role, JSON.stringify({ tool_name: tool, tool_input: {} }));
+    const allowed = JSON.parse(await call('manager', 'mcp__claude_ai_Gmail__search_threads'));
+    expect(allowed.hookSpecificOutput.permissionDecision).toBe('allow');
+    // Dazza's own tools are pre-approved already; builders never get the user's servers.
+    expect(await call('manager', 'mcp__dazza__save_plan')).toBe('');
+    expect(await call('worker', 'mcp__claude_ai_Gmail__search_threads')).toBe('');
+  });
+
   it('lets normal work through without a word', async () => {
     expect(await bash('npm test')).toBe('');
   });

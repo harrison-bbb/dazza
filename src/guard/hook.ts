@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { isAllowed } from '../core/permissions.js';
 import { Store } from '../core/store.js';
+import { MCP_SERVER_NAME } from '../mcp/name.js';
 import { errorMessage } from '../util/text.js';
 import { type Decision, judge, patchedFiles } from './policy.js';
 
@@ -52,6 +53,10 @@ async function answer(
         : tasks.find((t) => t.status === 'building');
   const workspace = (task && (await store.readTaskBuild(task.id))?.dir) ?? store.root;
   const decision = judge({ tool, input }, { workspace });
+  // The chat using the user's own MCP servers (their email, docs, trackers):
+  // headless Claude Code would refuse tools nobody pre-approved, and server
+  // names aren't known until the session starts, so the guard approves them.
+  if (decision.kind === 'allow' && role === 'manager' && isUserMcp(tool)) return approve();
   if (decision.kind === 'allow') return '';
 
   // Codex's apply_patch carries the patch as its "command": that's an edit, not a command.
@@ -99,6 +104,16 @@ async function log(store: Store, taskId: string | undefined, message: string): P
       ...(taskId && { taskId }),
     })
     .catch(() => {});
+}
+
+function isUserMcp(tool: string): boolean {
+  return tool.startsWith('mcp__') && !tool.startsWith(`mcp__${MCP_SERVER_NAME}__`);
+}
+
+function approve(): string {
+  return JSON.stringify({
+    hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' },
+  });
 }
 
 function refuse(reason: string): string {

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3
+
+- **Feels like Claude Code.** The chat shows what it's doing as it goes: files it reads (grouped), web look-ups, your MCP tools, and changes to the plan. Builders' edits show a short diff again. Markdown links read as text. Esc stops Dazza's reply (not the build), and the spinner says so.
+- **Conversations like Claude Code's.** `dazza` starts a new conversation; `/continue` or `dazza --continue` picks up the last one, and nothing is lost switching between them. `/compact` summarises the conversation with Claude Code's or Codex's own compaction, and automatic compactions show up in the chat.
+- **Your MCP servers.** Dazza's chat can use the MCP servers you have in Claude Code or Codex (your email, calendar, docs, trackers), found as needed so they don't bloat each message. It asks before anything that sends, posts or changes something there. `/mcp` lists them; `/mcp off` switches them off. Builders never get them.
+- Dazza no longer tells the model a folder is empty when it has files but no code yet.
+
 ## 0.1.2
 
 - **Web access.** Dazza's chat can search the web and read pages while scoping: current prices and free tiers, what a host supports, library versions, and any link you paste. Builders keep theirs, and can once again watch and stop what they run in the background (like a dev server) and edit Jupyter notebooks. On Codex, web search is now live rather than a cached index.

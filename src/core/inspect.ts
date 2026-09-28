@@ -69,7 +69,8 @@ export async function inspectCodebase(root: string): Promise<Codebase | undefine
   };
   await walk(root);
 
-  if (counts.size === 0) return undefined;
+  // Files but no code (a package.json, a README): not empty, and worth saying so.
+  if (files === 0) return undefined;
   const languages = [...counts.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 2)
@@ -80,6 +81,10 @@ export async function inspectCodebase(root: string): Promise<Codebase | undefine
 
 export function describeCodebase(codebase: Codebase): string {
   const size = codebase.files >= MAX_FILES ? `${MAX_FILES}+ files` : `${codebase.files} files`;
+  if (codebase.languages.length === 0) {
+    const files = codebase.files === 1 ? '1 file' : size;
+    return `a folder with ${files} and no code yet${codebase.name ? ` (${codebase.name})` : ''}`;
+  }
   const what = `${codebase.languages.join(' and ')} project`;
   return codebase.name ? `a ${what} (${codebase.name}, ${size})` : `a ${what} (${size})`;
 }

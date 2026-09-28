@@ -1,6 +1,9 @@
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import { z } from 'zod';
 import pkg from '../../package.json' with { type: 'json' };
 import type { Connection } from '../core/config.js';
+import { resolveCommand } from '../util/command.js';
 import { execCommand, runInteractive, shellCommand, spawnLines } from '../util/process.js';
 import { capitalize, parseJson } from '../util/text.js';
 import { classifyError, isHopeless } from './errors.js';
@@ -9,6 +12,7 @@ import type {
   AgentEvent,
   AgentProvider,
   AgentRunOptions,
+  Compacted,
   ModelOption,
   ProviderStatus,
   UsageWindow,
@@ -161,6 +165,61 @@ export class CodexProvider implements AgentProvider {
     if (!parser.finished) throw new Error('Codex exited without finishing its turn');
   }
 
+  /** From `codex mcp list --json`. */
+  async listMcpServers(cwd: string): Promise<{ name: string; status: string }[]> {
+    const listed = await execCommand(this.bin, ['mcp', 'list', '--json'], this.env(), cwd);
+    const parsed = McpList.safeParse(parseJson(listed?.stdout ?? ''));
+    return parsed.success
+      ? parsed.data.map((s) => ({ name: s.name, status: s.enabled ? 'Enabled' : 'Disabled' }))
+      : [];
+  }
+
+  /**
+   * Compact a conversation through Codex's app-server, as `/compact` does in
+   * Codex's terminal: load the thread, ask for `thread/compact/start`, and wait
+   * for that turn to finish.
+   */
+  async compact(sessionId: string, cwd: string, signal?: AbortSignal): Promise<Compacted> {
+    const launch = resolveCommand(this.bin, ['app-server'], { env: this.env() });
+    const child = spawn(launch.command, launch.args, {
+      cwd,
+      env: this.env(),
+      stdio: ['pipe', 'pipe', 'ignore'],
+      ...(launch.shell && { shell: true }),
+    });
+    const send = (message: object) => child.stdin.write(`${JSON.stringify(message)}\n`);
+    const stop = () => child.kill();
+    signal?.addEventListener('abort', stop);
+    const timer = setTimeout(stop, COMPACT_TIMEOUT_MS);
+    try {
+      send({
+        method: 'initialize',
+        id: 1,
+        params: {
+          clientInfo: { name: 'dazza', title: 'Dazza', version: pkg.version },
+          capabilities: null,
+        },
+      });
+      send({ method: 'initialized' });
+      send({ method: 'thread/resume', id: 2, params: { threadId: sessionId } });
+      for await (const line of createInterface({ input: child.stdout, crlfDelay: Infinity })) {
+        const message = RpcMessage.safeParse(parseJson(line));
+        if (!message.success) continue;
+        const { id, method, error } = message.data;
+        if (error) throw new Error(`Codex couldn’t compact the conversation: ${error.message}`);
+        // Loaded: now compact it.
+        if (id === 2)
+          send({ method: 'thread/compact/start', id: 3, params: { threadId: sessionId } });
+        if (method === 'turn/completed') return { type: 'compacted', trigger: 'manual' };
+      }
+      throw new Error('Codex stopped before it finished compacting the conversation.');
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', stop);
+      stop();
+    }
+  }
+
   /**
    * What to check before a run, and the extra flags it needs: returns what's
    * wrong, if anything, or the MCP servers of the user's to switch off.
@@ -171,8 +230,12 @@ export class CodexProvider implements AgentProvider {
       options.mcpServers ? this.otherMcpServers(options.cwd, options.mcpServers) : [],
     ]);
     if (hooks) return hooks;
-    if (typeof servers === 'string') return servers;
-    return { disableMcpServers: servers };
+    if (typeof servers === 'string') {
+      // Only a problem if they're to be switched off; the chat keeps them.
+      return options.userMcp ? {} : servers;
+    }
+    // The chat keeps the user's servers, pre-approved like Dazza's own; builders don't get them.
+    return options.userMcp ? { approveMcpServers: servers } : { disableMcpServers: servers };
   }
 
   /**
@@ -288,11 +351,13 @@ const GUARD_TIMEOUT_SECONDS = 60;
 export interface CodexExtras {
   /** MCP servers from the user's config to switch off for this run. */
   disableMcpServers?: string[];
+  /** The user's own MCP servers, kept and pre-approved (for the chat). */
+  approveMcpServers?: string[];
 }
 
 export function buildCodexArgs(
   options: Omit<AgentRunOptions, 'prompt'>,
-  { disableMcpServers = [] }: CodexExtras = {},
+  { disableMcpServers = [], approveMcpServers = [] }: CodexExtras = {},
 ): string[] {
   // Live web search: Codex's default is a cached index, too stale for prices and versions.
   const args = ['exec', '--json', '--skip-git-repo-check', '-c', 'web_search="live"'];
@@ -327,6 +392,9 @@ export function buildCodexArgs(
     );
   }
   for (const name of disableMcpServers) args.push('-c', `mcp_servers.${name}.enabled=false`);
+  for (const name of approveMcpServers) {
+    args.push('-c', `mcp_servers.${name}.default_tools_approval_mode="approve"`);
+  }
   if (options.resumeSessionId) args.push('resume', options.resumeSessionId);
   args.push('-');
   return args;
@@ -454,6 +522,9 @@ function itemCompleted(item: CodexItem): AgentEvent[] {
       }));
     case 'web_search':
       return [{ type: 'tool_use', id: item.id, tool: 'WebSearch', input: { query: item.query } }];
+    // Codex summarised the conversation by itself, having run low on room.
+    case 'context_compaction':
+      return [{ type: 'compacted', trigger: 'auto' }];
     default:
       return [];
   }
@@ -483,6 +554,7 @@ const CodexItem = z.discriminatedUnion('type', [
     error: z.unknown().optional(),
   }),
   z.object({ id: z.string(), type: z.literal('web_search'), query: z.string() }),
+  z.object({ id: z.string(), type: z.literal('context_compaction') }),
   z.object({ id: z.string(), type: z.enum(['reasoning', 'todo_list', 'error']) }),
 ]);
 type CodexItem = z.infer<typeof CodexItem>;
@@ -498,6 +570,16 @@ const CodexLine = z.discriminatedUnion('type', [
   }),
   z.object({ type: z.literal('turn.failed'), error: z.object({ message: z.string() }) }),
 ]);
+
+/** How long a compaction may take: it's a model call, summarising the conversation. */
+const COMPACT_TIMEOUT_MS = 5 * 60_000;
+
+/** Replies and notifications from the app-server. */
+const RpcMessage = z.object({
+  id: z.number().optional(),
+  method: z.string().optional(),
+  error: z.object({ message: z.string() }).optional(),
+});
 
 const RpcReply = z.object({
   id: z.number().optional(),

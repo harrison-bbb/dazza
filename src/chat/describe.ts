@@ -11,12 +11,23 @@ export interface GreetingContext {
   hasConversation?: boolean;
   /** The code already in the directory, described in a few words. */
   codebase?: string;
+  /** There's an earlier conversation `/continue` can go back to. */
+  canContinue?: boolean;
   /** For Slack or Telegram: no terminal commands, and the board is on their computer. */
   remote?: boolean;
 }
 
 /** What to tell the user when they open `dazza`, based on where the project is at. */
 export function greeting(plan: Plan | undefined, context: GreetingContext = {}): string {
+  const opening = greetingFor(plan, context);
+  // A new conversation, with an earlier one to go back to.
+  if (!context.canContinue || context.remote || context.hasConversation) return opening;
+  return plan
+    ? `${opening}\n${paint.dim('New conversation. /continue picks up the last one.')}`
+    : 'New conversation. We were talking last time: /continue picks that back up, or tell me what we’re building.';
+}
+
+function greetingFor(plan: Plan | undefined, context: GreetingContext): string {
   if (!plan) {
     if (context.remote) return NO_PLAN;
     if (context.hasConversation)

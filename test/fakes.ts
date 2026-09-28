@@ -7,6 +7,21 @@ import type {
 
 /** An in-memory provider: records runs and replays canned events. */
 export class FakeProvider implements AgentProvider {
+  /** Compaction, as the provider reports it; tests set what comes back. */
+  compacted: { before?: number; after?: number } = { before: 50_000, after: 2_000 };
+  compactions: string[] = [];
+
+  mcpServers = [{ name: 'claude.ai Gmail', status: 'Connected' }];
+
+  async listMcpServers() {
+    return this.mcpServers;
+  }
+
+  async compact(sessionId: string) {
+    this.compactions.push(sessionId);
+    return { type: 'compacted' as const, trigger: 'manual' as const, ...this.compacted };
+  }
+
   readonly id = 'claude';
   readonly name = 'Fake';
   readonly runs: AgentRunOptions[] = [];

@@ -186,4 +186,59 @@ describe('ChatSession', () => {
     expect(said).toContain('Plan’s saved.');
     expect(said.join('\n')).not.toContain('Fixing');
   });
+
+  it('shows what Dazza reads and looks up as it goes, like Claude Code', async () => {
+    const printed: string[] = [];
+    const events: AgentEvent[] = [
+      { type: 'started', sessionId: 's', model: 'fake' },
+      { type: 'tool_use', id: 'a', tool: 'Read', input: { file_path: `${project.root}/a.ts` } },
+      { type: 'tool_use', id: 'b', tool: 'Read', input: { file_path: `${project.root}/b.ts` } },
+      { type: 'tool_use', id: 'c', tool: 'WebSearch', input: { query: 'neon free tier' } },
+      { type: 'text', text: 'Neon’s free tier covers this.' },
+      { type: 'finished', ok: true, output: '', sessionId: 's', durationMs: 1 },
+    ];
+    const chat = new ChatSession({
+      store: project.store,
+      config: project.config,
+      provider: new FakeProvider(events),
+      manager: new Manager({
+        store: project.store,
+        config: project.config,
+        provider: new FakeProvider(events),
+        projectRoot: project.root,
+        mcpServer: { command: 'node', args: [] },
+      }),
+      workerMcp: { command: 'node', args: [] },
+      boardUrl: 'http://localhost:4777',
+      output: { say: () => {}, print: (text) => printed.push(stripAnsi(text)), status: () => {} },
+    });
+    chat.send('is neon free?');
+    await chat.idle();
+    expect(printed.join('\n')).toBe('  • Read 2 files\n  • Look up neon free tier');
+  });
+
+  it('compacts the conversation with the agent’s own /compact, and says how much room it made', async () => {
+    const provider = new FakeProvider();
+    const chat = new ChatSession({
+      store: project.store,
+      config: project.config,
+      provider,
+      manager: new Manager({
+        store: project.store,
+        config: project.config,
+        provider,
+        projectRoot: project.root,
+        mcpServer: { command: 'node', args: [] },
+      }),
+      workerMcp: { command: 'node', args: [] },
+      boardUrl: 'http://localhost:4777',
+      output: { say: () => {}, print: () => {}, status: () => {} },
+    });
+    expect(await chat.compact()).toMatch(/^Nothing to compact yet/);
+    await project.store.writeManagerSession('session-1', 'claude');
+    expect(await chat.compact()).toBe(
+      'Compacted our conversation (50k → 2k tokens). The plan and the board are as they were.',
+    );
+    expect(provider.compactions).toEqual(['session-1']);
+  });
 });

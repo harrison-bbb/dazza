@@ -107,10 +107,13 @@ Just type to talk to Dazza, about anything in the project. Type `/` for commands
 | `/dashboard`, `/scope` | Open the board, or the scope document |
 | `/report` | A progress report, or the close-out at the end |
 | `/new` | Start a fresh conversation. The plan and board stay as they are |
+| `/continue` | Pick up the last conversation (`dazza --continue` starts there). Each `dazza` starts a new one |
+| `/compact` | Summarise the conversation to free up room, with Claude Code's or Codex's own compaction |
 
 | Setup | |
 |---|---|
 | `/model`, `/usage` | Switch models; see your plan's limits or API spend |
+| `/mcp [on\|off]` | The MCP servers you have in Claude Code or Codex. Dazza's chat can use them (builders can't) |
 | `/notify on\|off` | Desktop notifications when a task needs you (on by default) |
 | `/slack`, `/telegram` | Connect (or check) Slack or Telegram. `-disconnect` to unlink |
 | `/logout`, `/help`, `/exit` | |

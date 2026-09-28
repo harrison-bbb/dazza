@@ -11,9 +11,18 @@ export interface AgentProvider {
    * provider can (Codex can; Claude Code only reports them during a run).
    */
   readLimits?(): Promise<UsageWindow[] | undefined>;
+  /** The MCP servers the user has set up in the CLI itself, with how each is doing. */
+  listMcpServers(cwd: string): Promise<{ name: string; status: string }[]>;
   /** Hand the terminal to the CLI's own sign-in. */
   signIn(): Promise<void>;
+  /**
+   * Compact a conversation with the CLI's own compaction, as `/compact` does in
+   * its terminal: summarised, so it takes less room and costs less per turn.
+   */
+  compact(sessionId: string, cwd: string, signal?: AbortSignal): Promise<Compacted>;
 }
+
+export type Compacted = Extract<AgentEvent, { type: 'compacted' }>;
 
 export interface ModelOption {
   /** What to pass as `model` when running. */
@@ -53,8 +62,13 @@ export interface AgentRunOptions {
    * cheaper. Leave out for the CLI's full set.
    */
   tools?: string[];
-  /** The only MCP servers the session may use, keyed by server name. */
+  /** Dazza's MCP servers for the session, keyed by server name. */
   mcpServers?: Record<string, McpServerConfig>;
+  /**
+   * Also the MCP servers the user has set up in the agent CLI itself. Otherwise
+   * the session gets Dazza's alone.
+   */
+  userMcp?: boolean;
   /**
    * Let the agent edit files and run commands without asking, with the
    * provider's own safety checks blocking risky actions.
@@ -79,6 +93,11 @@ export type AgentEvent =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; tool: string; input: unknown }
   | { type: 'tool_result'; id: string; ok: boolean }
+  /**
+   * The conversation was compacted: summarised to free up room, asked for
+   * (manual) or because it was getting full (auto). Sizes in tokens, when known.
+   */
+  | { type: 'compacted'; trigger: 'manual' | 'auto'; before?: number; after?: number }
   /** The CLI is retrying a failed API call itself. */
   | { type: 'retry'; attempt: number; maxRetries: number; reason: string }
   | {

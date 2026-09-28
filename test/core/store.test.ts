@@ -76,3 +76,33 @@ describe('Store', () => {
     expect(events.map((e) => e.message)).toEqual(['a', 'b']);
   });
 });
+
+describe('conversations', () => {
+  const project = useTempProject();
+
+  it('starts a new one each time, and /continue goes back to the last, losing nothing', async () => {
+    const { store } = project;
+    await store.writeManagerSession('monday', 'claude');
+    // A new launch: a new conversation, with Monday's kept to go back to.
+    await store.newConversation();
+    expect(await store.readManagerSession('claude')).toBeUndefined();
+    expect(await store.hasPreviousConversation('claude')).toBe(true);
+    // Opening Dazza and closing it again without a word keeps Monday's.
+    await store.newConversation();
+    expect(await store.hasPreviousConversation('claude')).toBe(true);
+    // Chat a little, then change your mind: the two swap, nothing is lost.
+    await store.writeManagerSession('tuesday', 'claude');
+    expect(await store.continueConversation('claude')).toBe(true);
+    expect(await store.readManagerSession('claude')).toBe('monday');
+    expect(await store.continueConversation('claude')).toBe(true);
+    expect(await store.readManagerSession('claude')).toBe('tuesday');
+  });
+
+  it('won’t go back to another agent’s conversation', async () => {
+    const { store } = project;
+    await store.writeManagerSession('codex-thread', 'codex');
+    await store.newConversation();
+    expect(await store.continueConversation('claude')).toBe(false);
+    expect(await store.continueConversation('codex')).toBe(true);
+  });
+});

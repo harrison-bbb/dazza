@@ -17,6 +17,11 @@ export const Settings = z.object({
   desktopNotifications: z.boolean().optional(),
   /** How many independent tasks to build at once (1–3). Unset means 2. */
   parallelTasks: z.number().int().min(1).max(3).optional(),
+  /**
+   * The chat can use the MCP servers the user has in Claude Code or Codex
+   * (email, calendar, docs, trackers). Unset means on. Builders never get them.
+   */
+  userMcp: z.boolean().optional(),
   /** The user chose not to connect Slack or Telegram during onboarding; don't ask again. */
   messagingSkipped: z.boolean().optional(),
 });

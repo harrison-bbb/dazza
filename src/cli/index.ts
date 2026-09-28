@@ -12,7 +12,10 @@ const program = new Command()
   .name('dazza')
   .description('Stop operating your coding agent. Start managing it.')
   .version(pkg.version)
-  .action(async () => (await import('../chat/repl.js')).startChat(process.cwd()));
+  .option('-c, --continue', 'pick up the last conversation, instead of starting a new one')
+  .action(async ({ continue: resume }: { continue?: boolean }) =>
+    (await import('../chat/repl.js')).startChat(process.cwd(), { continue: resume === true }),
+  );
 
 program
   .command('doctor')

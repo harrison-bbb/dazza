@@ -1,7 +1,7 @@
 import { MANAGER_TOOLS, MCP_SERVER_NAME } from '../mcp/server.js';
 import type { ChannelId } from '../notify/channel.js';
 import managerPrompt from '../prompts/manager.md';
-import type { AgentEvent, AgentProvider, McpServerConfig } from '../providers/types.js';
+import type { AgentEvent, AgentProvider, Compacted, McpServerConfig } from '../providers/types.js';
 import type { Config } from './config.js';
 import { humanDuration, minutesLeft, sizeMinutes } from './estimates.js';
 import { milestoneProgress } from './milestones.js';
@@ -16,6 +16,12 @@ import { trackUsage } from './usage.js';
  * edits code, and nothing else to pay for.
  */
 const BUILT_IN_TOOLS = ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch'];
+/**
+ * With the user's own MCP servers on: Claude Code keeps their tools out of the
+ * context until needed, and ToolSearch is how it finds them. Loading them all
+ * upfront costs several times more per message.
+ */
+const TOOL_SEARCH = 'ToolSearch';
 /** Those, plus Dazza's own tools to plan and to change the project when the user asks. */
 const TOOLS = [...BUILT_IN_TOOLS, ...MANAGER_TOOLS];
 
@@ -73,6 +79,16 @@ export class Manager {
     }
   }
 
+  /**
+   * Compact the conversation with the agent CLI's own compaction. Undefined
+   * when there's no conversation yet.
+   */
+  async compact(signal?: AbortSignal): Promise<Compacted | undefined> {
+    const { store, provider, projectRoot } = this.options;
+    const sessionId = await store.readManagerSession(provider.id);
+    return sessionId ? provider.compact(sessionId, projectRoot, signal) : undefined;
+  }
+
   private async *run(
     message: string,
     sessionId: string | undefined,
@@ -80,7 +96,7 @@ export class Manager {
     from: ChannelId | undefined,
   ): AsyncGenerator<AgentEvent> {
     const { store, config, provider, projectRoot, mcpServer } = this.options;
-    const { model } = await config.readSettings();
+    const { model, userMcp = true } = await config.readSettings();
     const plan = await store.readPlan();
     // What the builders are doing right now, so "how's it going?" gets a real answer.
     const activity: Record<string, Activity[]> = {};
@@ -99,8 +115,9 @@ export class Manager {
       prompt: `<project-state>\n${state}\n</project-state>\n\n${message}`,
       cwd: projectRoot,
       systemPrompt: managerPrompt,
-      tools: BUILT_IN_TOOLS,
-      allowedTools: TOOLS,
+      tools: userMcp ? [...BUILT_IN_TOOLS, TOOL_SEARCH] : BUILT_IN_TOOLS,
+      allowedTools: userMcp ? [...TOOLS, TOOL_SEARCH] : TOOLS,
+      userMcp,
       mcpServers: { [MCP_SERVER_NAME]: mcpServer },
       ...(this.options.guard && { guard: this.options.guard }),
       ...(sessionId && { resumeSessionId: sessionId }),
