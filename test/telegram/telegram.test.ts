@@ -276,6 +276,7 @@ describe('notificationFor', () => {
       handoff: {
         summary: 'Built the editor.',
         howToVerify: [],
+        criteria: [],
         checks: [{ name: 'Tests', passed: true }],
         screenshots: ['T3/editor-desktop.png'],
         filesChanged: 5,

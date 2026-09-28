@@ -39,6 +39,7 @@ export function greeting(plan: Plan | undefined, context: GreetingContext = {}):
     current && `Building ${current.id} ${current.title}.`,
     waiting(withStatus('review'), 'waiting for your review'),
     waiting(withStatus('blocked'), 'blocked on you'),
+    withStatus('review').length + withStatus('blocked').length > 0 && '/review to go through them.',
     next && `Next up: ${next.id} ${next.title}. Run /build to start.`,
   ]
     .filter(Boolean)

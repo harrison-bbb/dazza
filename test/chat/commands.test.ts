@@ -103,6 +103,7 @@ describe('running commands', () => {
   const context = () => {
     const said: string[] = [];
     const linked: string[] = [];
+    const confirmAnswer = true;
     const provider = new FakeProvider(undefined, models);
     let exited = false;
     const ctx: CommandContext = {
@@ -114,6 +115,8 @@ describe('running commands', () => {
       boardUrl: 'http://localhost:4777',
       startBuild: async () => {},
       requestReport: async () => {},
+      stopBuild: async () => {},
+      confirm: async () => confirmAnswer,
       status: () => {},
       link: async (channel) => {
         linked.push(channel);

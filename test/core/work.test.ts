@@ -7,7 +7,6 @@ import type { Task } from '../../src/core/schema.js';
 import {
   blockTask,
   landApprovedWork,
-  pauseTask,
   prepareRepo,
   recoverInterruptedWork,
   setSubtaskStatus,
@@ -15,14 +14,10 @@ import {
   submitTask,
 } from '../../src/core/work.js';
 import { Git } from '../../src/git/git.js';
-import { makePlan, makeTask } from '../fixtures.js';
+import { makePlan, makeTask, workReport } from '../fixtures.js';
 import { useTempProject } from '../helpers.js';
 
-const report = {
-  summary: 'Did it',
-  howToVerify: ['Run it'],
-  checks: [{ name: 'Tests', passed: true }],
-};
+const report = { ...workReport, summary: 'Did it', checks: [{ name: 'Tests', passed: true }] };
 
 describe('building tasks', () => {
   const project = useTempProject();
@@ -112,6 +107,32 @@ describe('building tasks', () => {
     // The user's draft is still theirs, uncommitted, and the task's file isn't in their checkout.
     expect(await readFile(join(project.root, 'mine.txt'), 'utf8')).toBe('my draft');
     expect(existsSync(join(project.root, 'app.js'))).toBe(false);
+  });
+
+  it('won’t hand over secrets, local-only files, or a partial report on the criteria', async () => {
+    await git.init();
+    const build = await startTask(project.store, git, await task('T1'));
+    const dir = build.dir as string;
+    await writeFile(join(dir, 'pay.js'), `const key = 'sk_live_${'a'.repeat(24)}';`);
+    await writeFile(join(dir, '.env'), 'DATABASE_URL=postgres://prod');
+    await writeFile(join(dir, 'server.log'), 'GET / 200');
+    await writeFile(join(dir, '.env.example'), 'DATABASE_URL=');
+
+    const refused = await submitTask(project.store, 'T1', report);
+    expect(refused.ok).toBe(false);
+    expect(refused.message).toContain('pay.js contains a live Stripe key');
+    expect(refused.message).toContain('.env is an environment file with real settings');
+    expect(refused.message).toContain('server.log is a log file');
+    expect(refused.message).not.toContain('.env.example');
+    expect((await task('T1')).status).toBe('building');
+
+    await writeFile(join(dir, 'pay.js'), 'const key = process.env.STRIPE_SECRET_KEY;');
+    await writeFile(join(dir, '.gitignore'), '.env\n*.log\n');
+    expect(await submitTask(project.store, 'T1', { ...report, criteria: [] })).toMatchObject({
+      ok: false,
+    });
+    expect(await submitTask(project.store, 'T1', report)).toMatchObject({ ok: true });
+    expect((await task('T1')).handoff?.criteria).toEqual(report.criteria);
   });
 
   it('resumes where it left off, and recreates a worktree that was deleted', async () => {
@@ -270,7 +291,7 @@ describe('submitting twice', () => {
     const t1 = (await project.store.readPlan())?.tasks[0];
     if (!t1) throw new Error('missing');
     await startTask(project.store, git, t1);
-    const summary = { summary: 'x', howToVerify: ['y'] };
+    const summary = workReport;
     expect(await submitTask(project.store, 'T1', summary)).toMatchObject({ ok: true });
     expect(await submitTask(project.store, 'T1', summary)).toMatchObject({ ok: false });
     const submitted = (await project.store.readEvents()).filter((e) => e.type === 'task_submitted');

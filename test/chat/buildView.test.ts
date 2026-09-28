@@ -11,6 +11,7 @@ const plan = makePlan([
     handoff: {
       summary: 'Set it up.',
       howToVerify: [],
+      criteria: [],
       checks: [
         { name: 'Tests', passed: true },
         { name: 'Lint', passed: true },

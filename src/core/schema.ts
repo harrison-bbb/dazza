@@ -52,6 +52,10 @@ export const Handoff = z.object({
   /** The commit holding the submitted work. */
   commit: z.string().optional(),
   filesChanged: z.number().int().nonnegative().optional(),
+  /** Each acceptance criterion, in order: whether it's met and how that was checked. */
+  criteria: z
+    .array(z.object({ criterion: z.string(), met: z.boolean(), evidence: z.string() }))
+    .default([]),
   /** Automated checks Dazza ran, e.g. tests, lint, build. */
   checks: z.array(z.object({ name: z.string().min(1), passed: z.boolean() })).default([]),
   /** Screenshots of the finished work, when it has a UI worth showing. */

@@ -2,32 +2,57 @@
 
 > Stop operating your coding agent. Start managing it.
 
-Dazza is a harness around [Claude Code](https://docs.claude.com/en/docs/claude-code) or
-[Codex](https://github.com/openai/codex) that moves you from the operator's seat to the manager's.
-You talk through what you want to build. Dazza scopes it into tasks with clear acceptance criteria and
-shows you the plan on a local board. Once you approve it, Dazza works through the tasks like a
-contractor. It reports progress over Slack or Telegram, sends a handoff with screenshots when a milestone is
-done, and only interrupts you when it actually needs something.
+Dazza turns [Claude Code](https://docs.claude.com/en/docs/claude-code) or [Codex](https://github.com/openai/codex) into a contractor you manage, instead of a tool you operate. You describe what you want. Dazza scopes it into a plan you approve, builds it task by task on its own branches, and hands each piece over for review with evidence that it works. It asks before anything risky and only interrupts you when it needs a decision. You can run it from your terminal, a local board, or your phone.
 
-> **Status:** early development. This is being built in public over 30 days.
+> **Status:** early development, built in public. Expect rough edges, and please file issues.
 
-## How it works
+## What a project looks like
 
 ```
-you ──chat──▶ dazza ──scopes──▶ .dazza/ (scope + tasks) ──▶ localhost board (approve)
-                 │
-                 └─works──▶ claude / codex (headless, one git worktree per task)
-                              │
-                              └─reports──▶ Slack / Telegram (handoffs, blockers, approvals)
+› I want a booking app for my dog-walking business
+
+● Nice. A few questions first:
+  1. Who books: just clients, or do you assign walkers too?
+  …
+
+● Got enough to go on. Writing up the plan now, a few minutes.
+✔ Plan saved · 9 tasks · about 5½ hours of building
+  M1 Bookings · Clients can request walks and you approve them
+    T1  Project setup · S
+    T2  Client sign-up and dogs · M
+    …
+  Review it at http://localhost:4777 · approve there, here, or with /approve
+
+› looks good, approve it. /build
+
+● Building T1 · Project setup
+  on branch dazza/T1-project-setup · usually ~20 minutes · towards M1 Bookings · /stop to stop
+  …
+● T1 is ready for your review · all 4 criteria met · 6 files changed · 12 checks passed
+  /accept T1 to merge it · /changes T1 <what to change> · /try T1 to run it first
 ```
 
-- **No new coding brain.** Dazza orchestrates the `claude` or `codex` CLI you already use, with your existing login.
-- **Plain-file state.** Everything lives in `.dazza/` in your repo. You can read it, diff it and commit it.
-- **Safe by default.** Each task is built in its own worktree, on its own branch, so your checkout is never touched. Nothing merges until you approve it.
+1. **Scoping is a conversation.** Dazza reads your code first if there is any, asks a few questions at a time, and makes sensible calls on anything you don't care about. It asks what's live (real users, data or money) before planning.
+2. **The plan is a real spec.** It has a scope document (users, flows, data model, what's in and out, decisions, risks, guardrails) and tasks with clear descriptions, subtasks, checkable acceptance criteria and a size. Bigger plans are grouped into milestones, each a stage you can actually try. It all shows on a local board.
+3. **Building happens beside you, not over you.** Each task is built in its own git worktree, on its own branch, so your checkout is never touched. Keep working, uncommitted changes and all.
+4. **Every handoff comes with proof.** The builder reports on each acceptance criterion with evidence: the test, the command and what it showed. Dazza won't accept a handoff that contains secrets or files that shouldn't be committed. You review, then `/accept` to merge or `/changes` to send it back.
+5. **You're only interrupted for real decisions.** Blocked tasks ask one clear question and the build moves on. Answer from anywhere, and it picks the task back up.
+6. **Milestones and a close-out.** When a stage is done, Dazza tells you what it delivered. At the end, it writes a report: what was built, what changed along the way, how to run it, and what's next.
 
-## Try it
+## Get started
 
-You need Node 22 or later. Dazza drives [Claude Code](https://docs.claude.com/en/docs/claude-code) or [Codex](https://github.com/openai/codex), whichever you use. Install at least one. The first run asks how to connect:
+You need Node 22+ and [Claude Code](https://docs.claude.com/en/docs/claude-code) or [Codex](https://github.com/openai/codex) installed and signed in.
+
+```sh
+git clone https://github.com/harrison-bbb/dazza && cd dazza
+pnpm install && pnpm build && npm link
+
+cd ~/your-project
+dazza doctor   # checks everything's ready
+dazza          # start talking
+```
+
+The first run asks how Dazza should reach the AI, then offers to link Slack or Telegram:
 
 | Connection | Agent | Pays through |
 |---|---|---|
@@ -36,110 +61,111 @@ You need Node 22 or later. Dazza drives [Claude Code](https://docs.claude.com/en
 | ChatGPT subscription | Codex | your Plus or Pro plan |
 | OpenAI API key | Codex | pay as you go |
 
-On a subscription, Dazza uses the agent CLI's own sign-in, and strips stray API keys from its environment so billing can't switch without you knowing.
+On a subscription, Dazza uses the agent CLI's own sign-in. It strips any API key or other billing setting in your shell from the agent's environment, so billing can't quietly switch.
 
-```sh
-pnpm install && pnpm build && npm link
-cd ~/some-project
-dazza doctor   # check everything's ready
-dazza          # start talking
-```
+## Commands
 
-The first time you run it, Dazza asks which of those four to use, then offers to link Slack or Telegram so it can reach you when you're away.
+Just type to talk to Dazza, about anything in the project. Type `/` for commands; they're instant and cost nothing.
 
-Just type to talk to Dazza. Type `/` for commands:
-
-| Command | What it does |
+| The work | |
 |---|---|
 | `/build` | Build the approved plan, task by task, showing the work as it happens |
-| `/dashboard` | Open the project board in your browser |
+| `/stop` | Stop building. The current task picks up where it left off |
 | `/status` | Where the project is at |
+| `/tasks` | Every task, by milestone, with status and size |
+| `/next T7` | Build T7 next (it still waits for what it depends on) |
+
+| Reviewing | |
+|---|---|
+| `/review` | Everything waiting on you, and what to do about each |
+| `/accept T3` | Approve T3; it merges into your branch |
+| `/changes T3 <note>` | Send T3 back with what to change |
+| `/try T3` | Where to run T3's work before approving it |
+| `/diff T3` | What T3 changed, file by file |
+| `/allow T3`, `/deny T3` | Answer T3's request to run a command that needs your OK |
+| `/cancel T5` | Drop a task (asks you to confirm first) |
+
+| The project | |
+|---|---|
 | `/approve` | Approve the drafted plan |
-| `/report` | Write up where the project is: a progress report, or the close-out at the end |
-| `/model [name or number]` | List the models your account can use, or switch |
-| `/usage` | Session and weekly limits on a subscription (live on Codex), or spend on an API key |
-| `/slack` | See your Slack link, or connect Slack |
-| `/slack-disconnect` | Unlink Slack, then link it again if you like |
-| `/telegram` | See your Telegram link, or connect Telegram |
-| `/telegram-disconnect` | Unlink your bot and link a new one |
-| `/new` | Start a fresh conversation; the plan and board stay as they are |
-| `/logout` | Sign out of Dazza; your Claude Code or Codex sign-in is untouched |
-| `/help`, `/exit` | |
+| `/dashboard`, `/scope` | Open the board, or the scope document |
+| `/report` | A progress report, or the close-out at the end |
+| `/new` | Start a fresh conversation. The plan and board stay as they are |
 
-While Dazza runs, a project board is served at `http://localhost:4777`: a dashboard, the scope document, the task list, and a page for every task and subtask with a comment thread shared with Dazza. It opens when your first plan is ready and updates live. Tasks move through backlog → planned → building → in review (or blocked). Only you close or cancel them, so nothing is done until you say so. Run `dazza board` to open it without starting a chat.
+| Setup | |
+|---|---|
+| `/model`, `/usage` | Switch models; see your plan's limits or API spend |
+| `/slack`, `/telegram` | Connect (or check) Slack or Telegram. `-disconnect` to unlink |
+| `/logout`, `/help`, `/exit` | |
 
-### Building
+The board runs at `http://localhost:4777` while Dazza is open. It has the dashboard, milestones, the scope and its change log, every task with its handoff and evidence, and comment threads shared with Dazza. `dazza board` opens it without starting a chat.
 
-`/build` works through the plan in dependency order. Each task is built on its own branch (`dazza/T3-…`), in its own checkout (a git worktree) so yours is never touched, by Claude Code in [auto mode](https://docs.claude.com/en/docs/claude-code), which runs edits and commands without asking while its safety checks block risky actions. You see the narration, every edit (with a short diff) and every command as they happen. When a task is done Dazza commits it and moves it to **in review**. If Claude needs a decision or a credential, the task goes to **blocked** with the question, and Dazza moves on to the next task. Answer it from anywhere (here, the board, Slack or Telegram) and the task goes back in the queue; if the build had run out of work, it starts again by itself. Keep working while it builds, uncommitted changes and all. To try a task before approving it, `cd` into its worktree (the review shows where). Approving a task merges it into your branch, in dependency order; if it can't (it conflicts, or you have uncommitted changes on that branch), Dazza says so and tries again next build. Requesting changes sends it back, and the next `/build` picks it up with your note. Ctrl-C stops cleanly, and the task resumes next time.
+## Safe to point at real work
 
-While it builds you can keep talking to Dazza in the terminal. Comments you leave on the board, or instructions you give in the chat, reach the build at its next check-in.
+Dazza's builder works like a careful engineer on someone else's systems. On Claude Code, every command and file access goes through **Dazza's guard** before it runs:
 
-### Safe to point at real work
-
-Dazza's builder works like a careful engineer on someone else's systems. On Claude Code, every command and file access goes through Dazza's guard before it runs:
-
-- **Never, even if asked:** pushing to a remote, deploying or publishing, `sudo`, touching credential files, writing or deleting outside the task's own worktree, switching branches, changing cloud or cluster resources.
-- **Asks you first:** remote databases, deleting data, sending changes to outside services (a POST to a live API), installing things machine-wide. The builder asks with the exact command and why, and you allow or refuse it from the chat, the board, or a button on Slack or Telegram. Allowing covers that one command, for that one task.
+- **Never, even if asked:** pushing, deploying or publishing, `sudo`, credential files, anything outside the task's worktree, switching branches, changing cloud or cluster resources.
+- **Asks you first:** remote databases, deleting data, sending changes to outside services, machine-wide installs. The builder asks with the exact command and why. You answer with `/allow`, `/deny`, the board, or a button on your phone. Allowing covers that one command for that one task.
 - **Just works:** everything else inside the task's worktree.
 
-Everything the guard stops is logged on the task. The scoping conversation also asks what's live (real users, data, money) and writes guardrails into the plan. See [docs/security.md](docs/security.md) for the full rules and their limits.
+Before any handoff is committed, Dazza checks it the way a reviewer would: no secrets (live keys, private keys, tokens), no `.env` files, logs or `node_modules`, and nothing enormous. Background processes the builder started (say, a dev server) are stopped when its run ends. Everything the guard stops is logged on the task. [docs/security.md](docs/security.md) has the full rules, and their limits.
 
-### When things go wrong
+## Plans change
 
-Builds are meant to run while you're away, so Dazza handles the usual failures itself:
+Ask "can we do X instead?", "add Y", or "we don't need T9", and Dazza handles it like a good contractor handles a change request. It proposes first: which tasks it adds, changes or cancels, what already-built work it touches, and what it costs in time. Nothing changes until you say yes, and cancelling always gets a confirm. Then the tasks and the scope document are updated together, and the scope's change log records the new version, what changed, and why. Small edits ("rename T3", "do T7 next") just happen.
 
-- **Usage limit reached** (subscription): Dazza pauses the task and messages you with the reset time. When the limit lifts, it picks up the same session, as long as Dazza is still open.
-- **Out of API credit, or a rejected key:** Dazza stops straight away, instead of letting Claude Code retry for minutes, and tells you what to do.
-- **Anthropic overloaded:** Dazza backs off and retries.
-- **Claude Code crashes:** Dazza retries once. If it crashes again, the task is blocked with the error.
-- **Dazza itself is killed** (terminal closed, laptop died): next time, the task goes back in the queue and resumes in its worktree, where its work was left.
-- **A stuck worker** (20 minutes of complete silence): Dazza stops it, blocks the task with an explanation, and moves on.
+## Away from your desk
 
-### Screenshots
+Link **Slack** or **Telegram** and Dazza reaches you while it builds. It's the same conversation as the terminal.
 
-Dazza takes screenshots when a picture helps, not for everything:
-- when you ask for one;
-- when it wants your opinion on UI it's building;
-- when it finishes UI work (they go in the handoff);
-- when it spots a visual problem.
+- **Notifications:** a task ready for review (with screenshots and the criteria results), a blocked task's question, a command waiting for your OK, a milestone reached, a build that stopped, a usage limit.
+- **Buttons:** Approve (with a confirm), Request changes, Allow once / Don't allow.
+- **Threads:** reply to a notification and Dazza knows which task you mean.
+- **Slack extras:** a Home tab with the whole project, and `/dazza status|build|stop` from anywhere. Setup takes about two minutes, with no server; it uses Socket Mode.
 
-It starts your app if it isn't running (your `dev`, `start` or `preview` script, or plain HTML), and captures crisp desktop or phone views with the Chrome you already have. Screenshots show up on the board, and arrive in Slack or Telegram.
+Only you are listened to. Messages from anyone else are ignored.
 
-### Slack
+## When things go wrong
 
-Onboarding offers to link Slack (or run `/slack` later). Setup takes about two minutes and needs no server: Dazza opens Slack's "create app" page with everything filled in, you install it to your workspace and paste two tokens, then send the app a message so Dazza knows who you are. After that, while Dazza is open:
+- **Usage limit reached:** the task pauses and resumes the same session when the limit resets.
+- **Out of credit, or a rejected key:** it stops straight away and says what to do.
+- **Overloaded service:** it backs off and retries. **The agent CLI crashes:** it retries once, then blocks the task with the error.
+- **Dazza is killed** (terminal closed, laptop died): the task resumes in its worktree next time.
+- **Lost conversation** (Claude Code deletes old sessions): it starts a fresh one, and the plan is unaffected.
+- **A stuck builder** (20 minutes of silence): it stops it, explains, and moves on.
 
-- **Dazza DMs you** when a task is ready for review or blocked, when a build stops, and when you hit a usage limit. Screenshots go in the thread under each notification.
-- **Approve or send work back from Slack.** Review notifications have **Approve** and **Request changes** buttons. Requesting changes asks what to change, and the next build works from your note.
-- **Talk to it in the DM**, like the terminal: it’s the same conversation. 👀 means it’s on it, ✅ means it has answered. Reply in a notification's thread and Dazza knows which task you mean.
-- **The Home tab** shows the project at a glance: progress, what needs you, and every task, with buttons to start or stop the build.
-- **`/dazza status`, `/dazza build` and `/dazza stop`** work from anywhere in Slack.
+## How it works
 
-Dazza only listens to you: messages and clicks from anyone else in the workspace are ignored. It uses Socket Mode, so nothing on your machine is exposed to the internet. If you have Dazza open in two projects, the first one handles your Slack messages. Notifications from both still arrive.
+```
+you ──chat, board, phone──▶ dazza (manager session) ──▶ .dazza/ scope, tasks, events
+                                │
+                                └─ build loop ──▶ claude / codex, headless, one worktree per task
+                                                     │  every tool call through Dazza's guard
+                                                     └─ handoff ──▶ review ──▶ merge on approval
+```
 
-### Telegram
+- **No new coding brain.** Dazza orchestrates the agent CLI you already use, with your login.
+- **Plain files.** Project state is readable files in `.dazza/`, kept out of git.
+- **Typed protocol.** Agents talk to Dazza through its MCP tools, not by parsing prose.
 
-Onboarding also offers to link a Telegram bot (or run `/telegram` later). Create a bot with [@BotFather](https://t.me/BotFather), paste its token, and message the bot once so Dazza can find your chat. While Dazza is open it messages you when a task is ready for review or blocked, and when a build finishes. Review messages have **Approve** (with a confirm, since it merges) and **Request changes** buttons, and requesting changes asks what to change. Reply to a message and Dazza knows which task you mean; otherwise it's the same conversation as the terminal. `/status`, `/build` and `/stop` also work there. Dazza only accepts messages from your own chat.
+More in [docs/architecture.md](docs/architecture.md), [docs/providers.md](docs/providers.md) and [docs/security.md](docs/security.md).
 
-You can also run the project from the chat: "close T4", "unblock T5, tags are case-insensitive", "add a subtask to T3 for X", "move T8 to the backlog". Small edits like these apply straight away and show up on the board.
+## Limits
 
-Every task has a size (S, M or L: about 20, 45 or 90 minutes of building), and bigger plans are grouped into **milestones**: stages you can try, each with a goal like "clients can book and pay for a walk". The greeting and the board show which milestone Dazza is working towards and roughly how much building is left. When a milestone's last task is approved, Dazza tells you what it delivered and what's next (with screenshots on Slack or Telegram). Say "do T7 next" to change the order; if T7 is waiting on something else, Dazza says what.
-
-When every task is closed, Dazza writes a **close-out report**: what you have now, what was built, what changed along the way (from the change log), how to run it, known limits, and suggested next steps. It's on the board under Report. `/report` writes a progress report any time.
-
-Plans change, and Dazza handles that like a good contractor handles a change request. Ask "can we do X instead?" or "we don't need T9" and Dazza proposes the change first: which tasks it adds, changes or cancels, what already-built work it touches, and what it costs. Nothing changes until you say yes, and cancelling always gets a confirm. Then the tasks and the scope document are updated together, and the scope's **change log** records the new version, what changed, which tasks, and why. The builder reads the updated scope, so the work follows the change.
+- Dazza builds one task at a time, and only while it's open.
+- The guard is strongest on Claude Code. On Codex, the agent's own sandbox applies but Dazza's command rules don't.
+- Task sizes are estimates. The close-out report compares them with how long tasks actually took.
+- Deploying is deliberately yours: Dazza prepares the config and a checklist, and you do the final steps.
 
 ## Development
 
-Requires Node 22 and pnpm.
-
 ```sh
 pnpm install
-pnpm check   # lint + typecheck + test
+pnpm check   # lint + typecheck + tests
 pnpm build && node dist/cli.js
 ```
 
-For board UI work with hot reload, run `dazza board` in a project with a plan, then `pnpm dev:web`.
+Tests use recorded agent output and fake CLIs, never live model calls. For board work with hot reload, run `dazza board` in a project with a plan, then `pnpm dev:web`. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

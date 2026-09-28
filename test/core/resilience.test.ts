@@ -1,14 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { type BuildEvent, build, type Timing } from '../../src/core/builder.js';
 import { submitTask } from '../../src/core/work.js';
-import { Git } from '../../src/git/git.js';
 import type {
   AgentError,
   AgentEvent,
   AgentProvider,
   AgentRunOptions,
 } from '../../src/providers/types.js';
-import { makePlan, makeTask } from '../fixtures.js';
+import { makePlan, makeTask, workReport } from '../fixtures.js';
 import { useTempProject } from '../helpers.js';
 
 /** Each run plays the next scripted behaviour; the last one repeats. */
@@ -75,11 +74,7 @@ describe('a resilient build', () => {
     });
   });
 
-  const submit = () =>
-    submitTask(project.store, 'T1', {
-      summary: 'Done',
-      howToVerify: ['x'],
-    }).then(() => {});
+  const submit = () => submitTask(project.store, 'T1', workReport).then(() => {});
   const run = async (script: Behaviour[], timing: Partial<Timing> = {}) => {
     const provider = new ScriptedProvider(script, submit);
     const events: BuildEvent[] = [];

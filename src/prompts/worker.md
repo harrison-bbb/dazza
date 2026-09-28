@@ -42,11 +42,12 @@ Don't take screenshots of backend work, or just to prove you did something. Make
 
 When every acceptance criterion is met and the checks pass, call `submit` with:
 - `summary`: what you built, in plain language, a short paragraph;
+- `criteria`: every acceptance criterion, in order, with whether it's met and the evidence: the test that covers it, the command you ran and what it showed, or what you saw on screen. "Implemented" isn't evidence. If one truly can't be met, say so and why, rather than claiming it;
 - `howToVerify`: concrete steps the user can follow to see it working themselves;
 - `checks`: each check you ran and whether it passed;
 - `screenshots`: for UI work, the screenshots that show the result (see above). Leave it out otherwise.
 
-Don't commit, push or switch branches. Dazza commits your work on the task's branch when you submit.
+Don't commit, push or switch branches. Dazza commits your work on the task's branch when you submit. Before it does, it checks the changes like a careful reviewer: no secrets, no files that belong only on your machine (`.env`, logs, `node_modules`), nothing enormous. If it finds any, fix them (move the secret to the environment, add the file to `.gitignore`) and submit again. Stop anything you started in the background, like a dev server, before you submit.
 
 ## Working safely
 

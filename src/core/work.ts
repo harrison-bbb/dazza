@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { Git, taskBranch } from '../git/git.js';
 import type { ActionResult } from './actions.js';
+import { checkChanges } from './hygiene.js';
 import { findItem, withStatus } from './plan.js';
 import {
   type EventType,
@@ -31,6 +32,19 @@ export const WorkReport = z.object({
     .array(z.string().min(1))
     .min(1)
     .describe('Steps the user can follow to check it themselves.'),
+  criteria: z
+    .array(
+      z.object({
+        criterion: z.string().min(1).describe('The acceptance criterion, as written.'),
+        met: z.boolean(),
+        evidence: z
+          .string()
+          .min(1)
+          .describe('How you know: the test, command or check, and what it showed.'),
+      }),
+    )
+    .min(1)
+    .describe('Every acceptance criterion of the task, in order: met or not, and how you checked.'),
   checks: z
     .array(z.object({ name: z.string().min(1), passed: z.boolean() }))
     .default([])
@@ -206,8 +220,23 @@ export async function submitTask(
   if (!build || !current || current.subtask || current.task.status !== 'building')
     return notBuilding;
 
+  const expected = current.task.acceptanceCriteria.length;
+  if (parsed.data.criteria.length !== expected) {
+    return {
+      ok: false,
+      message: `Not handed over: ${taskId} has ${expected} acceptance criteria and you reported on ${parsed.data.criteria.length}. Report on each one, in order.`,
+    };
+  }
+
   // Commit outside the plan lock: hooks can be slow, and nothing else writes to this worktree.
   const tree = new Git(build.dir ?? store.root);
+  const problems = await checkChanges(tree, build.startCommit);
+  if (problems.length > 0) {
+    return {
+      ok: false,
+      message: `Not handed over yet. Fix these first, then submit again:\n${problems.map((p) => `- ${p}`).join('\n')}`,
+    };
+  }
   const commit = (await tree.commitAll(`${taskId}: ${current.task.title}`)) ?? (await tree.head());
   const handoff: Handoff = {
     ...parsed.data,

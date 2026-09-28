@@ -89,7 +89,13 @@ export async function notificationFor(
   const handoff = task.handoff;
   const checks = handoff?.checks ?? [];
   const failing = checks.filter((c) => !c.passed).length;
+  const criteria = handoff?.criteria ?? [];
+  const unmet = criteria.filter((c) => !c.met).length;
   const facts = [
+    criteria.length > 0 &&
+      (unmet
+        ? `${unmet} of ${criteria.length} criteria not met`
+        : `all ${criteria.length} criteria met`),
     handoff?.filesChanged !== undefined && plural(handoff.filesChanged, 'file', 'changed'),
     checks.length > 0 &&
       (failing ? `${plural(failing, 'failing check')}` : plural(checks.length, 'check', 'passed')),

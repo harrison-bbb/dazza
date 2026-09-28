@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 import { execCommand } from '../util/process.js';
 
@@ -139,6 +139,53 @@ export class Git {
     if ((await this.run(['diff', '--cached', '--quiet'])).ok) return undefined;
     await this.must(['commit', '-q', '-m', message]);
     return this.head();
+  }
+
+  /**
+   * Everything that would be committed, compared with `from` (commits made
+   * since included): stages the working tree first, as a commit would.
+   */
+  async stagedFiles(from: string): Promise<{ path: string; bytes: number }[]> {
+    await this.stageAll();
+    const names = await this.must(['diff', '--cached', '--name-only', '--diff-filter=AM', from]);
+    const files = names ? names.split('\n') : [];
+    return Promise.all(
+      files.map(async (path) => ({
+        path,
+        bytes: await stat(join(this.root, path)).then(
+          (s) => s.size,
+          () => 0,
+        ),
+      })),
+    );
+  }
+
+  /** Lines added since `from`, with their file, for checking what's being committed. */
+  async stagedAdditions(from: string): Promise<{ path: string; line: string }[]> {
+    await this.stageAll();
+    const diff = await this.must(['diff', '--cached', '--unified=0', '--no-color', from]);
+    const added: { path: string; line: string }[] = [];
+    let path = '';
+    for (const line of diff.split('\n')) {
+      if (line.startsWith('+++ ')) path = line.replace(/^\+\+\+ (b\/)?/, '');
+      else if (line.startsWith('+') && !line.startsWith('+++'))
+        added.push({ path, line: line.slice(1) });
+    }
+    return added;
+  }
+
+  /**
+   * Stage the working tree afresh, so files since added to .gitignore drop out
+   * (a plain `add -A` keeps anything already staged).
+   */
+  private async stageAll(): Promise<void> {
+    if (await this.hasCommits()) await this.must(['reset', '-q']);
+    await this.must(['add', '-A']);
+  }
+
+  /** A per-file summary of what changed between two commits, like `git diff --stat`. */
+  async diffStat(from: string, to: string): Promise<string> {
+    return this.must(['diff', '--stat', '--no-color', `${from}..${to}`]);
   }
 
   /** How many files differ between two commits. */

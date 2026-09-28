@@ -9,6 +9,7 @@ import { BRAND } from './banner.js';
 import { greeting } from './describe.js';
 import type { MenuItem } from './editor.js';
 import { paint } from './style.js';
+import { WORK_COMMANDS } from './workCommands.js';
 
 /** What a command can reach. Kept small so commands are easy to test. */
 export interface CommandContext {
@@ -23,6 +24,10 @@ export interface CommandContext {
   startBuild(): Promise<void>;
   /** Have Dazza write the progress (or close-out) report. */
   requestReport(): Promise<void>;
+  /** Stop the build; the current task is paused. */
+  stopBuild(): Promise<void>;
+  /** Ask the user a yes/no question. */
+  confirm(question: string): Promise<boolean>;
   /** Show (or clear) an activity in the status line while a command works. */
   status(text: string | undefined): void;
   /** Walk through linking Slack or a Telegram bot. */
@@ -69,6 +74,7 @@ export const COMMANDS: Command[] = [
       say(plan ? greeting(plan) : 'No plan yet. Tell me what you want to build or change.');
     },
   },
+  ...WORK_COMMANDS,
   {
     name: 'report',
     description: 'Write up where the project is: a progress report, or the close-out at the end',

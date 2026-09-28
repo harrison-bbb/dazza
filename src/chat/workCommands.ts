@@ -1,0 +1,270 @@
+import { cancelTask, closeTask, prioritise, requestChanges } from '../core/actions.js';
+import { milestoneProgress } from '../core/milestones.js';
+import { answerPermission } from '../core/permissions.js';
+import { findItem } from '../core/plan.js';
+import type { Plan, Task } from '../core/schema.js';
+import type { Store } from '../core/store.js';
+import { Git } from '../git/git.js';
+import { openInBrowser } from '../util/open.js';
+import type { Command, CommandContext } from './commands.js';
+import { paint } from './style.js';
+
+/**
+ * Commands for running the work directly: instant, and without a round trip
+ * through the conversation. Everything here goes through the same actions as
+ * the board and the chat, so the rules are the same.
+ */
+
+const ICON: Record<Task['status'], string> = {
+  closed: paint.green('●'),
+  review: paint.cyan('◉'),
+  building: paint.cyan('◐'),
+  blocked: paint.red('⊘'),
+  planned: '○',
+  backlog: paint.dim('◌'),
+  cancelled: paint.dim('⊖'),
+};
+
+export const WORK_COMMANDS: Command[] = [
+  {
+    name: 'tasks',
+    description: 'Every task, by milestone, with its status and size',
+    async run({ store, say }) {
+      const plan = await store.readPlan();
+      say(plan ? taskList(plan) : 'No plan yet. Tell me what you want to build.');
+    },
+  },
+  {
+    name: 'review',
+    aliases: ['inbox'],
+    description: 'What’s waiting on you: work to review, questions, permission requests',
+    async run({ store, say }) {
+      say(await inbox(store));
+    },
+  },
+  {
+    name: 'accept',
+    args: '<task>',
+    description: 'Approve work in review; it merges into your branch',
+    async run({ store, say }, args) {
+      const id = taskArg(args);
+      if (!id) return say('Which task? For example: /accept T3');
+      say(result(await closeTask(store, id)));
+    },
+  },
+  {
+    name: 'changes',
+    args: '<task> <what to change>',
+    description: 'Send work in review back, with what to change',
+    async run({ store, say }, args) {
+      const [first = '', ...rest] = args.trim().split(/\s+/);
+      const id = taskArg(first);
+      const note = rest.join(' ');
+      if (!id || !note)
+        return say(
+          'Which task, and what should change? For example: /changes T3 make the button bigger',
+        );
+      say(result(await requestChanges(store, id, note)));
+    },
+  },
+  {
+    name: 'cancel',
+    args: '<task>',
+    description: 'Drop a task (asks you to confirm)',
+    async run({ store, say, confirm }, args) {
+      const id = taskArg(args);
+      if (!id) return say('Which task? For example: /cancel T5');
+      const plan = await store.readPlan();
+      const found = plan && findItem(plan, id);
+      if (!plan || !found) return say(`No task ${id}.`);
+      const dependents = plan.tasks.filter(
+        (t) => t.dependsOn.includes(id) && t.status !== 'cancelled',
+      );
+      const warning = [
+        found.task.status === 'building' && 'It’s being built right now.',
+        found.task.handoff && 'Its finished work would be dropped.',
+        dependents.length > 0 &&
+          `${dependents.map((t) => t.id).join(', ')} depend${dependents.length === 1 ? 's' : ''} on it.`,
+      ]
+        .filter(Boolean)
+        .join(' ');
+      const title = found.subtask?.title ?? found.task.title;
+      if (!(await confirm(`Cancel ${id} ${title}?${warning ? ` ${warning}` : ''}`)))
+        return say('Kept it.');
+      const outcome = await cancelTask(store, id);
+      say(
+        outcome.ok
+          ? `${result(outcome)} ${paint.dim('If this changes the scope, tell me why and I’ll record it in the change log.')}`
+          : result(outcome),
+      );
+    },
+  },
+  {
+    name: 'next',
+    args: '<task>',
+    description: 'Build this task next (it still waits for what it depends on)',
+    async run({ store, say }, args) {
+      const id = taskArg(args);
+      if (!id) return say('Which task? For example: /next T7');
+      say(result(await prioritise(store, id)));
+    },
+  },
+  {
+    name: 'diff',
+    args: '<task>',
+    description: 'What a task changed, file by file',
+    async run({ store, say }, args) {
+      const id = taskArg(args);
+      const task = id ? (await store.readPlan())?.tasks.find((t) => t.id === id) : undefined;
+      const build = id ? await store.readTaskBuild(id) : undefined;
+      if (!task?.handoff?.commit || !build)
+        return say(id ? `${id} hasn’t been handed over yet.` : 'Which task? For example: /diff T3');
+      const stat = await new Git(store.root).diffStat(build.startCommit, task.handoff.commit);
+      say(
+        `${task.id} ${task.title}, on ${task.handoff.branch}:\n${stat}\n` +
+          paint.dim(`Full diff: git diff ${build.startCommit.slice(0, 7)}..${task.handoff.branch}`),
+      );
+    },
+  },
+  {
+    name: 'try',
+    args: '<task>',
+    description: 'Where to run a task’s work before you approve it',
+    async run({ store, say }, args) {
+      const id = taskArg(args);
+      const task = id ? (await store.readPlan())?.tasks.find((t) => t.id === id) : undefined;
+      if (!task) return say(id ? `No task ${id}.` : 'Which task? For example: /try T3');
+      if (task.status === 'closed')
+        return say(`${task.id} is approved, so it’s in your own checkout.`);
+      const dir = (await store.readTaskBuild(task.id))?.dir;
+      if (!dir) return say(`${task.id} hasn’t been built yet.`);
+      say(
+        `${task.id}’s work is in its own checkout. In another terminal:\n  cd ${dir}\n` +
+          paint.dim(
+            `Then run it as you normally would. Its ${task.handoff?.howToVerify.length ? 'handoff says how to check it: /review' : 'dependencies may need installing first'}.`,
+          ),
+      );
+    },
+  },
+  {
+    name: 'allow',
+    args: '<task>',
+    description: 'Let a task run the command it asked permission for',
+    async run({ store, say }, args) {
+      const id = taskArg(args);
+      if (!id) return say('Which task? For example: /allow T3');
+      say(result(await answerPermission(store, id, true)));
+    },
+  },
+  {
+    name: 'deny',
+    args: '<task>',
+    description: 'Refuse the command a task asked permission for',
+    async run({ store, say }, args) {
+      const id = taskArg(args);
+      if (!id) return say('Which task? For example: /deny T3');
+      say(result(await answerPermission(store, id, false)));
+    },
+  },
+  {
+    name: 'stop',
+    description: 'Stop building; the current task picks up where it left off next time',
+    async run({ stopBuild }) {
+      await stopBuild();
+    },
+  },
+  {
+    name: 'scope',
+    description: 'Open the scope of work on the board',
+    run({ boardUrl, say }: CommandContext) {
+      openInBrowser(`${boardUrl}/#/doc`);
+      say(`Opened the scope: ${boardUrl}/#/doc`);
+    },
+  },
+];
+
+/** "t3" or "T3" → "T3"; also takes subtasks ("T3.2"). */
+function taskArg(args: string): string | undefined {
+  const id = args.trim().split(/\s+/)[0]?.toUpperCase();
+  return id && /^T\d+(\.\d+)?$/.test(id) ? id : undefined;
+}
+
+function result(outcome: { ok: boolean; message: string }): string {
+  return outcome.ok ? `${paint.green('✔')} ${outcome.message}` : outcome.message;
+}
+
+/** Tasks grouped by milestone, each with its status, id, title and size. */
+export function taskList(plan: Plan): string {
+  const line = (t: Task) =>
+    `  ${ICON[t.status]} ${paint.dim(t.id.padEnd(4))} ${t.status === 'cancelled' ? paint.dim(t.title) : t.title}${t.size ? paint.dim(` · ${t.size}`) : ''}${t.status === 'review' || t.status === 'blocked' ? paint.dim(`  ${t.status === 'review' ? 'in review' : 'blocked'}`) : ''}`;
+  const placed = new Set(plan.milestones.flatMap((m) => m.tasks));
+  const groups = milestoneProgress(plan).flatMap(({ milestone, closed, total, reached }) => [
+    `${paint.bold(`${milestone.id} ${milestone.title}`)} ${paint.dim(reached ? '· reached' : `· ${closed}/${total}`)}`,
+    ...plan.tasks.filter((t) => milestone.tasks.includes(t.id)).map(line),
+  ]);
+  const loose = plan.tasks.filter((t) => !placed.has(t.id));
+  return [
+    ...groups,
+    ...(loose.length > 0
+      ? [...(groups.length ? [paint.bold('Other')] : []), ...loose.map(line)]
+      : []),
+    paint.dim('● closed  ◉ in review  ◐ building  ⊘ blocked  ○ planned  ◌ backlog  ⊖ cancelled'),
+  ].join('\n');
+}
+
+/** Everything waiting on the user, each with what to do about it. */
+export async function inbox(store: Store): Promise<string> {
+  const plan = await store.readPlan();
+  if (!plan) return 'Nothing yet: there’s no plan.';
+  if (!plan.approvedAt)
+    return 'The plan is waiting for your approval: look it over with /scope, then /approve.';
+  const events = await store.readEvents();
+  const permissions = await store.readPendingPermissions();
+  const items: string[] = [];
+
+  for (const task of plan.tasks.filter((t) => t.status === 'review')) {
+    const h = task.handoff;
+    const unmet = h?.criteria.filter((c) => !c.met) ?? [];
+    items.push(
+      [
+        `${ICON.review} ${paint.bold(`${task.id} ${task.title}`)} is ready for review`,
+        h && `  ${h.summary}`,
+        h?.criteria.length &&
+          `  ${unmet.length ? paint.red(`${unmet.length} of ${h.criteria.length} criteria not met`) : `All ${h.criteria.length} criteria met`}${h.checks.length ? ` · checks: ${h.checks.map((c) => `${c.name} ${c.passed ? '✔' : '✗'}`).join(', ')}` : ''}`,
+        h?.howToVerify.length && `  Check it: ${h.howToVerify.join(' → ')}`,
+        paint.dim(
+          `  /accept ${task.id} · /changes ${task.id} <what to change> · /diff ${task.id} · /try ${task.id}`,
+        ),
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+  }
+  for (const task of plan.tasks.filter((t) => t.status === 'blocked')) {
+    const permission = permissions[task.id];
+    if (permission) {
+      items.push(
+        [
+          `${ICON.blocked} ${paint.bold(`${task.id} ${task.title}`)} wants to run a command that needs your OK:`,
+          `  ${paint.cyan(permission.command)}`,
+          `  Why: ${permission.why}`,
+          paint.dim(`  /allow ${task.id} · /deny ${task.id}`),
+        ].join('\n'),
+      );
+      continue;
+    }
+    const question = events
+      .filter((e) => e.type === 'comment' && e.actor === 'dazza' && e.taskId === task.id)
+      .at(-1)?.message;
+    items.push(
+      [
+        `${ICON.blocked} ${paint.bold(`${task.id} ${task.title}`)} needs you`,
+        question && `  ${question}`,
+        paint.dim('  Just answer here, and I’ll pick it back up.'),
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+  }
+  return items.length > 0 ? items.join('\n\n') : 'Nothing’s waiting on you.';
+}

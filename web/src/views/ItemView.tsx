@@ -151,14 +151,29 @@ export function ItemView({
               <section className="mt-10">
                 <Heading>Done when</Heading>
                 <ul className="space-y-2.5">
-                  {task.acceptanceCriteria.map((criterion) => (
-                    <li key={criterion} className="flex gap-3 leading-6">
-                      <Checkbox checked={task.status === 'closed'} />
-                      <span className="text-ink-2">
-                        <InlineText>{criterion}</InlineText>
-                      </span>
-                    </li>
-                  ))}
+                  {task.acceptanceCriteria.map((criterion, i) => {
+                    // The builder's own account of each criterion, from the handoff.
+                    const report = task.handoff?.criteria[i];
+                    return (
+                      <li key={criterion} className="flex gap-3 leading-6">
+                        <Checkbox checked={task.status === 'closed' || Boolean(report?.met)} />
+                        <span className="min-w-0 text-ink-2">
+                          <InlineText>{criterion}</InlineText>
+                          {report && (
+                            <span
+                              className={cn(
+                                'mt-0.5 block text-[12px] leading-5',
+                                report.met ? 'text-muted' : 'text-red',
+                              )}
+                            >
+                              {report.met ? '' : 'Not met: '}
+                              <InlineText>{report.evidence}</InlineText>
+                            </span>
+                          )}
+                        </span>
+                      </li>
+                    );
+                  })}
                 </ul>
               </section>
 

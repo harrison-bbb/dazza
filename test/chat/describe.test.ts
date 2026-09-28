@@ -43,7 +43,7 @@ describe('greeting', () => {
       ]),
     );
     expect(greeting(plan)).toBe(
-      '0/4 tasks closed. Building T4 Tags. T1 Editor is waiting for your review. 2 tasks are blocked on you (T2, T3).',
+      '0/4 tasks closed. Building T4 Tags. T1 Editor is waiting for your review. 2 tasks are blocked on you (T2, T3). /review to go through them.',
     );
   });
 

@@ -315,6 +315,16 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
     boardUrl: board.url,
     startBuild: () => startBuild(session, provider, config),
     requestReport,
+    stopBuild: async () => {
+      if (!session.isBuilding) return say('Not building right now.');
+      await session.stopBuild();
+      say('Stopped. The current task picks up where it left off on the next /build.');
+    },
+    confirm: async (question) =>
+      (await terminal.select(question, [
+        { label: 'Yes', value: true },
+        { label: 'No', value: false },
+      ])) === true,
     status: (text) => terminal.setStatus('chat', text),
     link: async (channel) => {
       if (await setUpChannel(channel, terminal, config)) {

@@ -3,10 +3,9 @@ import { ChatSession } from '../../src/chat/session.js';
 import { setStatus } from '../../src/core/actions.js';
 import { Manager } from '../../src/core/manager.js';
 import { blockTask, submitTask } from '../../src/core/work.js';
-import { Git } from '../../src/git/git.js';
 import type { AgentRunOptions } from '../../src/providers/types.js';
 import { FakeProvider } from '../fakes.js';
-import { makePlan, makeTask } from '../fixtures.js';
+import { makePlan, makeTask, workReport } from '../fixtures.js';
 import { useTempProject } from '../helpers.js';
 
 describe('ChatSession', () => {
@@ -61,10 +60,7 @@ describe('ChatSession', () => {
     provider.onRun = async (options: AgentRunOptions) => {
       if (!options.autonomous) return;
       await buildHeld; // the "worker" is busy until we let it finish
-      await submitTask(project.store, 'T1', {
-        summary: 'Done',
-        howToVerify: ['x'],
-      });
+      await submitTask(project.store, 'T1', workReport);
     };
 
     expect(session.startBuild()).toBe(true);
@@ -99,7 +95,7 @@ describe('ChatSession', () => {
     provider.onRun = async (options) => {
       if (!options.autonomous) return;
       if (runs++ === 0) await blockTask(project.store, 'T1', 'Which database?');
-      else await submitTask(project.store, 'T1', { summary: 'Done', howToVerify: ['x'] });
+      else await submitTask(project.store, 'T1', workReport);
     };
     session.startBuild();
     await session.idle();

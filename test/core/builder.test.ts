@@ -7,12 +7,12 @@ import { blockTask, submitTask } from '../../src/core/work.js';
 import { Git } from '../../src/git/git.js';
 import { claim } from '../../src/util/lock.js';
 import { FakeProvider } from '../fakes.js';
-import { makePlan, makeTask } from '../fixtures.js';
+import { makePlan, makeTask, workReport } from '../fixtures.js';
 import { useTempProject } from '../helpers.js';
 
 describe('build loop', () => {
   const project = useTempProject();
-  const report = { summary: 'Done', howToVerify: ['Look'], checks: [] };
+  const report = workReport;
 
   beforeEach(async () => {
     process.env.GIT_AUTHOR_NAME = process.env.GIT_COMMITTER_NAME = 'Test';
@@ -231,6 +231,7 @@ describe('taskBrief', () => {
         handoff: {
           summary: 'Magic links via Auth.js; `getUser()` in lib/auth.ts.',
           howToVerify: [],
+          criteria: [],
           checks: [],
           screenshots: [],
           submittedAt: '2026-09-27T10:00:00Z',

@@ -50,3 +50,11 @@ export function plannedTask(overrides: Partial<Task> & Pick<Task, 'id'>): Task {
     ...overrides,
   });
 }
+
+/** A worker's handoff for a task made with makeTask (one criterion). */
+export const workReport = {
+  summary: 'Done',
+  howToVerify: ['Look at it'],
+  criteria: [{ criterion: 'The thing is done', met: true, evidence: 'Checked it by hand' }],
+  checks: [],
+};

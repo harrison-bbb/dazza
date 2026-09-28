@@ -1,8 +1,8 @@
-import { homedir } from 'node:os';
 import { relative } from 'node:path';
 import type { BuildEvent } from '../core/builder.js';
 import { clock } from '../core/errors.js';
-import type { Plan } from '../core/schema.js';
+import { humanDuration } from '../core/estimates.js';
+import { type Plan, SIZE_MINUTES } from '../core/schema.js';
 import { McpTools } from '../mcp/server.js';
 import { BRAND } from './banner.js';
 import { paint, renderInline } from './style.js';
@@ -59,12 +59,23 @@ export function renderBuildEvent(
       return [
         '',
         `${marker()} ${paint.bold(`${event.resumed ? 'Picking up' : 'Building'} ${event.task.id}`)} · ${event.task.title}`,
-        paint.dim(`  on branch ${event.branch} · Ctrl-C to stop`),
+        paint.dim(
+          [
+            `  on branch ${event.branch}`,
+            event.task.size &&
+              `usually ${humanDuration(SIZE_MINUTES[event.task.size]).replace('about ', '~')}`,
+            milestoneOf(plan, event.task.id),
+            '/stop to stop',
+          ]
+            .filter(Boolean)
+            .join(' · '),
+        ),
       ].join('\n');
     case 'task_finished':
       return finished(event, plan);
     case 'stopped':
-      return `\n${marker()} ${event.reason}`;
+      // Stopped for want of something from the user: point at the list of it.
+      return `\n${marker()} ${event.reason}${event.idle && /review|blocked/.test(event.reason) ? paint.dim(' /review shows what’s waiting, and what to do about each.') : ''}`;
     case 'waiting':
       return event.reason === 'usage_limit'
         ? `\n${marker()} ${paint.bold('Usage limit reached.')} ${event.task.id} is paused; I’ll pick it back up at ${clock(event.until)}. Keep Dazza open, or Ctrl-C to stop.`
@@ -165,12 +176,18 @@ function finished(
     return `\n${marker()} Stopped. ${event.task.id} is paused and picks up where it left off on the next /build.`;
   }
   if (event.outcome === 'blocked') {
-    return `\n${marker()} ${paint.bold(`${event.task.id} needs you`)}: answer on the board or tell me here. Moving on.`;
+    return `\n${marker()} ${paint.bold(`${event.task.id} needs you`)}: answer here, on the board, or from your phone, and I’ll pick it back up. Moving on to the next task.`;
   }
   const handoff = task?.handoff;
   const checks = handoff?.checks ?? [];
   const failed = checks.filter((c) => !c.passed).length;
+  const criteria = handoff?.criteria ?? [];
+  const unmet = criteria.filter((c) => !c.met);
   const details = [
+    criteria.length > 0 &&
+      (unmet.length
+        ? paint.red(`${unmet.length} of ${criteria.length} criteria not met`)
+        : `all ${criteria.length} criteria met`),
     handoff?.filesChanged !== undefined &&
       `${handoff.filesChanged} ${handoff.filesChanged === 1 ? 'file' : 'files'} changed`,
     checks.length > 0 &&
@@ -182,10 +199,13 @@ function finished(
     '',
     `${marker()} ${paint.bold(`${event.task.id} is ready for your review`)}${details.length ? ` · ${details.join(' · ')}` : ''}`,
     ...(handoff ? [indent(renderInline(handoff.summary))] : []),
-    // Until it's approved, the work only exists in its worktree.
-    ...(handoff?.worktree
-      ? [indent(paint.dim(`Try it: cd ${handoff.worktree.replace(homedir(), '~')}`))]
-      : []),
+    ...unmet.map((c) => indent(paint.red(`✗ ${c.criterion}: ${c.evidence}`))),
+    // What to do next, without looking anything up.
+    indent(
+      paint.dim(
+        `/accept ${event.task.id} to merge it · /changes ${event.task.id} <what to change> · /try ${event.task.id} to run it first`,
+      ),
+    ),
   ].join('\n');
 }
 
@@ -217,4 +237,10 @@ function marker(): string {
 function truncate(text: string, max: number): string {
   const line = text.split('\n')[0] ?? '';
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
+/** "towards M2 Sync", for a task in a milestone. */
+function milestoneOf(plan: Plan | undefined, taskId: string): string | undefined {
+  const milestone = plan?.milestones.find((m) => m.tasks.includes(taskId));
+  return milestone && `towards ${milestone.id} ${milestone.title}`;
 }
