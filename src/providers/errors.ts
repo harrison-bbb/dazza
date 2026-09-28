@@ -51,7 +51,7 @@ export function classifyError(
  * there's no point letting the CLI keep trying.
  */
 export function isHopeless(error: AgentError): boolean {
-  return error.kind === 'auth' || error.kind === 'credits';
+  return error.kind === 'auth' || error.kind === 'credits' || error.kind === 'setup';
 }
 
 /**

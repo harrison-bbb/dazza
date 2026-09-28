@@ -22,6 +22,7 @@ export function explainAgentError(
       );
     case 'overloaded':
       return `${help.brand} is overloaded right now. ${paused}Try again in a few minutes.`;
+    case 'setup':
     case 'failed':
       return error.message;
   }

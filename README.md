@@ -114,7 +114,7 @@ The board runs at `http://localhost:4777` while Dazza is open. You can **watch b
 
 ## Safe to point at real work
 
-Dazza's builder works like a careful engineer on someone else's systems. On Claude Code, every command and file access goes through **Dazza's guard** before it runs:
+Dazza's builder works like a careful engineer on someone else's systems. On Claude Code and Codex alike, every command and file access goes through **Dazza's guard** before it runs:
 
 - **Never, even if asked:** pushing, deploying or publishing, `sudo`, credential files, anything outside the task's worktree, switching branches, changing cloud or cluster resources.
 - **Asks you first:** remote databases, deleting data, sending changes to outside services, machine-wide installs. The builder asks with the exact command and why. You answer with `/allow`, `/deny`, the board, or a button on your phone. Allowing covers that one command for that one task.
@@ -172,7 +172,7 @@ More in [docs/architecture.md](docs/architecture.md), [docs/providers.md](docs/p
 ## Limits
 
 - Dazza builds only while it's open. Building tasks side by side finishes sooner but uses your plan's limits faster: `/parallel 1` builds one at a time.
-- The guard is strongest on Claude Code. On Codex, the agent's own sandbox applies but Dazza's command rules don't.
+- On Codex, Dazza's guard needs a recent Codex CLI (one with hooks). Dazza won't run Codex in a project that brings Codex hooks of its own until you've reviewed them in Codex.
 - Task sizes are estimates. They start at about 10, 20 and 40 minutes for S, M and L, then follow how long this project's tasks actually take. The close-out report compares each task's size with its real time.
 - Deploying is deliberately yours: Dazza prepares the config and a checklist, and you do the final steps.
 

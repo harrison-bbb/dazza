@@ -1,4 +1,7 @@
 import { readFileSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
@@ -101,6 +104,80 @@ describe('buildCodexArgs', () => {
     expect(args).not.toContain('-s');
     expect(args).toContain('sandbox_workspace_write.network_access=true');
     expect(args.slice(-3)).toEqual(['resume', 'abc', '-']);
+  });
+});
+
+describe('Dazza’s guard on Codex', () => {
+  const guard = {
+    command: '/usr/bin/node',
+    args: ['/opt/dazza cli.js', 'guard', '--role', 'worker'],
+  };
+
+  it('runs the guard as a PreToolUse hook on every call', () => {
+    const args = buildCodexArgs({ cwd: '/p', autonomous: true, guard });
+    expect(args).toContain('--dangerously-bypass-hook-trust');
+    expect(args).toContain(
+      `hooks.PreToolUse=[{matcher=".*",hooks=[{type="command",command="/usr/bin/node '/opt/dazza cli.js' guard --role worker",timeout=60}]}]`,
+    );
+    expect(buildCodexArgs({ cwd: '/p', autonomous: true })).not.toContain(
+      '--dangerously-bypass-hook-trust',
+    );
+  });
+
+  it('won’t run in a project that brings unreviewed hooks of its own', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dazza-codex-'));
+    try {
+      const run = async () => {
+        const events: AgentEvent[] = [];
+        for await (const e of codex.run({ prompt: 'build it', cwd: dir, guard })) events.push(e);
+        return events.at(-1);
+      };
+      expect(await run()).toMatchObject({ type: 'finished', ok: true });
+      await mkdir(join(dir, '.codex'));
+      await writeFile(join(dir, '.codex', 'hooks.json'), '{}');
+      expect(await run()).toMatchObject({
+        type: 'finished',
+        ok: false,
+        error: { kind: 'setup', message: expect.stringContaining('.codex/hooks.json') },
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('MCP servers on Codex', () => {
+  const dazza = { dazza: { command: '/usr/bin/node', args: ['cli.js', 'mcp'] } };
+  const run = async () => {
+    const events: AgentEvent[] = [];
+    for await (const e of codex.run({ prompt: 'ARGS', cwd: process.cwd(), mcpServers: dazza }))
+      events.push(e);
+    return events;
+  };
+
+  it('switches off the user’s own servers, so the agent only gets Dazza’s', async () => {
+    process.env.FAKE_CODEX_MCP = 'dazza,gmail,prod-db';
+    try {
+      const said = (await run()).find((e) => e.type === 'text');
+      const args: string[] = JSON.parse(said?.type === 'text' ? said.text : '[]');
+      expect(args).toContain('mcp_servers.gmail.enabled=false');
+      expect(args).toContain('mcp_servers.prod-db.enabled=false');
+      expect(args).not.toContain('mcp_servers.dazza.enabled=false');
+    } finally {
+      delete process.env.FAKE_CODEX_MCP;
+    }
+  });
+
+  it('won’t run with a server it can’t switch off', async () => {
+    process.env.FAKE_CODEX_MCP = 'my.personal';
+    try {
+      expect((await run()).at(-1)).toMatchObject({
+        ok: false,
+        error: { kind: 'setup', message: expect.stringContaining('"my.personal"') },
+      });
+    } finally {
+      delete process.env.FAKE_CODEX_MCP;
+    }
   });
 });
 

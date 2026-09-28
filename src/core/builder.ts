@@ -363,7 +363,12 @@ async function* buildOne(
         if (signal?.aborted) return 'end';
         continue;
       }
-      if (error.kind === 'credits' || error.kind === 'auth' || error.kind === 'overloaded') {
+      if (
+        error.kind === 'credits' ||
+        error.kind === 'auth' ||
+        error.kind === 'setup' ||
+        error.kind === 'overloaded'
+      ) {
         yield {
           type: 'stopped',
           reason: explainAgentError(error, { taskId: task.id, provider: options.provider.id }),

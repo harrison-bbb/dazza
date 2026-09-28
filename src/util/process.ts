@@ -31,12 +31,14 @@ export async function execCommand(
   command: string,
   args: readonly string[],
   env?: NodeJS.ProcessEnv,
+  cwd?: string,
 ): Promise<CommandResult | undefined> {
   try {
     // Big diffs and file lists outgrow the 1 MB default.
     const { stdout, stderr } = await execFileAsync(command, args, {
       maxBuffer: MAX_OUTPUT,
       ...(env && { env }),
+      ...(cwd && { cwd }),
     });
     return { exitCode: 0, stdout, stderr };
   } catch (error) {
@@ -224,4 +226,11 @@ function signal(pid: number, name: NodeJS.Signals): void {
   } catch {
     // Already gone.
   }
+}
+
+/** A command and its arguments as one line for a shell, quoted where needed. */
+export function shellCommand(command: string, args: readonly string[]): string {
+  return [command, ...args]
+    .map((word) => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`))
+    .join(' ');
 }

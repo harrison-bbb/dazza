@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { judge } from '../../src/guard/policy.js';
+import { judge, patchedFiles } from '../../src/guard/policy.js';
 
 const ctx = { workspace: '/work/T3', home: '/home/sam', tmp: '/var/folders/xy/T' };
 const run = (command: string) => judge({ tool: 'Bash', input: { command } }, ctx).kind;
@@ -106,5 +106,34 @@ describe('guard policy: files', () => {
     expect(tool('Read', '/home/sam/.ssh/id_ed25519')).toBe('never');
     expect(tool('Read', '~/.config/dazza/slack.json')).toBe('never');
     expect(judge({ tool: 'Grep', input: { path: '/home/sam/.aws' } }, ctx).kind).toBe('never');
+  });
+});
+
+describe('guard policy: Codex tools', () => {
+  const codex = (tool: string, input: Record<string, unknown>) => judge({ tool, input }, ctx).kind;
+  const patch = (...lines: string[]) => ['*** Begin Patch', ...lines, '*** End Patch'].join('\n');
+
+  it('checks every file a patch touches', () => {
+    expect(patchedFiles(patch('*** Update File: src/a.ts', '*** Move to: src/b.ts'))).toEqual([
+      'src/a.ts',
+      'src/b.ts',
+    ]);
+    expect(codex('apply_patch', { command: patch('*** Add File: src/new.ts', '+x') })).toBe(
+      'allow',
+    );
+    expect(
+      codex('apply_patch', {
+        command: patch('*** Update File: src/a.ts', '*** Add File: ../T4/x.ts'),
+      }),
+    ).toBe('never');
+    expect(codex('apply_patch', { command: patch('*** Delete File: /home/sam/.zshrc') })).toBe(
+      'never',
+    );
+  });
+
+  it('checks what’s typed into a running shell like a command', () => {
+    expect(codex('write_stdin', { chars: 'git push origin main\n' })).toBe('never');
+    expect(codex('write_stdin', { chars: 'npm test\n' })).toBe('allow');
+    expect(codex('write_stdin', { chars: '' })).toBe('allow');
   });
 });

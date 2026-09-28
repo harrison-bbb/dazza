@@ -1,12 +1,12 @@
 import { z } from 'zod';
 import { isAllowed } from '../core/permissions.js';
 import { Store } from '../core/store.js';
-import { type Decision, judge } from './policy.js';
+import { type Decision, judge, patchedFiles } from './policy.js';
 
 /**
- * `dazza guard`: Claude Code runs this before every tool call (a PreToolUse
- * hook) and does what it says. Reads the call on stdin; answers on stdout.
- * Stays silent to let a call through (Claude Code's own permission mode then
+ * `dazza guard`: Claude Code and Codex run this before every tool call (a
+ * PreToolUse hook) and do what it says. Reads the call on stdin; answers on stdout.
+ * Stays silent to let a call through (the agent CLI's own permission checks then
  * applies as usual), and refuses with a reason the agent reads otherwise.
  */
 
@@ -53,7 +53,9 @@ async function answer(
   const decision = judge({ tool, input }, { workspace });
   if (decision.kind === 'allow') return '';
 
-  const command = typeof input.command === 'string' ? input.command.trim() : undefined;
+  // Codex's apply_patch carries the patch as its "command": that's an edit, not a command.
+  const command =
+    tool !== 'apply_patch' && typeof input.command === 'string' ? input.command.trim() : undefined;
   if (decision.kind === 'ask' && task && command && (await isAllowed(store, task.id, command))) {
     await log(store, task?.id, `Ran \`${command}\` with your OK.`);
     return '';
@@ -79,6 +81,9 @@ function guardNote(decision: Exclude<Decision, { kind: 'allow' }>, what: string)
 }
 
 function describe(tool: string, input: Record<string, unknown>): string {
+  if (tool === 'apply_patch' && typeof input.command === 'string') {
+    return `editing ${patchedFiles(input.command).join(', ')}`;
+  }
   const path = input.file_path ?? input.path ?? input.notebook_path;
   return typeof path === 'string' ? `${tool} ${path}` : tool;
 }

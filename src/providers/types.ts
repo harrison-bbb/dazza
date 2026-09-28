@@ -101,6 +101,8 @@ export type AgentError =
   | { kind: 'credits'; message: string }
   | { kind: 'auth'; message: string }
   | { kind: 'overloaded'; message: string }
+  /** Something about this machine or project stops the agent running here at all. */
+  | { kind: 'setup'; message: string }
   | { kind: 'failed'; message: string };
 
 /** A subscription rate-limit window, e.g. the rolling five hours or the week. */

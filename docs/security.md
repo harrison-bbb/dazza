@@ -38,7 +38,7 @@ Be clear about what that means. During `/build`, the agent runs shell commands o
 
 ### Dazza's guard
 
-On Claude Code, every tool call the agent makes goes through `dazza guard` first (a `PreToolUse` hook; the rules are in `src/guard/policy.ts`). It works like a careful engineer on someone else's systems: the task's own worktree is theirs to change, and everything outside it isn't. Each call gets one of three answers:
+On both agents, every tool call goes through `dazza guard` first (a `PreToolUse` hook; the rules are in `src/guard/policy.ts`). Codex's own tools are covered too: every file an `apply_patch` touches is checked like a write, and keys typed into a running shell (`write_stdin`) are checked like a command. It works like a careful engineer on someone else's systems: the task's own worktree is theirs to change, and everything outside it isn't. Each call gets one of three answers:
 
 | | What | Examples |
 |---|---|---|
@@ -50,13 +50,15 @@ When something needs your OK, the builder asks with the exact command and why, a
 
 Two more protections on Claude Code runs: the agent only loads your user-level Claude Code settings, not settings files that come with the repository (`--setting-sources user`). Headless runs skip Claude Code's workspace-trust prompt, so a repository could otherwise bring its own hooks or loosen permissions. And both agents get only Dazza's MCP server.
 
-What the guard is not: a sandbox. It reads commands the way a reviewer would, so a determined attempt to disguise a command (building it at run time, say) can get past the rules. Commands built at run time (`eval`) are held for your OK for that reason. It's defense in depth on top of Claude Code's auto mode and the model's judgment. On Codex, which has no equivalent hook, the guard doesn't apply: Codex's own sandbox limits writes to the task's worktree, but not network access or what commands run. Prefer Claude Code for sensitive work.
+What the guard is not: a sandbox. It reads commands the way a reviewer would, so a determined attempt to disguise a command (building it at run time, say) can get past the rules. Commands built at run time (`eval`) are held for your OK for that reason. It's defense in depth on top of the agent's own safety checks (Claude Code's auto mode, Codex's sandbox and approval review) and the model's judgment.
+
+On Codex, the guard runs as a hook passed on the command line. Codex only runs hooks you've reviewed, so Dazza passes `--dangerously-bypass-hook-trust` for its own. That flag would also run hooks a repository brings in its own `.codex/` folder, so before every run Dazza asks Codex which hooks it would load (`hooks/list`). It refuses to run if any of them is the project's own and you haven't trusted it in Codex. Codex lets a call through if its hook times out, so the guard gets a 60-second limit; it answers in milliseconds.
 
 Before a handoff is committed, Dazza also checks the changes themselves: it refuses one containing secrets (live Stripe, AWS, GitHub, Slack or AI keys, private keys), files that belong only on the developer's machine (`.env`, logs, `node_modules`, key files), or very large files. Background processes a builder started are stopped when its run ends. Builders are told to stop their own processes by process id, never with `pkill` or `killall`, and the guard asks before either. When tasks build side by side, each builder's guard fences it into its own worktree.
 
 Build with the credentials a developer on the project would have, not production ones. Keep production keys out of the environment you run Dazza in; the guard asks before remote databases, but the safest secret is one the agent never had.
 
-Both sessions get only Dazza's MCP server (`--strict-mcp-config` on Claude Code). Your personal MCP servers aren't exposed to them.
+Both sessions get only Dazza's MCP server. On Claude Code that's `--strict-mcp-config`. On Codex, Dazza lists the servers Codex would load (`codex mcp list`) and switches off every one but its own for the run. Your personal MCP servers aren't exposed to them.
 
 ## Why each task gets its own branch and worktree
 

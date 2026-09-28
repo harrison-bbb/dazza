@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { Connection } from '../core/config.js';
-import { execCommand, runInteractive, spawnLines } from '../util/process.js';
+import { execCommand, runInteractive, shellCommand, spawnLines } from '../util/process.js';
 import { classifyError, isHopeless } from './errors.js';
 import type {
   AgentError,
@@ -185,7 +185,7 @@ export function buildClaudeArgs(options: Omit<AgentRunOptions, 'prompt'>): strin
     // Dazza's guard checks every tool call first (see src/guard). Settings files
     // that come with the repository are ignored: headless runs skip Claude Code's
     // trust prompt, so a repo could otherwise bring its own hooks or permissions.
-    const hook = [options.guard.command, ...options.guard.args].map(shellQuote).join(' ');
+    const hook = shellCommand(options.guard.command, options.guard.args);
     args.push(
       '--setting-sources',
       'user',
@@ -391,6 +391,3 @@ function capitalize(text: string): string {
 }
 
 /** Quote a word for the shell Claude Code runs hook commands in. */
-function shellQuote(word: string): string {
-  return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
-}

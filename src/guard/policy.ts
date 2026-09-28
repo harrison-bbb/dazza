@@ -53,9 +53,33 @@ export function judge(call: ToolCall, context: Context): Decision {
     case 'Grep':
     case 'Glob':
       return judgeRead(path ?? stringField(call.input, 'path'), ctx);
+    // Codex edits files with a patch; every file it touches has to be allowed.
+    case 'apply_patch':
+      return worst(
+        patchedFiles(stringField(call.input, 'command') ?? '').map((f) => judgeWrite(f, ctx)),
+      );
+    // Codex can type into a shell it started: check what's typed like a command.
+    case 'write_stdin': {
+      const typed = stringField(call.input, 'chars') ?? '';
+      return typed.trim() ? judgeCommand(typed, ctx) : allow;
+    }
     default:
       return allow;
   }
+}
+
+/** The files a Codex patch adds, updates, deletes or moves to. Exported for tests. */
+export function patchedFiles(patch: string): string[] {
+  return [...patch.matchAll(/^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gm)].map((m) =>
+    (m[1] ?? '').trim(),
+  );
+}
+
+/** The strictest of several decisions: never beats ask, ask beats allow. */
+function worst(decisions: Decision[]): Decision {
+  return (
+    decisions.find((d) => d.kind === 'never') ?? decisions.find((d) => d.kind === 'ask') ?? allow
+  );
 }
 
 type Ctx = Required<Context> & {

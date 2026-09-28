@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import pkg from '../../package.json' with { type: 'json' };
 import type { Connection } from '../core/config.js';
-import { execCommand, runInteractive, spawnLines } from '../util/process.js';
+import { execCommand, runInteractive, shellCommand, spawnLines } from '../util/process.js';
 import { classifyError, isHopeless } from './errors.js';
 import type {
   AgentError,
@@ -102,13 +102,25 @@ export class CodexProvider implements AgentProvider {
   }
 
   async *run(options: AgentRunOptions): AsyncGenerator<AgentEvent> {
+    const prepared = await this.prepare(options);
+    if (typeof prepared === 'string') {
+      yield {
+        type: 'finished',
+        ok: false,
+        output: prepared,
+        sessionId: options.resumeSessionId ?? '',
+        durationMs: 0,
+        error: { kind: 'setup', message: prepared },
+      };
+      return;
+    }
     const run = new AbortController();
     const forward = () => run.abort();
     options.signal?.addEventListener('abort', forward);
     const parser = new CodexStream(options.model);
     let hopeless: AgentError | undefined;
 
-    const lines = spawnLines(this.bin, buildCodexArgs(options), {
+    const lines = spawnLines(this.bin, buildCodexArgs(options, prepared), {
       cwd: options.cwd,
       input: options.prompt,
       env: this.env(),
@@ -149,6 +161,74 @@ export class CodexProvider implements AgentProvider {
   }
 
   /**
+   * What to check before a run, and the extra flags it needs: returns what's
+   * wrong, if anything, or the MCP servers of the user's to switch off.
+   */
+  private async prepare(options: AgentRunOptions): Promise<string | CodexExtras> {
+    const [hooks, servers] = await Promise.all([
+      options.guard ? this.checkHooks(options.cwd) : undefined,
+      options.mcpServers ? this.otherMcpServers(options.cwd, options.mcpServers) : [],
+    ]);
+    if (hooks) return hooks;
+    if (typeof servers === 'string') return servers;
+    return { disableMcpServers: servers };
+  }
+
+  /**
+   * Codex loads the MCP servers in the user's config (and a trusted project's)
+   * into every session. Dazza's sessions get only Dazza's own, as on Claude Code
+   * (--strict-mcp-config): the builder shouldn't reach the user's email or
+   * databases through a server they set up for themselves.
+   */
+  private async otherMcpServers(
+    cwd: string,
+    ours: Record<string, unknown>,
+  ): Promise<string[] | string> {
+    const listed = await execCommand(this.bin, ['mcp', 'list', '--json'], this.env(), cwd);
+    const parsed = McpList.safeParse(parseJson(listed?.stdout ?? ''));
+    if (listed?.exitCode !== 0 || !parsed.success) {
+      return 'Dazza couldn’t check which MCP servers Codex would load here, so it won’t run Codex. Update Codex (`codex update`) and try again.';
+    }
+    const others = parsed.data.filter((server) => server.enabled && !(server.name in ours));
+    // Codex's -c splits keys on every dot, so only bare names can be switched off.
+    const unaddressable = others.filter((server) => !/^[\w-]+$/.test(server.name));
+    if (unaddressable.length > 0) {
+      return (
+        `Dazza can’t switch off your Codex MCP server ${unaddressable.map((s) => `"${s.name}"`).join(', ')} for its runs, ` +
+        'because of how Codex reads the name. Rename it without dots, or set `enabled = false` for it in ~/.codex/config.toml.'
+      );
+    }
+    return others.map((server) => server.name);
+  }
+
+  /**
+   * Dazza's guard runs as a Codex hook, and Codex only runs hooks the user has
+   * reviewed, so Dazza passes --dangerously-bypass-hook-trust. That flag would
+   * also run hooks a repository brings in its own .codex folder, unreviewed.
+   * Ask Codex which hooks it would load here, and refuse if any is the
+   * repository's own and untrusted. Returns what's wrong, if anything.
+   */
+  private async checkHooks(cwd: string): Promise<string | undefined> {
+    const listed = await this.appServer('hooks/list', { cwds: [cwd] }, HooksList, cwd).catch(
+      () => undefined,
+    );
+    if (!listed) {
+      return 'Dazza couldn’t check this project’s Codex hooks, so it won’t run Codex here. Update Codex (`codex update`) and try again.';
+    }
+    const unreviewed = listed.data
+      .flatMap((entry) => entry.hooks)
+      .filter(
+        (hook) => hook.source === 'project' && hook.enabled && hook.trustStatus !== 'trusted',
+      );
+    if (unreviewed.length === 0) return undefined;
+    const files = [...new Set(unreviewed.map((hook) => hook.sourcePath))].join(', ');
+    return (
+      `This project brings its own Codex hooks (${files}). They run commands on your machine, and ` +
+      'Dazza won’t run them without your say-so. If you trust them, open `codex` in this folder and approve them with /hooks, then try again. Otherwise remove them.'
+    );
+  }
+
+  /**
    * One request to Codex's app-server: start it, introduce ourselves, ask, and
    * shut it down. Takes a second or two and never touches the model.
    */
@@ -156,6 +236,7 @@ export class CodexProvider implements AgentProvider {
     method: string,
     params: object | undefined,
     result: z.ZodType<T>,
+    cwd = process.cwd(),
   ): Promise<T> {
     const messages = [
       {
@@ -171,7 +252,7 @@ export class CodexProvider implements AgentProvider {
     ];
     const controller = new AbortController();
     const lines = spawnLines(this.bin, ['app-server'], {
-      cwd: process.cwd(),
+      cwd,
       // stdin stays open until we've read the answer, then we stop the server.
       input: `${messages.map((m) => JSON.stringify(m)).join('\n')}\n`,
       keepStdinOpen: true,
@@ -194,13 +275,24 @@ export class CodexProvider implements AgentProvider {
   }
 }
 
+/** Codex lets a call through if its hook times out, so allow the guard plenty. */
+const GUARD_TIMEOUT_SECONDS = 60;
+
 /**
  * Command-line flags for `codex exec`. The prompt goes on stdin ("-"). Building
  * runs in a workspace-write sandbox with network access and automatic approval
  * review (Codex's equivalent of Claude Code's auto mode); conversations run
  * read-only. Dazza's MCP tools are pre-approved.
  */
-export function buildCodexArgs(options: Omit<AgentRunOptions, 'prompt'>): string[] {
+export interface CodexExtras {
+  /** MCP servers from the user's config to switch off for this run. */
+  disableMcpServers?: string[];
+}
+
+export function buildCodexArgs(
+  options: Omit<AgentRunOptions, 'prompt'>,
+  { disableMcpServers = [] }: CodexExtras = {},
+): string[] {
   const args = ['exec', '--json', '--skip-git-repo-check'];
   if (options.model) args.push('-m', options.model);
   if (options.autonomous) {
@@ -211,6 +303,17 @@ export function buildCodexArgs(options: Omit<AgentRunOptions, 'prompt'>): string
     args.push('-s', 'read-only', '-c', 'approval_policy="never"');
   }
   if (options.systemPrompt) args.push('-c', `developer_instructions=${toml(options.systemPrompt)}`);
+  if (options.guard) {
+    // Dazza's guard checks every tool call first (see src/guard). Codex runs only
+    // hooks the user has reviewed; this one is Dazza's own, passed here and not
+    // from any file, and CodexProvider.run refuses repositories with hooks of their own.
+    const hook = shellCommand(options.guard.command, options.guard.args);
+    args.push(
+      '--dangerously-bypass-hook-trust',
+      '-c',
+      `hooks.PreToolUse=[{matcher=".*",hooks=[{type="command",command=${toml(hook)},timeout=${GUARD_TIMEOUT_SECONDS}}]}]`,
+    );
+  }
   for (const [name, server] of Object.entries(options.mcpServers ?? {})) {
     args.push(
       '-c',
@@ -221,6 +324,7 @@ export function buildCodexArgs(options: Omit<AgentRunOptions, 'prompt'>): string
       `mcp_servers.${name}.default_tools_approval_mode="approve"`,
     );
   }
+  for (const name of disableMcpServers) args.push('-c', `mcp_servers.${name}.enabled=false`);
   if (options.resumeSessionId) args.push('resume', options.resumeSessionId);
   args.push('-');
   return args;
@@ -416,6 +520,23 @@ const ModelList = z.object({
       description: z.string(),
       hidden: z.boolean().default(false),
       isDefault: z.boolean().default(false),
+    }),
+  ),
+});
+
+const McpList = z.array(z.object({ name: z.string(), enabled: z.boolean().default(true) }));
+
+const HooksList = z.object({
+  data: z.array(
+    z.object({
+      hooks: z.array(
+        z.object({
+          source: z.string(),
+          sourcePath: z.string(),
+          enabled: z.boolean().default(true),
+          trustStatus: z.string(),
+        }),
+      ),
     }),
   ),
 });

@@ -66,6 +66,8 @@ Headless runs use `codex exec --json --skip-git-repo-check`, with configuration 
 - **Conversation**: `-s read-only` and `approval_policy="never"`.
 - The system prompt goes in as `developer_instructions`.
 - Each MCP server is set with `mcp_servers.<name>.command`, `.args`, and `default_tools_approval_mode="approve"`, so Dazza's tools are pre-approved.
+- Dazza's guard is a `hooks.PreToolUse` hook, with `--dangerously-bypass-hook-trust` since Codex otherwise only runs hooks the user has reviewed. Before each guarded run, the adapter asks the app server for `hooks/list` in the run's directory and refuses (a `setup` error) if the project brings untrusted hooks of its own, which that flag would otherwise run too.
+- The user's own MCP servers (from `codex mcp list --json`) are switched off with `mcp_servers.<name>.enabled=false`, so a run gets only Dazza's. Codex splits `-c` keys on every dot, even quoted, so a server with a dot in its name can't be switched off: the adapter refuses and says how to fix it.
 - `resume <thread>` continues a session. `-` reads the prompt from stdin.
 
 `CodexStream` is stateful: it remembers the thread id and whether the turn finished, and maps Codex items (commands, file changes, MCP calls) onto the same tool events Claude Code produces.
