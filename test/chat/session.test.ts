@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ChatSession } from '../../src/chat/session.js';
+import { stripAnsi } from '../../src/chat/style.js';
 import { setStatus } from '../../src/core/actions.js';
 import { Manager } from '../../src/core/manager.js';
 import { blockTask, submitTask } from '../../src/core/work.js';
-import type { AgentRunOptions } from '../../src/providers/types.js';
+import type { AgentEvent, AgentRunOptions } from '../../src/providers/types.js';
 import { FakeProvider } from '../fakes.js';
 import { makePlan, makeTask, workReport } from '../fixtures.js';
 import { useTempProject } from '../helpers.js';
@@ -149,5 +150,40 @@ describe('ChatSession', () => {
     chat.send('go ahead and build it');
     await chat.idle();
     expect(started).toBe(1);
+  });
+
+  it('keeps a plan sent back for more detail out of the conversation', async () => {
+    const said: string[] = [];
+    const events: AgentEvent[] = [
+      { type: 'started', sessionId: 's', model: 'fake' },
+      { type: 'text', text: 'Writing it up now.' },
+      { type: 'tool_use', id: 'a', tool: 'mcp__dazza__save_plan', input: {} },
+      { type: 'tool_result', id: 'a', ok: false },
+      { type: 'text', text: 'Fixing the flagged descriptions now.' },
+      { type: 'tool_use', id: 'b', tool: 'mcp__dazza__save_plan', input: {} },
+      { type: 'tool_result', id: 'b', ok: true },
+      { type: 'text', text: 'Plan’s saved.' },
+      { type: 'finished', ok: true, output: '', sessionId: 's', durationMs: 1 },
+    ];
+    const chat = new ChatSession({
+      store: project.store,
+      config: project.config,
+      provider: new FakeProvider(events),
+      manager: new Manager({
+        store: project.store,
+        config: project.config,
+        provider: new FakeProvider(events),
+        projectRoot: project.root,
+        mcpServer: { command: 'node', args: [] },
+      }),
+      workerMcp: { command: 'node', args: [] },
+      boardUrl: 'http://localhost:4777',
+      output: { say: (text) => said.push(stripAnsi(text)), print: () => {}, status: () => {} },
+    });
+    chat.send('yes, write it up');
+    await chat.idle();
+    expect(said).toContain('Writing it up now.');
+    expect(said).toContain('Plan’s saved.');
+    expect(said.join('\n')).not.toContain('Fixing');
   });
 });

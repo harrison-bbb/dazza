@@ -25,7 +25,7 @@ export async function requestPermission(
     ? {
         ok: true,
         message:
-          'Asked. Stop here: the task waits for their answer, and you’ll hear it when it resumes.',
+          'Asked. End your turn now, without writing anything else: the task waits for their answer, and you’ll hear it when it resumes.',
       }
     : result;
 }

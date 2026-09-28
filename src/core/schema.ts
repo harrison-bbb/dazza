@@ -41,7 +41,10 @@ export const Subtask = z.object({
 
 /** What Dazza hands over when it submits a task for review. */
 export const Handoff = z.object({
+  /** For the user: what they can do now, in plain words. */
   summary: z.string().min(1),
+  /** For a developer: technical choices, what changed where, caveats. */
+  details: z.string().optional(),
   /** Steps the user can follow to check the work themselves. */
   howToVerify: z.array(z.string().min(1)).default([]),
   branch: z.string().optional(),

@@ -14,8 +14,12 @@ const REPORTED_ON_SUCCESS = new Set<string>([
   McpTools.updateSubtask,
   McpTools.comment,
   McpTools.block,
+  McpTools.askPermission,
   McpTools.submit,
 ]);
+
+/** Once a builder has asked the user something, it's waiting; anything it adds is noise. */
+const ASKING = new Set<string>([McpTools.block, McpTools.askPermission]);
 
 /** Tools that are plumbing rather than work. */
 const HIDDEN_TOOLS = new Set(['TodoWrite', 'ToolSearch']);
@@ -32,8 +36,12 @@ export function createBuildRenderer(root: string): BuildRenderer {
   const pending = new Map<string, { tool: string; input: unknown }>();
   /** Tasks being built, and the worktree each is in, so paths read relative to it. */
   const active = new Map<string, string>();
+  /** Tasks whose builder has asked the user something this run. */
+  const asked = new Set<string>();
   return (event, plan) => {
     if (event.type === 'task_started') active.set(event.task.id, event.dir ?? root);
+    if (event.type === 'task_started' || event.type === 'task_finished')
+      asked.delete(event.task.id);
     if (event.type === 'task_finished') active.delete(event.task.id);
     if (event.type !== 'agent') return renderBuildEvent(event, plan, root);
 
@@ -54,8 +62,10 @@ export function createBuildRenderer(root: string): BuildRenderer {
     if (agentEvent.type === 'tool_result') {
       const call = pending.get(agentEvent.id);
       pending.delete(agentEvent.id);
+      if (call && agentEvent.ok && ASKING.has(call.tool)) asked.add(event.task.id);
       return tag(call && agentEvent.ok ? toolLine(call.tool, call.input, plan, dir) : undefined);
     }
+    if (agentEvent.type === 'text' && asked.has(event.task.id)) return undefined;
     return tag(renderBuildEvent(event, plan, dir));
   };
 }
@@ -133,8 +143,9 @@ export function toolLine(
     return value ? relative(root, value) || value : '';
   };
   if (HIDDEN_TOOLS.has(tool)) return undefined;
+  // A plain bullet: ⏺ renders as a coloured emoji in many terminals.
   const step = (label: string, detail = '') =>
-    `  ${paint.hex(BRAND, '⏺')} ${paint.bold(label)}${detail ? ` ${detail}` : ''}`;
+    `  ${paint.hex(BRAND, '•')} ${paint.bold(label)}${detail ? ` ${detail}` : ''}`;
 
   switch (tool) {
     case 'Read':
@@ -174,6 +185,8 @@ export function toolLine(
       return step('Note', paint.dim(truncate(field('body') ?? '', 90)));
     case McpTools.block:
       return `  ${paint.red('!')} ${paint.bold('Needs you:')} ${field('question') ?? ''}`;
+    case McpTools.askPermission:
+      return `  ${paint.red('!')} ${paint.bold('Asks to run:')} ${field('command') ?? ''}${field('why') ? paint.dim(` · ${field('why')}`) : ''}`;
     case McpTools.submit:
       return `  ${paint.green('✔')} ${paint.bold('Handing over for review')}`;
     default:

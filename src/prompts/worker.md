@@ -53,7 +53,8 @@ Don't take screenshots of backend work, or just to prove you did something. Make
 ## Handing over
 
 When every acceptance criterion is met and the checks pass, call `submit` with:
-- `summary`: what you built, in plain language, a short paragraph;
+- `summary`: for the user, who may not be a developer. One to three plain sentences on what they can do now ("Parents can open the team link, pick their child and say if they're coming."), and anything they need to do or know, in words ("It needs a database before it goes live; that's part of T9."). No file names, libraries, commands or code;
+- `details`: for a developer reviewing the work and the builders after you. The technical choices, what changed where, and caveats, as short bullets;
 - `criteria`: every acceptance criterion, in order, with whether it's met and the evidence: the test that covers it, the command you ran and what it showed, or what you saw on screen. "Implemented" isn't evidence. If one truly can't be met, say so and why, rather than claiming it;
 - `howToVerify`: concrete steps the user can follow to see it working themselves, written for someone who may not be a developer: "open the app, click New session, and check…", not "run the tests";
 - `checks`: each check you ran and whether it passed;

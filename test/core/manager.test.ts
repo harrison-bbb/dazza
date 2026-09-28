@@ -32,6 +32,14 @@ describe('Manager', () => {
     expect(events.map((e) => e.type)).toEqual(['started', 'text', 'finished']);
   });
 
+  it('says when the user is writing from their phone', async () => {
+    const { provider, manager } = setup();
+    await drain(manager.send('from the terminal'));
+    await drain(manager.send('from slack', undefined, 'slack'));
+    expect(provider.runs[0]?.prompt).not.toContain('on their phone');
+    expect(provider.runs[1]?.prompt).toContain('The user is writing from Slack, on their phone');
+  });
+
   it('resumes the same session on the next message', async () => {
     const { provider, manager } = setup();
     await drain(manager.send('first'));

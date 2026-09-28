@@ -6,6 +6,8 @@ Dazza turns [Claude Code](https://docs.claude.com/en/docs/claude-code) or [Codex
 
 > **Status:** early development, built in public. Expect rough edges, and please file issues.
 
+![Dazza scoping a book club site: questions, a play-back, the plan, then the build starting](docs/assets/demo.gif)
+
 ## What a project looks like
 
 ```
@@ -53,13 +55,14 @@ Dazza turns [Claude Code](https://docs.claude.com/en/docs/claude-code) or [Codex
 You need Node 22+ and [Claude Code](https://docs.claude.com/en/docs/claude-code) or [Codex](https://github.com/openai/codex) installed and signed in.
 
 ```sh
-git clone https://github.com/harrison-bbb/dazza && cd dazza
-pnpm install && pnpm build && npm link
+npm i -g dazza
 
 cd ~/your-project
 dazza doctor   # checks everything's ready
 dazza          # start talking
 ```
+
+To run it from source instead: `git clone https://github.com/harrison-bbb/dazza && cd dazza && pnpm install && pnpm build && npm link`.
 
 The first run asks how Dazza should reach the AI, then offers to link Slack or Telegram:
 

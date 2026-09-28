@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createBuildRenderer, renderBuildEvent, toolLine } from '../../src/chat/buildView.js';
+import { stripAnsi } from '../../src/chat/style.js';
 import { makePlan, makeTask } from '../fixtures.js';
 
 const plan = makePlan([
@@ -31,7 +32,7 @@ describe('toolLine', () => {
       plan,
       '/p',
     );
-    expect(line).toBe('  ⏺ Edit src/a.ts\n      - a\n      + b\n      + c');
+    expect(line).toBe('  • Edit src/a.ts\n      - a\n      + b\n      + c');
   });
 
   it('caps long diffs', () => {
@@ -45,9 +46,9 @@ describe('toolLine', () => {
   });
 
   it('shows commands, writes and subtasks closing', () => {
-    expect(toolLine('Bash', { command: 'npm test' }, plan, '/p')).toBe('  ⏺ Run npm test');
+    expect(toolLine('Bash', { command: 'npm test' }, plan, '/p')).toBe('  • Run npm test');
     expect(toolLine('Write', { file_path: '/p/b.ts', content: '1\n2' }, plan, '/p')).toBe(
-      '  ⏺ Write b.ts (2 lines)',
+      '  • Write b.ts (2 lines)',
     );
     expect(
       toolLine('mcp__dazza__update_subtask', { id: 'T1.1', status: 'closed' }, plan, '/p'),
@@ -57,8 +58,8 @@ describe('toolLine', () => {
     );
     expect(toolLine('TodoWrite', {}, plan, '/p')).toBeUndefined();
     // Codex reports file changes without their text: just the file.
-    expect(toolLine('Edit', { file_path: '/p/a.ts' }, plan, '/p')).toBe('  ⏺ Edit a.ts');
-    expect(toolLine('Delete', { file_path: '/p/old.ts' }, plan, '/p')).toBe('  ⏺ Delete old.ts');
+    expect(toolLine('Edit', { file_path: '/p/a.ts' }, plan, '/p')).toBe('  • Edit a.ts');
+    expect(toolLine('Delete', { file_path: '/p/old.ts' }, plan, '/p')).toBe('  • Delete old.ts');
   });
 });
 
@@ -99,6 +100,36 @@ describe('createBuildRenderer', () => {
   const agent = (event: Parameters<typeof renderBuildEvent>[0] extends infer E ? E : never) =>
     event;
 
+  it('goes quiet once a builder has asked the user something', () => {
+    const render = createBuildRenderer('/p');
+    const say = (text: string) =>
+      render({ type: 'agent', task, event: { type: 'text', text } }, plan);
+    render({ type: 'task_started', task, branch: 'b', resumed: false }, plan);
+    render(
+      {
+        type: 'agent',
+        task,
+        event: {
+          type: 'tool_use',
+          id: 'p',
+          tool: 'mcp__dazza__ask_permission',
+          input: { command: 'docker run postgres', why: 'Test the migration' },
+        },
+      },
+      plan,
+    );
+    expect(
+      stripAnsi(
+        render({ type: 'agent', task, event: { type: 'tool_result', id: 'p', ok: true } }, plan) ??
+          '',
+      ),
+    ).toContain('Asks to run: docker run postgres · Test the migration');
+    expect(say('No response requested.')).toBeUndefined();
+    // Picked back up: its words show again.
+    render({ type: 'task_started', task, branch: 'b', resumed: true }, plan);
+    expect(say('Trying prisma dev instead.')).toContain('Trying prisma dev instead.');
+  });
+
   it("shows Dazza's own actions only once they succeed", () => {
     const render = createBuildRenderer('/p');
     const call = (id: string) =>
@@ -123,7 +154,7 @@ describe('createBuildRenderer', () => {
       task,
       event: { type: 'tool_use', id: 'x', tool: 'Bash', input: { command: 'ls' } },
     });
-    expect(render(bash, plan)).toBe('  ⏺ Run ls');
+    expect(render(bash, plan)).toBe('  • Run ls');
     const search = agent({
       type: 'agent',
       task,

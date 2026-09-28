@@ -23,11 +23,26 @@ import type { Store, TaskBuild } from './store.js';
  * review. The worker agent drives these through Dazza's MCP tools.
  */
 
+/** Long enough for a few sentences; anything longer is technical detail. */
+const SUMMARY_MAX = 500;
+
 export const WorkReport = z.object({
   summary: z
     .string()
     .min(1)
-    .describe('What you built, for the user. Plain language, a short paragraph.'),
+    .max(
+      SUMMARY_MAX,
+      `Keep the summary to a few plain sentences (under ${SUMMARY_MAX} characters) and move the technical detail to details.`,
+    )
+    .describe(
+      'For the user, who may not be a developer: what they can do now, in one to three plain sentences, plus anything they must do or know (in words, not commands). No file names, libraries or code.',
+    ),
+  details: z
+    .string()
+    .optional()
+    .describe(
+      'For a developer reviewing the work, and the builders after you: the technical choices, what changed where, and caveats. Short Markdown bullets.',
+    ),
   howToVerify: z
     .array(z.string().min(1))
     .min(1)

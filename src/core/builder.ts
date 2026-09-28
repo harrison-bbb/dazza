@@ -536,7 +536,10 @@ export function taskBrief(
   // What this task builds on, as its builder described it at handoff.
   const foundations = plan.tasks
     .filter((t) => task.dependsOn.includes(t.id) && t.handoff)
-    .map((t) => `### ${t.id}: ${t.title}\n${t.handoff?.summary}`);
+    .map(
+      (t) =>
+        `### ${t.id}: ${t.title}\n${t.handoff?.summary}${t.handoff?.details ? `\n${t.handoff.details}` : ''}`,
+    );
   // Work that belongs to other tasks, so this one stays in its lane.
   const later = plan.tasks
     .filter((t) => t.id !== task.id && ['planned', 'backlog', 'blocked'].includes(t.status))

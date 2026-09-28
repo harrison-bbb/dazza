@@ -136,6 +136,20 @@ describe('building tasks', () => {
     expect((await task('T1')).handoff?.criteria).toEqual(report.criteria);
   });
 
+  it('keeps the summary plain and short, with the technical detail apart', async () => {
+    await git.init();
+    await startTask(project.store, git, await task('T1'));
+    const refused = await submitTask(project.store, 'T1', { ...report, summary: 'x'.repeat(501) });
+    expect(refused).toMatchObject({ ok: false });
+    expect(refused.message).toContain('move the technical detail to details');
+
+    const details = '- Prisma 7 with the pg adapter\n- Migration written, not yet run';
+    expect(
+      await submitTask(project.store, 'T1', { ...report, summary: 'You can sign in.', details }),
+    ).toMatchObject({ ok: true });
+    expect((await task('T1')).handoff).toMatchObject({ summary: 'You can sign in.', details });
+  });
+
   it('won’t hand over template leftovers nothing uses', async () => {
     await git.init();
     const build = await startTask(project.store, git, await task('T1'));

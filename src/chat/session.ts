@@ -197,15 +197,25 @@ export class ChatSession {
     /** What went wrong, for a user who isn't watching the terminal. */
     let failure: string | undefined;
     let rewrotePlan = false;
+    /** save_plan calls awaiting their result, and whether one was just sent back. */
+    const saves = new Set<string>();
+    let fixingPlan = false;
     output.status('chat', 'Thinking');
 
     try {
-      for await (const event of manager.send(message, signal)) {
+      for await (const event of manager.send(
+        message,
+        signal,
+        origin === 'terminal' ? undefined : origin.channel,
+      )) {
         this.countUsage(event);
         this.noticeShares(event);
         if (event.type === 'retry')
           output.status('chat', retryStatus(event, this.options.provider.name));
         if (event.type === 'text') {
+          // Between a plan sent back for more detail and its resubmission, the
+          // agent is fixing its own work: the user doesn't need to hear about it.
+          if (fixingPlan) continue;
           // Amid a build's output, a reply needs a name on it to be seen.
           const label =
             this.isBuilding && reply.length === 0
@@ -215,8 +225,14 @@ export class ChatSession {
           output.say(label + renderInline(event.text));
         } else if (event.type === 'tool_use') {
           rewrotePlan ||= event.tool === McpTools.savePlan;
+          if (event.tool === McpTools.savePlan) {
+            saves.add(event.id);
+            fixingPlan = false;
+          }
           startBuild ||= event.tool === McpTools.startBuild;
           output.status('chat', describeTool(event.tool, event.input));
+        } else if (event.type === 'tool_result' && saves.delete(event.id)) {
+          fixingPlan = !event.ok;
         } else if (event.type === 'finished' && !event.ok) {
           failure = event.error
             ? explainAgentError(event.error, { provider: this.options.provider.id })

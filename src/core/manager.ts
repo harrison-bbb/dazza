@@ -1,4 +1,5 @@
 import { MANAGER_TOOLS, MCP_SERVER_NAME } from '../mcp/server.js';
+import type { ChannelId } from '../notify/channel.js';
 import managerPrompt from '../prompts/manager.md';
 import type { AgentEvent, AgentProvider, McpServerConfig } from '../providers/types.js';
 import type { Activity } from './activity.js';
@@ -37,18 +38,19 @@ export interface ManagerOptions {
 export class Manager {
   constructor(private readonly options: ManagerOptions) {}
 
-  async *send(message: string, signal?: AbortSignal): AsyncGenerator<AgentEvent> {
+  /** `from`: the messaging app the user wrote from, if not the terminal. */
+  async *send(message: string, signal?: AbortSignal, from?: ChannelId): AsyncGenerator<AgentEvent> {
     const { store, provider } = this.options;
     const sessionId = await store.readManagerSession(provider.id);
     if (!sessionId) {
-      yield* this.run(message, undefined, signal);
+      yield* this.run(message, undefined, signal, from);
       return;
     }
 
     // Agent CLIs delete old conversations (Claude Code after 30 days). A resume
     // that fails before it starts means that, so start a fresh one instead.
     let started = false;
-    for await (const event of this.run(message, sessionId, signal)) {
+    for await (const event of this.run(message, sessionId, signal, from)) {
       if (event.type === 'started') started = true;
       const gone =
         !started &&
@@ -64,7 +66,7 @@ export class Manager {
         type: 'text',
         text: 'I couldn’t pick up our earlier conversation, so I’ve started a fresh one. The plan and the board are just as they were.',
       };
-      yield* this.run(message, undefined, signal);
+      yield* this.run(message, undefined, signal, from);
       return;
     }
   }
@@ -73,6 +75,7 @@ export class Manager {
     message: string,
     sessionId: string | undefined,
     signal: AbortSignal | undefined,
+    from: ChannelId | undefined,
   ): AsyncGenerator<AgentEvent> {
     const { store, config, provider, projectRoot, mcpServer } = this.options;
     const { model } = await config.readSettings();
@@ -82,7 +85,14 @@ export class Manager {
     for (const task of plan?.tasks.filter((t) => t.status === 'building') ?? []) {
       activity[task.id] = await store.readActivity(task.id, RECENT_ACTIVITY);
     }
-    const state = describeState(plan, await store.readEvents(), this.options.codebase, activity);
+    const state = [
+      describeState(plan, await store.readEvents(), this.options.codebase, activity),
+      // Away from the terminal, they haven't seen its greeting or build output.
+      from &&
+        `The user is writing from ${CHANNEL_NAMES[from]}, on their phone, not the terminal. Keep the reply short.`,
+    ]
+      .filter(Boolean)
+      .join('\n');
     const events = provider.run({
       prompt: `<project-state>\n${state}\n</project-state>\n\n${message}`,
       cwd: projectRoot,
@@ -110,6 +120,11 @@ export class Manager {
 }
 
 const RECENT_COMMENTS = 10;
+const CHANNEL_NAMES: Record<ChannelId, string> = {
+  slack: 'Slack',
+  telegram: 'Telegram',
+  desktop: 'a desktop notification',
+};
 /** Enough of a builder's latest steps to say how it's going. */
 const RECENT_ACTIVITY = 12;
 

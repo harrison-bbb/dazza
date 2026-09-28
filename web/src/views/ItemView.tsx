@@ -432,7 +432,7 @@ function PermissionNote({
   );
 }
 
-/** What Dazza delivered: the summary, how to check it, and the evidence. */
+/** What Dazza delivered: the summary, how to check it, the evidence, and the technical detail. */
 function HandoffSection({ handoff }: { handoff: Handoff }) {
   return (
     <section className="mt-10">
@@ -484,6 +484,18 @@ function HandoffSection({ handoff }: { handoff: Handoff }) {
 
         {handoff.screenshots.length > 0 && (
           <Screenshots paths={handoff.screenshots} className="border-t border-line p-2" />
+        )}
+
+        {handoff.details && (
+          // For a developer reviewing it; the summary above is the plain version.
+          <details className="group border-t border-line px-4 py-3">
+            <summary className="cursor-pointer text-[12px] text-muted hover:text-ink">
+              Technical details
+            </summary>
+            <div className="mt-2 text-[13px] leading-6 text-ink-2">
+              <Markdown>{handoff.details}</Markdown>
+            </div>
+          </details>
         )}
       </div>
     </section>

@@ -1,8 +1,27 @@
 {
   "name": "dazza",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Stop operating your coding agent. Start managing it.",
+  "keywords": [
+    "claude-code",
+    "codex",
+    "ai",
+    "agent",
+    "cli",
+    "project-management",
+    "coding-agent",
+    "mcp"
+  ],
+  "homepage": "https://dazza.nrthstar.app",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/harrison-bbb/dazza.git"
+  },
+  "bugs": {
+    "url": "https://github.com/harrison-bbb/dazza/issues"
+  },
   "license": "MIT",
+  "author": "Harrison Smith",
   "type": "module",
   "bin": {
     "dazza": "./dist/cli.js"
@@ -21,7 +40,8 @@
     "format": "biome check --write .",
     "test": "vitest run",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
-    "dev:web": "vite --config web/vite.config.ts"
+    "dev:web": "vite --config web/vite.config.ts",
+    "prepublishOnly": "pnpm check && pnpm build"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",
@@ -51,5 +71,8 @@
     "vite": "^8.3.1",
     "vitest": "^5.0.2"
   },
-  "packageManager": "pnpm@10.33.0"
+  "packageManager": "pnpm@10.33.0",
+  "publishConfig": {
+    "access": "public"
+  }
 }
