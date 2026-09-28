@@ -42,6 +42,10 @@ export function resolveCommand(
 
   const ext = win32.extname(found).toLowerCase();
   if (ext === '.exe' || ext === '.com') return { command: found, args: [...args] };
+  // A Node script given by path (a bin set to one): Windows can't run it by itself.
+  if (ext === '.js' || ext === '.mjs' || ext === '.cjs') {
+    return { command: options.nodePath ?? process.execPath, args: [found, ...args] };
+  }
   if (ext === '.cmd' || ext === '.bat') {
     const target = shimTarget(found, readText);
     if (target) {

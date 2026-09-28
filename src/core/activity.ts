@@ -1,5 +1,5 @@
-import { relative } from 'node:path';
 import { McpTools } from '../mcp/server.js';
+import { shownPath } from '../util/paths.js';
 import type { BuildEvent } from './builder.js';
 import { clock } from './errors.js';
 import type { Activity } from './schema.js';
@@ -79,7 +79,7 @@ function step(tool: string, input: unknown, dir: string | undefined): string | u
   };
   const path = (name = 'file_path') => {
     const value = field(name);
-    return value && dir ? relative(dir, value) || '.' : value;
+    return value && dir ? shownPath(dir, value) || '.' : value;
   };
   switch (tool) {
     case 'Write':

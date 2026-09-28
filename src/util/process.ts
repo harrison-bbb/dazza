@@ -138,10 +138,28 @@ function stopTree(child: ChildProcess): void {
 }
 
 function signalTree(pid: number, signal: NodeJS.Signals): void {
+  // Windows has no process groups, and killing a wrapper (npm's .cmd, a shell)
+  // leaves what it started running: taskkill /T takes the whole tree.
+  if (!GROUPS) {
+    killTreeOnWindows(pid);
+    return;
+  }
   try {
-    process.kill(GROUPS ? -pid : pid, signal);
+    process.kill(-pid, signal);
   } catch {
     // Already gone.
+  }
+}
+
+/** Stop a process and everything it started, on Windows. */
+export function killTreeOnWindows(pid: number): void {
+  try {
+    spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    }).on('error', () => undefined);
+  } catch {
+    // No taskkill: nothing more to try.
   }
 }
 
@@ -175,6 +193,7 @@ function isExecError(error: unknown): error is Error & CommandResult & { code: n
  * Resolves the pids stopped.
  */
 export async function stopProcessesIn(dir: string, since: Date): Promise<number[]> {
+  if (process.platform === 'win32') return stopProcessesInOnWindows(dir, since);
   const roots = [dir, await realpath(dir).catch(() => dir)];
   const inDir = (path: string) =>
     roots.some((root) => path === root || path.startsWith(`${root}/`));
@@ -187,6 +206,46 @@ export async function stopProcessesIn(dir: string, since: Date): Promise<number[
     signal(pid, 'SIGTERM');
     setTimeout(() => signal(pid, 'SIGKILL'), KILL_AFTER_MS).unref();
   }
+  return stray;
+}
+
+/**
+ * Windows can't tell Dazza another process's working folder, so it goes by
+ * what's inside the folder: a process whose program or command line is in it
+ * (a dev server run from its node_modules, say). Started after `since`, as
+ * everywhere else.
+ */
+async function stopProcessesInOnWindows(dir: string, since: Date): Promise<number[]> {
+  const result = await execCommand('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    'Get-CimInstance Win32_Process | ForEach-Object { [pscustomobject]@{ pid = $_.ProcessId; cmd = "$($_.ExecutablePath) $($_.CommandLine)"; started = $_.CreationDate.ToUniversalTime().ToString(\'o\') } } | ConvertTo-Json -Compress',
+  ]);
+  const norm = (path: string) => path.toLowerCase().replaceAll('/', '\\');
+  const roots = [dir, await realpath(dir).catch(() => dir)].map(
+    (root) => `${norm(root).replace(/\\+$/, '')}\\`,
+  );
+  const inDir = (cmd: string) => roots.some((root) => norm(cmd).includes(root));
+  let listed: unknown;
+  try {
+    listed = JSON.parse(result?.stdout || '[]');
+  } catch {
+    return [];
+  }
+  const stray = (Array.isArray(listed) ? listed : [listed])
+    .filter(
+      (p): p is { pid: number; cmd: string; started: string } =>
+        typeof p?.pid === 'number' && typeof p.cmd === 'string' && typeof p.started === 'string',
+    )
+    .filter(
+      (p) =>
+        p.pid !== process.pid &&
+        inDir(p.cmd) &&
+        Date.parse(p.started) >= since.getTime() - START_SLACK_MS,
+    )
+    .map((p) => p.pid);
+  for (const pid of stray) killTreeOnWindows(pid);
   return stray;
 }
 

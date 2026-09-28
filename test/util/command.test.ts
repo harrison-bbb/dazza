@@ -75,6 +75,14 @@ describe('resolveCommand', () => {
     ).toEqual({ command: `${LOCAL_BIN}\\claude.exe`, args: ['--version'] });
   });
 
+  it('runs a Node script given by path with Node', () => {
+    const script = 'C:\\tools\\fake-claude.mjs';
+    expect(resolveCommand(script, ['-p'], windows({ [script]: '' }))).toEqual({
+      command: 'C:\\Program Files\\nodejs\\node.exe',
+      args: [script, '-p'],
+    });
+  });
+
   it('falls back to the shell for scripts it can’t unwrap, like npm itself', () => {
     const launch = resolveCommand(
       'npm',

@@ -275,6 +275,7 @@ function judgeSegment(segment: string, ctx: Ctx): Decision {
     case 'crontab':
       return never(`${base} changes the machine itself, not the project.`);
     case 'security':
+    case 'secret-tool':
       return never('The keychain holds the user’s passwords.');
     case 'pkill':
     case 'killall':

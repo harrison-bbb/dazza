@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { killTreeOnWindows } from '../util/process.js';
 
 /**
  * `!` mode, as in Claude Code: `!npm test` runs in the user's own shell, in the
@@ -30,7 +31,9 @@ export async function runShell(
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, FORCE_COLOR: '1' },
   });
-  const stop = () => child.kill('SIGINT');
+  // Windows has no SIGINT for a child: stop the shell and what it started.
+  const stop = () =>
+    process.platform === 'win32' && child.pid ? killTreeOnWindows(child.pid) : child.kill('SIGINT');
   signal.addEventListener('abort', stop);
   const tail: string[] = [];
   const read = (stream: NodeJS.ReadableStream) =>

@@ -12,7 +12,8 @@ describe('Config', () => {
     expect(await project.config.readSettings()).toEqual({ model: 'sonnet' });
   });
 
-  it('keeps files private to the user', async () => {
+  // Windows has no POSIX modes: the user profile's own permissions keep it private.
+  it.skipIf(process.platform === 'win32')('keeps files private to the user', async () => {
     await project.config.updateSettings({ model: 'opus' });
     const mode = (await stat(join(project.config.dir, 'settings.json'))).mode & 0o777;
     expect(mode).toBe(0o600);

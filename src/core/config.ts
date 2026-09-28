@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { z } from 'zod';
+import { isSealed, type SecretStore, secretStore } from './keychain.js';
 
 /**
  * Per-user state that isn't about any one project: preferences, and the latest
@@ -87,8 +88,33 @@ export type Limits = z.infer<typeof Limits>;
 export const UpdateCheck = z.object({ checkedAt: z.iso.datetime(), latest: z.string() });
 export type UpdateCheck = z.infer<typeof UpdateCheck>;
 
+/** The fields that are secrets, per file. They go to the OS's secret store when it has one. */
+const SECRET_FIELDS: Record<string, readonly string[]> = {
+  'connection.json': ['apiKey'],
+  'telegram.json': ['botToken'],
+  'slack.json': ['botToken', 'appToken'],
+};
+
 export class Config {
-  constructor(readonly dir = defaultConfigDir()) {}
+  constructor(
+    readonly dir = defaultConfigDir(),
+    /** Where secrets go instead of the files; undefined keeps them in the files. */
+    readonly secrets: SecretStore | undefined = secretStore(),
+  ) {}
+
+  /** Where each secret is kept, for `dazza doctor`. Empty when none are saved. */
+  async secretsKeptIn(): Promise<string[]> {
+    const places = new Set<string>();
+    for (const [file, fields] of Object.entries(SECRET_FIELDS)) {
+      const raw = await this.readRaw(file);
+      for (const field of fields) {
+        const value = raw?.[field];
+        if (isSealed(value)) places.add(this.secrets?.name ?? 'the system’s secret store');
+        else if (typeof value === 'string') places.add('Dazza’s config folder (owner-only)');
+      }
+    }
+    return [...places];
+  }
 
   async readSettings(): Promise<Settings> {
     return (await this.read('settings.json', Settings)) ?? {};
@@ -118,7 +144,7 @@ export class Config {
 
   /** Sign out of Dazza. Leaves the agent CLI's own sign-in alone. */
   async clearConnection(): Promise<void> {
-    await rm(join(this.dir, 'connection.json'), { force: true });
+    await this.remove('connection.json');
   }
 
   readTelegram(): Promise<TelegramLink | undefined> {
@@ -130,7 +156,7 @@ export class Config {
   }
 
   async clearTelegram(): Promise<void> {
-    await rm(join(this.dir, 'telegram.json'), { force: true });
+    await this.remove('telegram.json');
   }
 
   readSlack(): Promise<SlackLink | undefined> {
@@ -142,7 +168,7 @@ export class Config {
   }
 
   async clearSlack(): Promise<void> {
-    await rm(join(this.dir, 'slack.json'), { force: true });
+    await this.remove('slack.json');
   }
 
   /** Where one Dazza window claims the Slack connection, so replies don't go astray. */
@@ -159,16 +185,68 @@ export class Config {
   }
 
   private async read<T>(file: string, schema: z.ZodType<T>): Promise<T | undefined> {
+    const raw = await this.readRaw(file);
+    if (!raw) return undefined;
+    const fields = SECRET_FIELDS[file] ?? [];
+    let plain = false;
+    for (const field of fields) {
+      const value = raw[field];
+      if (isSealed(value)) raw[field] = await this.secrets?.open(value);
+      else if (typeof value === 'string') plain = true;
+    }
+    const parsed = schema.safeParse(raw);
+    if (!parsed.success) return undefined;
+    // Saved before Dazza used the secret store (or where it had none then): move it in.
+    if (plain && this.secrets) await this.write(file, parsed.data).catch(() => undefined);
+    return parsed.data;
+  }
+
+  private async readRaw(file: string): Promise<Record<string, unknown> | undefined> {
     try {
-      const parsed = schema.safeParse(JSON.parse(await readFile(join(this.dir, file), 'utf8')));
-      return parsed.success ? parsed.data : undefined;
+      const value: unknown = JSON.parse(await readFile(join(this.dir, file), 'utf8'));
+      return typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : undefined;
     } catch {
       return undefined;
     }
   }
 
+  /** Deletes a file and the secrets it points to. */
+  private async remove(file: string): Promise<void> {
+    const raw = await this.readRaw(file);
+    for (const field of SECRET_FIELDS[file] ?? []) {
+      const value = raw?.[field];
+      if (isSealed(value)) await this.secrets?.discard(value);
+    }
+    await rm(join(this.dir, file), { force: true });
+  }
+
+  /** The secret's name in the store: which setting, and whose config (tests and sandboxes differ). */
+  private account(file: string, field: string): string {
+    const name = `${file.replace(/\.json$/, '')}.${field}`;
+    // Only the usual folder gets the plain name: a sandbox (DAZZA_CONFIG_DIR) must
+    // never overwrite the real thing's secrets.
+    return resolve(this.dir) === resolve(usualConfigDir())
+      ? name
+      : `${name} (${resolve(this.dir)})`;
+  }
+
   /** Owner-only permissions: this directory holds API keys and bot tokens. */
   private async write(file: string, value: unknown): Promise<void> {
+    const fields = SECRET_FIELDS[file];
+    if (fields && this.secrets && typeof value === 'object' && value !== null) {
+      const sealed: Record<string, unknown> = { ...value };
+      for (const field of fields) {
+        const secret = sealed[field];
+        if (typeof secret !== 'string') continue;
+        const put = await this.secrets
+          .seal(this.account(file, field), secret)
+          .catch(() => undefined);
+        if (put) sealed[field] = put;
+      }
+      value = sealed;
+    }
     await mkdir(this.dir, { recursive: true, mode: 0o700 });
     const target = join(this.dir, file);
     const temp = `${target}.${process.pid}.${randomUUID()}.tmp`;
@@ -179,6 +257,10 @@ export class Config {
 
 /** Where Dazza keeps its settings and keys. Exported for the guard, which keeps agents out of it. */
 export function defaultConfigDir(): string {
-  if (process.env.DAZZA_CONFIG_DIR) return process.env.DAZZA_CONFIG_DIR;
+  return process.env.DAZZA_CONFIG_DIR || usualConfigDir();
+}
+
+/** Where the config lives when DAZZA_CONFIG_DIR doesn't move it. */
+function usualConfigDir(): string {
   return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'dazza');
 }

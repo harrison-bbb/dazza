@@ -33,6 +33,8 @@ export async function doctor(): Promise<void> {
     checkTelegram(),
     checkBrowser(),
   ]);
+  // After the rest: reading a secret saved in a file moves it into the keychain.
+  checks.push(await checkSecrets(config));
 
   for (const check of checks) {
     const mark = check.ok ? styleText('green', '✔') : styleText('red', '✖');
@@ -117,6 +119,18 @@ async function checkTelegram(): Promise<Check> {
     detail: link
       ? `linked to @${link.botUsername}`
       : 'not linked (optional; /telegram in the chat)',
+  };
+}
+
+async function checkSecrets(config: Config): Promise<Check> {
+  const places = await config.secretsKeptIn();
+  return {
+    label: 'Secrets',
+    ok: true,
+    detail:
+      places.length > 0
+        ? `your keys and tokens are kept in ${places.join(' and ')}`
+        : 'none saved (subscriptions sign in through the agent CLI)',
   };
 }
 

@@ -5,6 +5,7 @@ import { createServer, type Server } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { resolveCommand } from '../util/command.js';
+import { killTreeOnWindows } from '../util/process.js';
 
 const START_TIMEOUT_MS = 90_000;
 const PROBE_INTERVAL_MS = 500;
@@ -126,8 +127,9 @@ export class AppServer {
   private async serveStatic(dir: string): Promise<string> {
     const root = resolve(this.root, dir);
     const server = createServer(async (req, res) => {
-      const path = normalize(decodeURIComponent((req.url ?? '/').split('?')[0] ?? '/'));
-      const file = join(root, path.endsWith('/') ? `${path}index.html` : path);
+      const url = decodeURIComponent((req.url ?? '/').split('?')[0] ?? '/');
+      // Before normalize, which turns / into \ on Windows.
+      const file = join(root, normalize(url.endsWith('/') ? `${url}index.html` : url));
       if (file !== root && !file.startsWith(root + sep)) return res.writeHead(403).end();
       try {
         const body = await readFile(file);
@@ -150,7 +152,7 @@ export class AppServer {
     this.child = undefined;
     if (!child?.pid || child.exitCode !== null) return;
     try {
-      if (process.platform === 'win32') child.kill();
+      if (process.platform === 'win32') killTreeOnWindows(child.pid);
       else process.kill(-child.pid, 'SIGTERM');
     } catch {
       // Already gone.

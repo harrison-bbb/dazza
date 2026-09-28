@@ -1,5 +1,5 @@
 import { appendFile, mkdir, readFile, stat } from 'node:fs/promises';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { execCommand } from '../util/process.js';
 
 /**
@@ -97,7 +97,8 @@ export class Git {
     for (const entry of list.split('\n\n')) {
       const lines = entry.split('\n');
       const dir = lines.find((line) => line.startsWith('worktree '))?.slice('worktree '.length);
-      if (dir && lines.includes(`branch refs/heads/${branch}`)) return dir;
+      // Git writes C:/Users/... on Windows; resolve gives the system's own form.
+      if (dir && lines.includes(`branch refs/heads/${branch}`)) return resolve(dir);
     }
     return undefined;
   }

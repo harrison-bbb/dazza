@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -111,7 +111,10 @@ describe('spawnLines abort', () => {
 describe('stopProcessesIn', () => {
   it('stops what was started in a folder during the run, and leaves older processes alone', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'dazza-stray-'));
-    const idle = ['-e', 'setInterval(() => {}, 1000)'];
+    // A script in the folder: on Windows, Dazza finds strays by what they run, not their cwd.
+    const script = join(dir, 'idle.js');
+    await writeFile(script, 'setInterval(() => {}, 1000)');
+    const idle = [script];
     const older = spawn(node, idle, { cwd: dir, detached: true, stdio: 'ignore' });
     await new Promise((r) => setTimeout(r, 1500)); // ps start times are to the second
     const since = new Date();
@@ -120,7 +123,8 @@ describe('stopProcessesIn', () => {
 
     const stopped = await stopProcessesIn(dir, since);
     expect(stopped).toEqual([stray.pid]);
-    await new Promise((r) => setTimeout(r, 300));
+    const gone = () => stray.exitCode !== null || stray.signalCode !== null;
+    for (let i = 0; i < 50 && !gone(); i++) await new Promise((r) => setTimeout(r, 100));
     expect(stray.exitCode !== null || stray.signalCode !== null).toBe(true);
     expect(older.exitCode).toBeNull();
     older.kill();

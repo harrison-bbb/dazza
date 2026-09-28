@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { mkdir, readdir } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { shownPath } from '../util/paths.js';
 import type { MenuItem, MenuSource } from './editor.js';
 
 /**
@@ -37,7 +38,7 @@ export async function listProjectFiles(root: string): Promise<string[]> {
       if (entry.isDirectory()) {
         if (!SKIP.has(entry.name)) await walk(path);
       } else if (entry.isFile() && found.length < MAX_FILES) {
-        found.push(relative(root, path));
+        found.push(shownPath(root, path));
       }
     }
   };
@@ -81,9 +82,13 @@ export function pointedAt(message: string, root: string): string | undefined {
     .map((m) => m[1] ?? '')
     .filter((path) => existsSync(resolve(root, path)));
   const pasted = [
-    ...message.matchAll(/(?:^|\s)'?((?:\/|[A-Za-z]:\\\\)[^\n']*?\.[A-Za-z0-9]{1,5})'?(?=\s|$)/g),
+    // macOS and Linux terminals paste '/a/b.png' or /a/b\ c.png; Windows ones "C:\a\b.png".
+    ...message.matchAll(
+      /(?:^|\s)['"]?((?:\/|[A-Za-z]:[\\/])[^\n'"]*?\.[A-Za-z0-9]{1,5})['"]?(?=\s|$)/g,
+    ),
   ]
-    .map((m) => (m[1] ?? '').replace(/\\ /g, ' '))
+    .map((m) => m[1] ?? '')
+    .map((path) => (path.startsWith('/') ? path.replace(/\\ /g, ' ') : path))
     .filter((path) => isAbsolute(path) && isFile(path));
   const all = [...new Set([...mentioned, ...pasted])];
   if (all.length === 0) return undefined;

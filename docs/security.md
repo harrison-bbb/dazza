@@ -14,7 +14,13 @@ Per-user config lives in `~/.config/dazza` (or `$XDG_CONFIG_HOME/dazza`, or `$DA
 | `settings.json` | Preferences, e.g. the model. No secrets |
 | `limits.json` | The latest subscription usage reading. No secrets |
 
-Tokens are plain text in these files, protected only by file permissions. Anyone who can read your home directory as you can read them. Moving them to the OS keychain is planned.
+API keys and bot tokens go to the operating system's own secret store, and the file keeps only a pointer to them:
+
+- **macOS:** the login Keychain (service `dazza`), through `security`.
+- **Linux:** the Secret Service (GNOME Keyring, KWallet), through `secret-tool`.
+- **Windows:** encrypted with DPAPI, so only your Windows account can decrypt it; the encrypted form stays in the file.
+
+The secret travels on stdin, never in a command's arguments where another process could see it. A token saved by an older version moves in the next time Dazza reads it. Where there's no store (a headless Linux box, a container, or `DAZZA_KEYCHAIN=off`), it stays in the owner-only file as before. `dazza doctor` says which. Builders can't read the keychain: the guard refuses `security` and `secret-tool` outright.
 
 On a subscription connection, Dazza never sees your Claude or ChatGPT credentials. The agent CLI keeps its own sign-in. Dazza also strips variables that change billing from the agent's environment (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `OPENAI_API_KEY`, `CODEX_API_KEY`), so something left in your shell can't switch billing without you knowing.
 

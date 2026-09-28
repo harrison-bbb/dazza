@@ -118,6 +118,11 @@ describe('guard policy: files', () => {
     expect(tool('Read', '/work/project/.dazza/scope.md')).toBe('allow');
   });
 
+  it('keeps builders out of the keychain, where Dazza keeps its tokens', () => {
+    expect(run('security find-generic-password -s dazza -w')).toBe('never');
+    expect(run('secret-tool lookup service dazza account slack.botToken')).toBe('never');
+  });
+
   it('never reads credentials, but reads the project freely', () => {
     expect(tool('Read', '/work/T3/.env')).toBe('allow');
     expect(tool('Read', '/home/sam/.ssh/id_ed25519')).toBe('never');

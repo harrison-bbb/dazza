@@ -122,7 +122,15 @@ describe('Claude Code runs', () => {
     const settings = JSON.parse(args[args.indexOf('--settings') + 1] ?? '{}');
     expect(settings.hooks.PreToolUse[0]).toEqual({
       matcher: '*',
-      hooks: [{ type: 'command', command: "/usr/bin/node '/opt/dazza cli.js' guard --root /p" }],
+      hooks: [
+        {
+          type: 'command',
+          command:
+            process.platform === 'win32'
+              ? '/usr/bin/node "/opt/dazza cli.js" guard --root /p'
+              : "/usr/bin/node '/opt/dazza cli.js' guard --root /p",
+        },
+      ],
     });
   });
 });

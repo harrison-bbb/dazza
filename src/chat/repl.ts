@@ -1,6 +1,6 @@
 import { unwatchFile, watchFile } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join, relative } from 'node:path';
+import { basename, join } from 'node:path';
 import pkg from '../../package.json' with { type: 'json' };
 import { startBoard } from '../board/server.js';
 import { type ActionResult, approvePlan, closeTask, requestChanges } from '../core/actions.js';
@@ -37,6 +37,7 @@ import { connectTelegram } from '../setup/telegram.js';
 import { SlackBridge } from '../slack/bridge.js';
 import { TelegramBridge } from '../telegram/bridge.js';
 import { debounce } from '../util/debounce.js';
+import { shownPath } from '../util/paths.js';
 import { errorMessage } from '../util/text.js';
 import { fileMenu, listProjectFiles, pasteClipboardImage, pointedAt } from './attachments.js';
 import {
@@ -466,7 +467,7 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
       history,
       pasteImage: async () => {
         const saved = await pasteClipboardImage(join(store.dir, 'media', 'pasted'));
-        return saved && `${relative(projectRoot, saved)} `;
+        return saved && `${shownPath(projectRoot, saved)} `;
       },
       // Esc stops Dazza's reply (not the build), as it does in Claude Code.
       onInterrupt: () => {

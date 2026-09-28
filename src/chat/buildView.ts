@@ -1,4 +1,3 @@
-import { relative } from 'node:path';
 import type { BuildEvent } from '../core/builder.js';
 import { clock } from '../core/errors.js';
 import { humanDuration } from '../core/estimates.js';
@@ -6,6 +5,7 @@ import { type Plan, SIZE_MINUTES } from '../core/schema.js';
 import { MCP_SERVER_NAME } from '../mcp/name.js';
 import { McpTools } from '../mcp/server.js';
 import type { AgentEvent, Compacted } from '../providers/types.js';
+import { shownPath } from '../util/paths.js';
 import { BRAND } from './banner.js';
 import { paint, renderInline } from './style.js';
 
@@ -209,7 +209,7 @@ export function toolLine(
   };
   const path = (name = 'file_path') => {
     const value = field(name);
-    return value ? relative(root, value) || value : '';
+    return value ? shownPath(root, value) || value : '';
   };
   // A plain bullet: ⏺ renders as a coloured emoji in many terminals.
   const step = (label: string, detail = '') =>
