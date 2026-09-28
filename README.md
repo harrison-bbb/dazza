@@ -62,6 +62,8 @@ dazza doctor   # checks everything's ready
 dazza          # start talking
 ```
 
+With pnpm, it's `pnpm add -g dazza`. If pnpm says `ERR_PNPM_NO_GLOBAL_BIN_DIR`, run `pnpm setup` once and open a new terminal.
+
 To run it from source instead: `git clone https://github.com/harrison-bbb/dazza && cd dazza && pnpm install && pnpm build && npm link`.
 
 The first run asks how Dazza should reach the AI, then offers to link Slack or Telegram:

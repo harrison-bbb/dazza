@@ -2,6 +2,7 @@ import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import { readdir, readlink, realpath } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
+import { resolveCommand } from './command.js';
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT = 64 * 1024 * 1024;
@@ -34,8 +35,10 @@ export async function execCommand(
   cwd?: string,
 ): Promise<CommandResult | undefined> {
   try {
+    const launch = resolveCommand(command, args, env && { env });
     // Big diffs and file lists outgrow the 1 MB default.
-    const { stdout, stderr } = await execFileAsync(command, args, {
+    const { stdout, stderr } = await execFileAsync(launch.command, launch.args, {
+      ...(launch.shell && { shell: true }),
       maxBuffer: MAX_OUTPUT,
       ...(env && { env }),
       ...(cwd && { cwd }),
@@ -72,7 +75,9 @@ export async function* spawnLines(
   args: readonly string[],
   options: SpawnLinesOptions,
 ): AsyncGenerator<string> {
-  const child = spawn(command, args, {
+  const launch = resolveCommand(command, args, options.env && { env: options.env });
+  const child = spawn(launch.command, launch.args, {
+    ...(launch.shell && { shell: true }),
     cwd: options.cwd,
     stdio: 'pipe',
     // Its own process group, so the whole tree can be stopped together.
@@ -143,7 +148,11 @@ function signalTree(pid: number, signal: NodeJS.Signals): void {
 /** Run a command attached to this terminal, for interactive steps like signing in. */
 export function runInteractive(command: string, args: readonly string[]): Promise<number | null> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: 'inherit' });
+    const launch = resolveCommand(command, args);
+    const child = spawn(launch.command, launch.args, {
+      stdio: 'inherit',
+      ...(launch.shell && { shell: true }),
+    });
     child.once('error', reject);
     child.once('close', resolve);
   });
@@ -228,9 +237,21 @@ function signal(pid: number, name: NodeJS.Signals): void {
   }
 }
 
-/** A command and its arguments as one line for a shell, quoted where needed. */
-export function shellCommand(command: string, args: readonly string[]): string {
+/**
+ * A command and its arguments as one line for a shell, quoted where needed.
+ * On Windows, double quotes, which both bash and cmd.exe read the same way for
+ * paths like C:\Program Files\nodejs\node.exe.
+ */
+export function shellCommand(
+  command: string,
+  args: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const quote =
+    platform === 'win32'
+      ? (word: string) => `"${word.replace(/"/g, '\\"')}"`
+      : (word: string) => `'${word.replace(/'/g, `'\\''`)}'`;
   return [command, ...args]
-    .map((word) => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`))
+    .map((word) => (/^[\w@%+=:,./-]+$/.test(word) ? word : quote(word)))
     .join(' ');
 }

@@ -498,8 +498,20 @@ function unquote(text: string): string {
 }
 
 function expandHome(path: string, home: string): string {
-  if (path === '~' || path.startsWith('~/')) return home + path.slice(1);
-  return path.replace(/^\$\{?HOME\}?/, home);
+  const native = fromGitBash(path);
+  if (native === '~' || native.startsWith('~/')) return home + native.slice(1);
+  return native.replace(/^\$\{?HOME\}?/, home);
+}
+
+/**
+ * On Windows, Claude Code runs commands in Git Bash, which writes C:\Users as
+ * /c/Users. Read those as the Windows paths they are, or every absolute path
+ * looks like it's outside the task. Exported for tests.
+ */
+export function fromGitBash(path: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== 'win32') return path;
+  const drive = /^\/([a-zA-Z])(\/|$)/.exec(path);
+  return drive ? `${drive[1]?.toUpperCase()}:\\${path.slice(3).replace(/\//g, '\\')}` : path;
 }
 
 function inside(target: string, dir: string): boolean {

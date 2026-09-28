@@ -1,6 +1,6 @@
 {
   "name": "dazza",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Stop operating your coding agent. Start managing it.",
   "keywords": [
     "claude-code",
@@ -24,7 +24,7 @@
   "author": "Harrison Smith",
   "type": "module",
   "bin": {
-    "dazza": "./dist/cli.js"
+    "dazza": "dist/cli.js"
   },
   "files": [
     "dist",

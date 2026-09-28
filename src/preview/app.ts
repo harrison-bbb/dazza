@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import { extname, join, normalize, resolve, sep } from 'node:path';
+import { resolveCommand } from '../util/command.js';
 
 const START_TIMEOUT_MS = 90_000;
 const PROBE_INTERVAL_MS = 500;
@@ -73,7 +74,9 @@ export class AppServer {
 
   private async runScript(launcher: Extract<AppLauncher, { type: 'script' }>): Promise<string> {
     const port = await freePort();
-    const child = spawn(launcher.command, launcher.args, {
+    const launch = resolveCommand(launcher.command, launcher.args);
+    const child = spawn(launch.command, launch.args, {
+      ...(launch.shell && { shell: true }),
       cwd: this.root,
       // Most dev servers honour PORT; the rest print whatever port they chose.
       env: { ...process.env, PORT: String(port), BROWSER: 'none', FORCE_COLOR: '0', NO_COLOR: '1' },
@@ -192,7 +195,9 @@ export function needsInstall(root: string): boolean {
 export async function installDependencies(root: string): Promise<void> {
   const manager = packageManager(root);
   await new Promise<void>((done, reject) => {
-    const child = spawn(manager, ['install'], {
+    const launch = resolveCommand(manager, ['install']);
+    const child = spawn(launch.command, launch.args, {
+      ...(launch.shell && { shell: true }),
       cwd: root,
       env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],

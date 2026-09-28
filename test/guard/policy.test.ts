@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { judge, patchedFiles } from '../../src/guard/policy.js';
+import { fromGitBash, judge, patchedFiles } from '../../src/guard/policy.js';
 
 const ctx = { workspace: '/work/T3', home: '/home/sam', tmp: '/var/folders/xy/T' };
 const run = (command: string) => judge({ tool: 'Bash', input: { command } }, ctx).kind;
@@ -135,5 +135,14 @@ describe('guard policy: Codex tools', () => {
     expect(codex('write_stdin', { chars: 'git push origin main\n' })).toBe('never');
     expect(codex('write_stdin', { chars: 'npm test\n' })).toBe('allow');
     expect(codex('write_stdin', { chars: '' })).toBe('allow');
+  });
+});
+
+describe('guard policy: Windows paths', () => {
+  it('reads Git Bash paths as the Windows paths they are', () => {
+    expect(fromGitBash('/c/Users/dad/project/src', 'win32')).toBe('C:\\Users\\dad\\project\\src');
+    expect(fromGitBash('/d', 'win32')).toBe('D:\\');
+    expect(fromGitBash('/tmp/x', 'win32')).toBe('/tmp/x');
+    expect(fromGitBash('/c/Users', 'darwin')).toBe('/c/Users');
   });
 });

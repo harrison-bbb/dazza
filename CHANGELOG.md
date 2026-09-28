@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- **Windows:** Dazza now finds Claude Code and Codex however they were installed. npm installs them as `.cmd` wrappers, which Dazza couldn't start, so it reported them as not installed. `/try` can run `npm` again for the same reason. Dazza's guard also understands the `/c/Users/...` paths Git Bash uses, and quotes its hook command so a Node path with spaces works.
+
 ## 0.1.0
 
 The first release.
