@@ -120,5 +120,6 @@ describe('prompt history', () => {
     const history = await store.readHistory();
     expect(history).toHaveLength(500);
     expect(history.at(-1)).toBe('m519');
-  });
+    // 520 locked appends: slow on a busy CI runner.
+  }, 30_000);
 });
