@@ -70,9 +70,9 @@ export function TaskEditor({ task, onDone }: { task: Task; onDone(saved: boolean
           className={`${field} w-auto`}
         >
           {!task.size && <option value="">Not sized</option>}
-          <option value="S">Small · about 20 minutes</option>
-          <option value="M">Medium · about 45 minutes</option>
-          <option value="L">Large · about 90 minutes</option>
+          <option value="S">Small · about 10 minutes</option>
+          <option value="M">Medium · about 20 minutes</option>
+          <option value="L">Large · about 40 minutes</option>
         </select>
       </label>
       <label className="block">

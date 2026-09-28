@@ -7,6 +7,7 @@ import { claim } from '../util/lock.js';
 import { stopProcessesIn } from '../util/process.js';
 import type { Config } from './config.js';
 import { explainAgentError } from './errors.js';
+import { sizeMinutes } from './estimates.js';
 import { nextTask } from './plan.js';
 import type { Event, Plan, Task } from './schema.js';
 import type { Store, TaskBuild } from './store.js';
@@ -72,7 +73,15 @@ export const DEFAULT_TIMING: Timing = {
 /** What the build loop reports, for the CLI (and other channels) to show. */
 export type BuildEvent =
   | { type: 'repo_created' }
-  | { type: 'task_started'; task: Task; branch: string; resumed: boolean; dir?: string }
+  | {
+      type: 'task_started';
+      task: Task;
+      branch: string;
+      resumed: boolean;
+      dir?: string;
+      /** How long a task this size usually takes on this project. */
+      minutes?: number;
+    }
   | { type: 'agent'; task: Task; event: AgentEvent }
   | { type: 'task_finished'; task: Task; outcome: 'review' | 'blocked' | 'paused' }
   /** Holding off until a usage limit resets, or a busy service settles. */
@@ -284,12 +293,16 @@ async function* buildOne(
       return 'done';
     }
     if (!announced) {
+      const plan = await store.readPlan();
+      const minutes =
+        plan && task.size ? sizeMinutes(plan, await store.readEvents())[task.size] : undefined;
       yield {
         type: 'task_started',
         task,
         branch: build.branch,
         resumed,
         ...(build.dir && { dir: build.dir }),
+        ...(minutes && { minutes }),
       };
     }
     announced = true;

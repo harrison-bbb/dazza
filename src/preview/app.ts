@@ -162,13 +162,7 @@ export async function detectLauncher(root: string): Promise<AppLauncher | undefi
     const scripts: Record<string, unknown> = JSON.parse(pkg).scripts ?? {};
     const script = DEV_SCRIPTS.find((name) => typeof scripts[name] === 'string');
     if (script) {
-      const manager = existsSync(join(root, 'pnpm-lock.yaml'))
-        ? 'pnpm'
-        : existsSync(join(root, 'yarn.lock'))
-          ? 'yarn'
-          : existsSync(join(root, 'bun.lockb')) || existsSync(join(root, 'bun.lock'))
-            ? 'bun'
-            : 'npm';
+      const manager = packageManager(root);
       return {
         type: 'script',
         command: manager,
@@ -179,6 +173,41 @@ export async function detectLauncher(root: string): Promise<AppLauncher | undefi
   }
   const dir = STATIC_DIRS.find((d) => existsSync(join(root, d, 'index.html')));
   return dir ? { type: 'static', dir } : undefined;
+}
+
+/** The package manager a Node project uses, going by its lockfile. */
+export function packageManager(root: string): 'pnpm' | 'yarn' | 'bun' | 'npm' {
+  if (existsSync(join(root, 'pnpm-lock.yaml'))) return 'pnpm';
+  if (existsSync(join(root, 'yarn.lock'))) return 'yarn';
+  if (existsSync(join(root, 'bun.lockb')) || existsSync(join(root, 'bun.lock'))) return 'bun';
+  return 'npm';
+}
+
+/** Whether a Node project's dependencies still need installing before it can run. */
+export function needsInstall(root: string): boolean {
+  return existsSync(join(root, 'package.json')) && !existsSync(join(root, 'node_modules'));
+}
+
+/** Install a Node project's dependencies. Rejects with the tail of the output if it fails. */
+export async function installDependencies(root: string): Promise<void> {
+  const manager = packageManager(root);
+  await new Promise<void>((done, reject) => {
+    const child = spawn(manager, ['install'], {
+      cwd: root,
+      env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    const onData = (chunk: Buffer) => {
+      output = (output + chunk.toString()).slice(-4000);
+    };
+    child.stdout?.on('data', onData);
+    child.stderr?.on('data', onData);
+    child.once('error', reject);
+    child.once('exit', (code) =>
+      code === 0 ? done() : reject(new Error(`${manager} install failed.\n${tail(output)}`)),
+    );
+  });
 }
 
 async function freePort(): Promise<number> {

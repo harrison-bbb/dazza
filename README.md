@@ -15,7 +15,15 @@ Dazza turns [Claude Code](https://docs.claude.com/en/docs/claude-code) or [Codex
   1. Who books: just clients, or do you assign walkers too?
   …
 
-● Got enough to go on. Writing up the plan now, a few minutes.
+● Here's what I'll build, before I write it up:
+  · Clients request a walk from a link; you approve it and assign a walker
+  · Calls I made for you: sign-in by email link, hosted on Render (free tier)
+  · Not in this version: payments
+  Anything wrong or missing?
+
+› looks right
+
+● Writing up the plan now, a few minutes.
 ✔ Plan saved · 9 tasks · about 5½ hours of building
   M1 Bookings · Clients can request walks and you approve them
     T1  Project setup · S
@@ -32,11 +40,11 @@ Dazza turns [Claude Code](https://docs.claude.com/en/docs/claude-code) or [Codex
   /accept T1 to merge it · /changes T1 <what to change> · /try T1 to run it first
 ```
 
-1. **Scoping is a conversation.** Dazza reads your code first if there is any, asks a few questions at a time, and makes sensible calls on anything you don't care about. It asks what's live (real users, data or money) before planning.
+1. **Scoping is a meeting, not a form.** Dazza reads your code first if there is any, then runs a short scoping meeting. It asks a few plain-language questions at a time, recaps what's settled as it goes, and always asks what goes wrong today. It makes sensible calls on anything you don't care about. It checks the plan can actually work: if other people will use it, that includes where it's hosted. Before writing anything, it plays back what it'll build and the calls it made, so you can correct it in a line instead of after a rewrite.
 2. **The plan is a real spec.** It has a scope document (users, flows, data model, what's in and out, decisions, risks, guardrails) and tasks with clear descriptions, subtasks, checkable acceptance criteria and a size. Bigger plans are grouped into milestones, each a stage you can actually try. It all shows on a local board.
 3. **Building happens beside you, not over you.** Each task is built in its own git worktree, on its own branch, so your checkout is never touched. Keep working, uncommitted changes and all. Independent tasks build side by side (two at once by default), and each builder leaves notes (conventions, commands, gotchas) for the ones after it.
 4. **Built to fit.** In an existing codebase, Dazza plans like an engineer joining the team: it maps how the code is laid out and where the new code goes, follows the patterns already there, and reuses the libraries you use. Every plan also has a security section (who can do what, validation, secrets, the attacks that apply), and every task spells out its edge cases, with criteria that test them.
-5. **Every handoff comes with proof.** The builder reports on each acceptance criterion with evidence: the test, the command and what it showed. Dazza won't accept a handoff that contains secrets or files that shouldn't be committed. You review, then `/accept` to merge or `/changes` to send it back.
+5. **Every handoff comes with proof.** The builder reports on each acceptance criterion with evidence: the test, the command and what it showed. Work that changes what you see comes with screenshots. Dazza won't accept a handoff that contains secrets, files that shouldn't be committed, or a project template's unused placeholders. You review, `/try` it (Dazza installs and starts it for you), then `/accept` to merge or `/changes` to send it back.
 6. **You're only interrupted for real decisions.** Blocked tasks ask one clear question and the build moves on. Answer from anywhere, and it picks the task back up.
 7. **Milestones and a close-out.** When a stage is done, Dazza tells you what it delivered. At the end, it writes a report: what was built, what changed along the way, how to run it, and what's next.
 
@@ -82,7 +90,7 @@ Just type to talk to Dazza, about anything in the project. Type `/` for commands
 | `/review` | Everything waiting on you, and what to do about each |
 | `/accept T3` | Approve T3; it merges into your branch |
 | `/changes T3 <note>` | Send T3 back with what to change |
-| `/try T3` | Where to run T3's work before approving it |
+| `/try T3` | Run T3's work and open it in your browser, to try it before approving (`/try stop` to stop it) |
 | `/diff T3` | What T3 changed, file by file |
 | `/allow T3`, `/deny T3` | Answer T3's request to run a command that needs your OK |
 | `/redo T3 [note]` | Throw away T3's work and build it again from scratch (asks first) |
@@ -165,7 +173,7 @@ More in [docs/architecture.md](docs/architecture.md), [docs/providers.md](docs/p
 
 - Dazza builds only while it's open. Building tasks side by side finishes sooner but uses your plan's limits faster: `/parallel 1` builds one at a time.
 - The guard is strongest on Claude Code. On Codex, the agent's own sandbox applies but Dazza's command rules don't.
-- Task sizes are estimates. The close-out report compares them with how long tasks actually took.
+- Task sizes are estimates. They start at about 10, 20 and 40 minutes for S, M and L, then follow how long this project's tasks actually take. The close-out report compares each task's size with its real time.
 - Deploying is deliberately yours: Dazza prepares the config and a checklist, and you do the final steps.
 
 ## Development

@@ -77,7 +77,7 @@ export function renderBuildEvent(
           [
             `  on branch ${event.branch}`,
             event.task.size &&
-              `usually ${humanDuration(SIZE_MINUTES[event.task.size]).replace('about ', '~')}`,
+              `usually ${humanDuration(event.minutes ?? SIZE_MINUTES[event.task.size]).replace('about ', '~')}`,
             milestoneOf(plan, event.task.id),
             '/stop to stop',
           ]

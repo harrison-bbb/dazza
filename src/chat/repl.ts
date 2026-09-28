@@ -148,6 +148,7 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
     onReply: (reply, origin) => {
       if (origin !== 'terminal') void channels.get(origin.channel)?.reply(reply, origin);
     },
+    onChatDone: () => void resumeIfReady(),
     onBuildEvent: (event) => {
       if (event.type === 'task_started') refresh();
       // After waiting out a limit, say when work starts again.
@@ -160,6 +161,7 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
         .then((note) => note && notify(note))
         .catch(() => {}); // a notification is a nicety; the terminal shows the event anyway
     },
+    onStartBuild: () => void startBuild(session, provider, config),
     onBuildEnd: () => {
       refresh();
       void resumeIfReady();
@@ -254,7 +256,11 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
    * Pick the build back up when a task becomes ready (say, the user answered a
    * blocked task, here or on the board or their phone), if they'd been building.
    */
+  /** A slash command is running: auto-resume waits for it to finish. */
+  let commandRunning = false;
   const resumeIfReady = async () => {
+    // Mid-command (say, /accept merging) or mid-reply, wait: their words come first.
+    if (commandRunning || session.isChatting) return;
     const taskId = await session.resumeIfReady().catch(() => undefined);
     if (!taskId) return;
     const text = `▶ ${taskId} is ready, so I’ve picked the build back up.`;
@@ -279,7 +285,8 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
   const onPlanChange = debounce(async () => {
     const plan = await store.readPlan().catch(() => undefined);
     if (!plan) return;
-    if (plan.approvedAt && !approved && !session.isBuilding) {
+    // Approved in the chat: Dazza's reply already says what's next.
+    if (plan.approvedAt && !approved && !session.isBuilding && !session.isChatting) {
       say(`Plan approved. Run ${paint.bold('/build')} when you want me to start.`);
     }
     approved = Boolean(plan.approvedAt);
@@ -324,8 +331,8 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
     requestReport,
     stopBuild: async () => {
       if (!session.isBuilding) return say('Not building right now.');
-      await session.stopBuild();
-      say('Stopped. The current task picks up where it left off on the next /build.');
+      // A paused task reports itself; only say so when nothing was underway.
+      if (!(await session.stopBuild())) say('Stopped.');
     },
     confirm: async (question) =>
       (await terminal.select(question, [
@@ -374,8 +381,12 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
     // Pastes expand to many lines; the one-line editor can't show those again.
     if (line && !line.includes('\n') && line !== history.at(-1)) history.push(line);
 
-    if (isCommand(line)) await runCommand(line, context);
-    else if (line) session.send(line);
+    if (isCommand(line)) {
+      commandRunning = true;
+      await runCommand(line, context);
+      commandRunning = false;
+      await resumeIfReady();
+    } else if (line) session.send(line);
   }
 
   await session.stopBuild();
@@ -406,11 +417,7 @@ async function startBuild(
     return;
   }
   session.startBuild();
-  say(
-    paint.dim(
-      'Building in the background. Keep talking to me while I work; Ctrl-C stops the build.',
-    ),
-  );
+  say(paint.dim('Building in the background. Keep talking to me while I work; /stop stops it.'));
 }
 
 /** First launch, or after /logout: pick how Dazza connects, and remember it. */

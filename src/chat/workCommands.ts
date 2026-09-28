@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { cancelTask, closeTask, prioritise, requestChanges } from '../core/actions.js';
 import { milestoneProgress } from '../core/milestones.js';
 import { answerPermission } from '../core/permissions.js';
@@ -6,6 +7,13 @@ import type { Plan, Task } from '../core/schema.js';
 import type { Store } from '../core/store.js';
 import { redoTask } from '../core/work.js';
 import { Git } from '../git/git.js';
+import {
+  AppServer,
+  detectLauncher,
+  installDependencies,
+  needsInstall,
+  packageManager,
+} from '../preview/app.js';
 import { openInBrowser } from '../util/open.js';
 import type { Command, CommandContext } from './commands.js';
 import { paint } from './style.js';
@@ -25,6 +33,16 @@ const ICON: Record<Task['status'], string> = {
   backlog: paint.dim('◌'),
   cancelled: paint.dim('⊖'),
 };
+
+/** The app /try started, if any: one at a time, so ports and processes don't pile up. */
+let trying: { label: string; app: AppServer } | undefined;
+
+async function stopTrying(): Promise<string | undefined> {
+  const was = trying;
+  trying = undefined;
+  await was?.app.stop();
+  return was?.label;
+}
 
 export const WORK_COMMANDS: Command[] = [
   {
@@ -147,21 +165,63 @@ export const WORK_COMMANDS: Command[] = [
   {
     name: 'try',
     args: '<task>',
-    description: 'Where to run a task’s work before you approve it',
-    async run({ store, say }, args) {
+    description: 'Run a task’s work and open it, so you can try it before approving',
+    async run({ store, say, status, confirm }, args) {
       const id = taskArg(args);
+      if (args.trim() === 'stop') {
+        const was = await stopTrying();
+        return say(was ? `Stopped ${was}.` : 'Nothing’s running.');
+      }
       const task = id ? (await store.readPlan())?.tasks.find((t) => t.id === id) : undefined;
       if (!task) return say(id ? `No task ${id}.` : 'Which task? For example: /try T3');
-      if (task.status === 'closed')
-        return say(`${task.id} is approved, so it’s in your own checkout.`);
-      const dir = (await store.readTaskBuild(task.id))?.dir;
-      if (!dir) return say(`${task.id} hasn’t been built yet.`);
-      say(
-        `${task.id}’s work is in its own checkout. In another terminal:\n  cd ${dir}\n` +
-          paint.dim(
-            `Then run it as you normally would. Its ${task.handoff?.howToVerify.length ? 'handoff says how to check it: /review' : 'dependencies may need installing first'}.`,
-          ),
-      );
+      // Approved work is merged, so it runs from the user's own checkout.
+      const dir = task.status === 'closed' ? store.root : (await store.readTaskBuild(task.id))?.dir;
+      if (!dir || !existsSync(dir)) return say(`${task.id} hasn’t been built yet.`);
+      if (!(await detectLauncher(dir))) {
+        return say(
+          `I can’t tell how to run ${task.id}’s work: there’s no dev or start script and no index.html. ` +
+            `Its handoff says how to check it: /review\n${paint.dim(`It’s in ${dir}`)}`,
+        );
+      }
+      if (needsInstall(dir)) {
+        const install = `${packageManager(dir)} install`;
+        if (
+          !(await confirm(
+            `${task.id}’s dependencies aren’t installed yet. Install them now (${install}, usually a minute or two)?`,
+          ))
+        )
+          return say(
+            `OK. To do it yourself:\n  cd ${dir}\n  ${install}\nThen /try ${task.id} again.`,
+          );
+        status(`Installing ${task.id}’s dependencies…`);
+        try {
+          await installDependencies(dir);
+        } catch (error) {
+          status(undefined);
+          return say(
+            `Couldn’t install them: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+      await stopTrying();
+      const app = new AppServer(dir);
+      status(`Starting ${task.id}…`);
+      try {
+        const url = await app.url();
+        trying = { label: `${task.id}’s app`, app };
+        openInBrowser(url);
+        say(
+          `${task.id} is running at ${url}${process.env.DAZZA_NO_BROWSER ? '' : ' (opened in your browser)'}.\n` +
+            paint.dim(
+              `It stops when you close Dazza, or with /try stop. Then /accept ${task.id} or /changes ${task.id} <what to change>.`,
+            ),
+        );
+      } catch (error) {
+        await app.stop();
+        say(`${task.id} didn’t start: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        status(undefined);
+      }
     },
   },
   {

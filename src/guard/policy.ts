@@ -1,6 +1,9 @@
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, relative, resolve } from 'node:path';
 
+/** Docker commands that only look, or build an image. */
+const DOCKER_READ_ONLY = ['ps', 'images', 'logs', 'inspect', 'version', 'info', 'build'];
+
 /**
  * What Dazza's builder may do on its own, what needs the user's say-so, and
  * what it never does. Applied to every tool call before it runs (see hook.ts),
@@ -258,7 +261,15 @@ function judgeSegment(segment: string, ctx: Ctx): Decision {
       if (verb === 'system' || verb === 'volume' || (verb === 'image' && has('prune', 'rm'))) {
         return ask('It can delete data other projects rely on.');
       }
-      return allow;
+      // Looking and building are fine. Containers run on the machine, not in the
+      // checkout: they outlive the task, and the user's own may be among them.
+      return DOCKER_READ_ONLY.includes(verb)
+        ? allow
+        : ask('It starts or changes containers on the machine, which keep running after the task.');
+    case 'open':
+    case 'xdg-open':
+    case 'osascript':
+      return ask('It opens or controls apps on the user’s machine, outside the task.');
     case 'vercel':
     case 'netlify':
     case 'flyctl':

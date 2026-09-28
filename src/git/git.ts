@@ -160,6 +160,12 @@ export class Git {
     );
   }
 
+  /** Staged files that contain `text`, as a fixed string. Call after stagedFiles. */
+  async filesMentioning(text: string): Promise<string[]> {
+    const { ok, out } = await this.run(['grep', '--cached', '-l', '-F', '-e', text]);
+    return ok && out ? out.split('\n') : [];
+  }
+
   /** Lines added since `from`, with their file, for checking what's being committed. */
   async stagedAdditions(from: string): Promise<{ path: string; line: string }[]> {
     await this.stageAll();

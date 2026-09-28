@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { cancelTask, closeTask } from '../../src/core/actions.js';
@@ -134,6 +134,38 @@ describe('building tasks', () => {
     });
     expect(await submitTask(project.store, 'T1', report)).toMatchObject({ ok: true });
     expect((await task('T1')).handoff?.criteria).toEqual(report.criteria);
+  });
+
+  it('won’t hand over template leftovers nothing uses', async () => {
+    await git.init();
+    const build = await startTask(project.store, git, await task('T1'));
+    const dir = build.dir as string;
+    await mkdir(join(dir, 'public'), { recursive: true });
+    await writeFile(join(dir, 'public', 'next.svg'), '<svg/>');
+    await writeFile(join(dir, 'public', 'vite.svg'), '<svg/>');
+    await writeFile(join(dir, 'app.js'), "document.querySelector('link').href = '/vite.svg';");
+
+    const refused = await submitTask(project.store, 'T1', report);
+    expect(refused.message).toContain('public/next.svg is a placeholder from the project template');
+    expect(refused.message).not.toContain('vite.svg'); // in use
+    await rm(join(dir, 'public', 'next.svg'));
+    expect(await submitTask(project.store, 'T1', report)).toMatchObject({ ok: true });
+  });
+
+  it('wants screenshots of work that changes what the user sees', async () => {
+    await git.init();
+    const build = await startTask(project.store, git, await task('T1'));
+    await writeFile(join(build.dir as string, 'Page.tsx'), 'export const Page = () => null;');
+
+    const refused = await submitTask(project.store, 'T1', report);
+    expect(refused).toMatchObject({ ok: false });
+    expect(refused.message).toContain('you changed what the user sees (Page.tsx)');
+    expect(
+      await submitTask(project.store, 'T1', {
+        ...report,
+        noScreenshots: 'The page needs a login I can’t create.',
+      }),
+    ).toMatchObject({ ok: true });
   });
 
   it('keeps what a builder learned, for the builders after it', async () => {

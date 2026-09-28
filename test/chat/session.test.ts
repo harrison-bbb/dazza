@@ -115,4 +115,39 @@ describe('ChatSession', () => {
     });
     expect(await session.resumeIfReady()).toBeUndefined();
   });
+
+  it('starts building when the user asks for it in the conversation', async () => {
+    let started = 0;
+    const chat = new ChatSession({
+      store: project.store,
+      config: project.config,
+      provider: new FakeProvider([
+        { type: 'started', sessionId: 's', model: 'fake' },
+        { type: 'tool_use', id: 't1', tool: 'mcp__dazza__start_build', input: {} },
+        { type: 'text', text: 'Starting now.' },
+        { type: 'finished', ok: true, output: '', sessionId: 's', durationMs: 1 },
+      ]),
+      manager: new Manager({
+        store: project.store,
+        config: project.config,
+        provider: new FakeProvider([
+          { type: 'started', sessionId: 's', model: 'fake' },
+          { type: 'tool_use', id: 't1', tool: 'mcp__dazza__start_build', input: {} },
+          { type: 'text', text: 'Starting now.' },
+          { type: 'finished', ok: true, output: '', sessionId: 's', durationMs: 1 },
+        ]),
+        projectRoot: project.root,
+        mcpServer: { command: 'node', args: [] },
+      }),
+      workerMcp: { command: 'node', args: [] },
+      boardUrl: 'http://localhost:4777',
+      output: { say: () => {}, print: () => {}, status: () => {} },
+      onStartBuild: () => {
+        started++;
+      },
+    });
+    chat.send('go ahead and build it');
+    await chat.idle();
+    expect(started).toBe(1);
+  });
 });

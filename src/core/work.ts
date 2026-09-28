@@ -52,7 +52,15 @@ export const WorkReport = z.object({
   screenshots: z
     .array(MediaPath)
     .default([])
-    .describe('Screenshots of finished UI work, from the screenshot tool. Leave empty otherwise.'),
+    .describe(
+      'Screenshots of the finished UI, from the screenshot tool: required when you changed anything the user sees.',
+    ),
+  noScreenshots: z
+    .string()
+    .optional()
+    .describe(
+      'Only when you changed UI but couldn’t screenshot it: why, in a line (e.g. "the page needs a login I can’t create").',
+    ),
   notes: z
     .string()
     .optional()
@@ -61,6 +69,10 @@ export const WorkReport = z.object({
     ),
 });
 export type WorkReport = z.input<typeof WorkReport>;
+
+/** Files that change what the user sees; tests and stories don't count. */
+const UI_FILE =
+  /^(?!.*(\.(test|spec|stories)\.|(^|\/)(__tests__|tests?|e2e)\/)).*\.(tsx|jsx|vue|svelte|astro|html|css|scss|sass|less)$/;
 
 /**
  * Get the repository ready to build in: a git repo with at least one commit,
@@ -243,8 +255,25 @@ export async function submitTask(
       message: `Not handed over yet. Fix these first, then submit again:\n${problems.map((p) => `- ${p}`).join('\n')}`,
     };
   }
+  // Most users judge UI work by looking at it, not by reading a diff.
+  const visual = (await tree.stagedFiles(build.startCommit)).filter((f) => UI_FILE.test(f.path));
+  if (
+    visual.length > 0 &&
+    parsed.data.screenshots.length === 0 &&
+    !parsed.data.noScreenshots?.trim()
+  ) {
+    return {
+      ok: false,
+      message:
+        `Not handed over yet: you changed what the user sees (${visual
+          .slice(0, 3)
+          .map((f) => f.path)
+          .join(', ')}${visual.length > 3 ? ', …' : ''}), so show it. ` +
+        'Take screenshots of the finished screens with the screenshot tool and attach them. If you really can’t, say why in noScreenshots.',
+    };
+  }
   const commit = (await tree.commitAll(`${taskId}: ${current.task.title}`)) ?? (await tree.head());
-  const { notes: _, ...details } = parsed.data;
+  const { notes: _, noScreenshots: __, ...details } = parsed.data;
   const handoff: Handoff = {
     ...details,
     branch: build.branch,

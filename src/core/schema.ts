@@ -64,11 +64,12 @@ export const Handoff = z.object({
 });
 
 /**
- * Roughly how big a task is, in the builder's time: S about 20 minutes, M about
- * 45, L about 90. Enough to say what a change costs and how much is left.
+ * Roughly how big a task is, in the builder's time: S about 10 minutes, M about
+ * 20, L about 40, until the project's own tasks say otherwise (see estimates.ts).
+ * Enough to say what a change costs and how much is left.
  */
 export const TaskSize = z.enum(['S', 'M', 'L']);
-export const SIZE_MINUTES: Record<z.infer<typeof TaskSize>, number> = { S: 20, M: 45, L: 90 };
+export const SIZE_MINUTES: Record<TaskSize, number> = { S: 10, M: 20, L: 40 };
 
 export const Task = z
   .object({

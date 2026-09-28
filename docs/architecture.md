@@ -95,6 +95,7 @@ Each agent CLI spawns `dazza mcp --root <project> --role manager|worker` over st
 | `set_status` | manager | Close, cancel or move a task or subtask when the user says so. Same rules as the board |
 | `update_scope` | manager | Rewrite the scope after an agreed change. Dazza keeps the change log (`src/core/scope.ts`), so no revision can drop the history |
 | `approve_plan` | manager | Approve the plan when the user says so in conversation |
+| `start_build` | manager | Start building once the reply is done, when the user clearly asks to |
 | `prioritise` | manager | Move a task to the front of the queue, or ahead of another |
 | `write_report` | manager | Save the close-out or progress report (`.dazza/report.md`), from facts Dazza gathers (`src/core/report.ts`) |
 | `answer_permission` | manager | Record the user's answer to a command the guard held back |
@@ -110,7 +111,7 @@ Tool input is validated with zod. Invalid input comes back to the agent as a too
 
 ## Plans: sizes, milestones, order
 
-Tasks are listed in priority order: the builder takes the first one whose dependencies are closed. Each has a size (S, M or L, about 20, 45 or 90 minutes of building; `SIZE_MINUTES` in `src/core/schema.ts`), which is how Dazza says what's left and what a change costs (`src/core/estimates.ts`). Plans of four tasks or more are grouped into milestones: stages the user can try, each with a goal. `src/core/milestones.ts` works out progress, and records a `milestone_reached` event once, whichever way the last task was closed (chat, board or phone). The chat announces it on every channel. When every task is closed, the chat asks the manager for the close-out report, with the facts gathered by `reportRequest`, so the report is written from the record rather than from memory.
+Tasks are listed in priority order: the builder takes the first one whose dependencies are closed. Each has a size (S, M or L). A size starts at about 10, 20 or 40 minutes of building (`SIZE_MINUTES` in `src/core/schema.ts`). Once two tasks of a size are finished, it becomes the median of how long they actually took (`sizeMinutes` in `src/core/estimates.ts`). That's how Dazza says what's left and what a change costs. Plans of four tasks or more are grouped into milestones: stages the user can try, each with a goal. `src/core/milestones.ts` works out progress, and records a `milestone_reached` event once, whichever way the last task was closed (chat, board or phone). The chat announces it on every channel. When every task is closed, the chat asks the manager for the close-out report, with the facts gathered by `reportRequest`, so the report is written from the record rather than from memory.
 
 ## The build loop
 
@@ -132,7 +133,7 @@ Tasks are listed in priority order: the builder takes the first one whose depend
 
 **Undoing.** Every scope version is kept in `.dazza/scope-history/`; restoring one writes it as a new version and logs it. `redoTask` in `work.ts` throws a task's work away (worktree, branch, build record, handoff) and queues it again from scratch.
 
-**Handoff checks.** Before the commit, `src/core/hygiene.ts` checks the changes like a reviewer: secrets, files that belong only on the developer's machine, very large files. The worker must fix them and submit again. The handoff also reports on every acceptance criterion, with evidence, and Dazza refuses one that skips any.
+**Handoff checks.** Before the commit, `src/core/hygiene.ts` checks the changes like a reviewer: secrets, files that belong only on the developer's machine, very large files, and a project template's placeholder files that nothing references. The worker must fix them and submit again. The handoff also reports on every acceptance criterion, with evidence, and Dazza refuses one that skips any. It also refuses a handoff that changes UI files (components, pages, styles; not tests) without screenshots, unless the worker says why it couldn't take them (`noScreenshots`).
 
 ## Resilience
 
@@ -155,7 +156,7 @@ Errors are classified from the CLI's own messages and status codes in `src/provi
 
 ## Screenshots
 
-`src/preview/` starts the user's app if it isn't running (a `dev`, `start` or `preview` script, or plain HTML served by a tiny static server), then drives the user's installed Chrome, Chromium or Edge with `playwright-core`. Nothing is downloaded. Captures are desktop (1280x800) or phone sized, at 2x density, and stored under `.dazza/media/`. Agents take them through the `screenshot` tool, and attach them to comments, questions or handoffs.
+`src/preview/` starts the user's app if it isn't running (a `dev`, `start` or `preview` script, or plain HTML served by a tiny static server), then drives the user's installed Chrome, Chromium or Edge with `playwright-core`. Nothing is downloaded. Captures are desktop (1280x800) or phone sized, at 2x density, and stored under `.dazza/media/`. Agents take them through the `screenshot` tool, and attach them to comments, questions or handoffs. `/try T3` uses the same launcher on the task's worktree for the user. It offers to install dependencies first if they're missing, then starts the app and opens it. One app runs at a time, and it stops with `/try stop` or when Dazza exits.
 
 ## Messaging
 

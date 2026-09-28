@@ -1,8 +1,9 @@
 import { MANAGER_TOOLS, MCP_SERVER_NAME } from '../mcp/server.js';
 import managerPrompt from '../prompts/manager.md';
 import type { AgentEvent, AgentProvider, McpServerConfig } from '../providers/types.js';
+import type { Activity } from './activity.js';
 import type { Config } from './config.js';
-import { humanDuration, minutesLeft } from './estimates.js';
+import { humanDuration, minutesLeft, sizeMinutes } from './estimates.js';
 import { milestoneProgress } from './milestones.js';
 import { progress } from './plan.js';
 import type { Event, Plan } from './schema.js';
@@ -75,11 +76,13 @@ export class Manager {
   ): AsyncGenerator<AgentEvent> {
     const { store, config, provider, projectRoot, mcpServer } = this.options;
     const { model } = await config.readSettings();
-    const state = describeState(
-      await store.readPlan(),
-      await store.readEvents(),
-      this.options.codebase,
-    );
+    const plan = await store.readPlan();
+    // What the builders are doing right now, so "how's it going?" gets a real answer.
+    const activity: Record<string, Activity[]> = {};
+    for (const task of plan?.tasks.filter((t) => t.status === 'building') ?? []) {
+      activity[task.id] = await store.readActivity(task.id, RECENT_ACTIVITY);
+    }
+    const state = describeState(plan, await store.readEvents(), this.options.codebase, activity);
     const events = provider.run({
       prompt: `<project-state>\n${state}\n</project-state>\n\n${message}`,
       cwd: projectRoot,
@@ -107,12 +110,15 @@ export class Manager {
 }
 
 const RECENT_COMMENTS = 10;
+/** Enough of a builder's latest steps to say how it's going. */
+const RECENT_ACTIVITY = 12;
 
 /** A compact snapshot of the plan, plus the latest comments from the board. */
 export function describeState(
   plan: Plan | undefined,
   events: Event[] = [],
   codebase?: string,
+  activity: Record<string, Activity[]> = {},
 ): string {
   const where = codebase
     ? `Working directory: ${codebase}.`
@@ -124,9 +130,11 @@ export function describeState(
     ? `approved, ${closed}/${total} tasks closed`
     : 'draft, awaiting approval';
   const milestoneOf = new Map(plan.milestones.flatMap((m) => m.tasks.map((id) => [id, m.id])));
-  const left = minutesLeft(plan);
+  const left = minutesLeft(plan, events);
+  const sizes = sizeMinutes(plan, events);
   const lines = [
     where,
+    `Task sizes on this project, in building time: S about ${sizes.S} minutes, M about ${sizes.M}, L about ${sizes.L}.`,
     `Plan (${status}), tasks in priority order${left ? `, ${humanDuration(left)} of building left` : ''}:`,
     ...plan.tasks.map(
       (t) =>
@@ -150,6 +158,16 @@ export function describeState(
       ...comments.map((c) => `- ${c.taskId ?? 'general'} · ${c.actor} (${c.at}): ${c.message}`),
     );
   }
+  for (const [taskId, steps] of Object.entries(activity)) {
+    const task = plan.tasks.find((t) => t.id === taskId);
+    const live = task?.subtasks.filter((st) => st.status !== 'cancelled') ?? [];
+    const done = live.filter((st) => st.status === 'closed').length;
+    lines.push(
+      '',
+      `What ${taskId}'s builder is doing (${done} of ${live.length} subtasks done; latest step last):`,
+      ...steps.map((step) => `- ${ago(step.at)}: ${step.text}`),
+    );
+  }
   // The user's own edits to the scope: read it again before talking about it.
   const edits = events.filter((e) => e.type === 'scope_changed' && e.actor === 'user').slice(-3);
   if (edits.length > 0) {
@@ -160,4 +178,10 @@ export function describeState(
     );
   }
   return lines.join('\n');
+}
+
+/** "just now", "4m ago": the user's clock may not be UTC. */
+function ago(at: string): string {
+  const minutes = Math.round((Date.now() - Date.parse(at)) / 60_000);
+  return minutes < 1 ? 'just now' : `${minutes}m ago`;
 }

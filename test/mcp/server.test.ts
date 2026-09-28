@@ -19,6 +19,10 @@ describe('savePlan', () => {
     });
 
     expect(result.isError).toBeUndefined();
+    // Dazza's own numbers, so the manager doesn't make up its own.
+    expect(JSON.stringify(result.content)).toContain(
+      'Building time left, by Dazza’s numbers: about',
+    );
     expect(await project.store.readScope()).toBe(`${SCOPE}\n`);
     expect((await project.store.readPlan())?.tasks).toHaveLength(2);
     expect((await project.store.readEvents()).map((e) => e.type)).toEqual(['plan_created']);
@@ -125,6 +129,7 @@ describe('MCP tools, called through a real client', () => {
       'save_plan',
       'screenshot',
       'set_status',
+      'start_build',
       'update_item',
       'update_scope',
       'write_report',

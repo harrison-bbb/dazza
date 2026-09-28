@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { closeTask } from '../../src/core/actions.js';
-import { humanDuration, minutesLeft, minutesSpent } from '../../src/core/estimates.js';
+import { humanDuration, minutesLeft, minutesSpent, sizeMinutes } from '../../src/core/estimates.js';
 import {
   currentMilestone,
   isComplete,
@@ -8,7 +8,7 @@ import {
   recordMilestones,
 } from '../../src/core/milestones.js';
 import { reportRequest } from '../../src/core/report.js';
-import type { Plan } from '../../src/core/schema.js';
+import { type Plan, SIZE_MINUTES } from '../../src/core/schema.js';
 import { milestoneNotification } from '../../src/notify/notification.js';
 import { makePlan, makeTask } from '../fixtures.js';
 import { useTempProject } from '../helpers.js';
@@ -79,11 +79,26 @@ describe('milestones', () => {
 describe('estimates', () => {
   it('adds up what’s left, from sizes', () => {
     expect(minutesLeft(plan({ T1: 'closed', T2: 'review', T3: 'planned', T4: 'blocked' }))).toBe(
-      90,
+      40,
     );
     expect(humanDuration(90)).toBe('about 1½ hours');
     expect(humanDuration(45)).toBe('about 45 minutes');
     expect(humanDuration(120)).toBe('about 2 hours');
+  });
+
+  it('learns how long each size takes on this project, once two tasks of it are done', () => {
+    const at = (minute: number) => new Date(Date.UTC(2026, 8, 27, 10, minute)).toISOString();
+    const took = (taskId: string, from: number, to: number) =>
+      [
+        { at: at(from), type: 'task_started', actor: 'dazza', taskId, message: '' },
+        { at: at(to), type: 'task_submitted', actor: 'dazza', taskId, message: '' },
+      ] as const;
+    const project = plan({ T1: 'closed', T2: 'review', T3: 'planned', T4: 'blocked' });
+    // Only one M task finished: still the default.
+    expect(sizeMinutes(project, [...took('T1', 0, 8)]).M).toBe(SIZE_MINUTES.M);
+    const events = [...took('T1', 0, 8), ...took('T2', 10, 22)];
+    expect(sizeMinutes(project, events)).toEqual({ S: SIZE_MINUTES.S, M: 10, L: SIZE_MINUTES.L });
+    expect(minutesLeft(project, events)).toBe(20);
   });
 
   it('measures how long the builder spent, across pauses', () => {
@@ -109,7 +124,7 @@ describe('the report request', () => {
     expect(request).toContain('Every task is closed. Write the close-out report');
     expect(request).toContain('## What you have now');
     expect(request).toContain('- M1 Core (2/2 closed): Add and tick off todos');
-    expect(request).toContain('- T4 [cancelled] Task T4 (sized M (~45 min))');
+    expect(request).toContain('- T4 [cancelled] Task T4 (sized M (~20 min))');
     expect(request).toContain('- **v2 · 2026-09-28**: Dropped T4 (T4). Why: not needed');
   });
 });

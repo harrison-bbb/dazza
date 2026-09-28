@@ -39,9 +39,9 @@ interface ItemViewProps {
 /** A task or subtask: details on the left, the conversation about it on the right. */
 /** Task sizes in the builder's time; see SIZE_MINUTES in src/core/schema.ts. */
 const SIZE_LABEL = {
-  S: 'Small · about 20 minutes',
-  M: 'Medium · about 45 minutes',
-  L: 'Large · about 90 minutes',
+  S: 'Small · about 10 minutes',
+  M: 'Medium · about 20 minutes',
+  L: 'Large · about 40 minutes',
 };
 
 export function ItemView({

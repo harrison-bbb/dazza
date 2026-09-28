@@ -14,6 +14,7 @@ import { paint } from './style.js';
 const MAX_MENU_ITEMS = 8;
 const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const STATUS_INTERVAL_MS = 100;
+const MAX_TYPED_AHEAD = 500;
 /** Ask the terminal to mark pastes, so a pasted newline isn't Enter. */
 const PASTE_MODE_ON = '\x1b[?2004h';
 const PASTE_MODE_OFF = '\x1b[?2004l';
@@ -52,6 +53,8 @@ export class Terminal {
   private frame = 0;
   /** What's been pasted so far, while a paste is arriving. */
   private pasting: string | undefined;
+  /** Keys typed while nothing was reading them, e.g. during a command. */
+  private readonly typedAhead: Key[] = [];
 
   constructor() {
     if (this.interactive) {
@@ -65,12 +68,14 @@ export class Terminal {
    * underneath, so Dazza can report work while they keep typing.
    */
   print(text: string): void {
+    // Wrap at word boundaries: the terminal would otherwise break words in half.
+    const shown = this.interactive ? wrap(text, (stdout.columns || 80) - 1) : text;
     if (!this.interactive || !this.redrawInput) {
-      stdout.write(`${text}\n`);
+      stdout.write(`${shown}\n`);
       return;
     }
     this.erase();
-    stdout.write(`${text}\n`);
+    stdout.write(`${shown}\n`);
     this.redrawInput();
   }
 
@@ -144,14 +149,33 @@ export class Terminal {
         if (outcome.type === 'submit') state = { ...state, text: outcome.value };
         this.redrawInput = undefined;
         this.erase();
-        this.draw(layout(options.prompt, state, [], options.mask));
-        stdout.write('\n');
+        if (options.mask) {
+          this.draw(layout(options.prompt, state, [], options.mask));
+          stdout.write('\n');
+        } else {
+          // Rewrapped at word boundaries now that it's no longer being edited.
+          stdout.write(
+            `\r\x1b[J${wrap(options.prompt + state.text, (stdout.columns || 80) - 1)}\n`,
+          );
+        }
         this.drawnCursorRow = 0;
         this.onKey = undefined;
         stdout.off('resize', onResize);
         resolve(outcome.type === 'submit' ? outcome.value : undefined);
       };
+      this.replayTypedAhead();
     });
+  }
+
+  /**
+   * Keys typed while nothing was reading (say, "/stop" during a command) go in
+   * first. An Enter among them submits, and what follows waits for the next prompt.
+   */
+  private replayTypedAhead(): void {
+    while (this.onKey && this.typedAhead.length > 0) {
+      const key = this.typedAhead.shift();
+      if (key) this.onKey(key);
+    }
   }
 
   /** Pick one option with ↑/↓ and Enter. Resolves undefined if cancelled. */
@@ -260,12 +284,16 @@ export class Terminal {
       }
       const text = this.pasting;
       this.pasting = undefined;
-      this.onKey?.({ name: 'paste', sequence: text });
+      const paste = { name: 'paste', sequence: text };
+      if (this.onKey) this.onKey(paste);
+      else this.typedAhead.push(paste);
       return;
     }
     if (this.onKey) this.onKey(pressed);
     // Nothing is being read (starting up, or running a command): Ctrl-C quits.
     else if (pressed.ctrl && pressed.name === 'c') this.quit();
+    // Anything else typed meanwhile is kept for the next prompt, as a shell would.
+    else if (this.typedAhead.length < MAX_TYPED_AHEAD) this.typedAhead.push(pressed);
   };
 
   /**
@@ -375,3 +403,37 @@ function visibleLength(text: string): number {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping ANSI escape codes.
   return text.replace(/\x1b\[[0-9;]*m/g, '').length;
 }
+
+/**
+ * Wrap text to a width at word boundaries, keeping each line's indent on the
+ * lines it wraps onto. Colour codes don't count towards the width.
+ */
+export function wrap(text: string, width: number): string {
+  if (width < 20) return text;
+  return text
+    .split('\n')
+    .map((line) => {
+      if (visibleLength(line) <= width) return line;
+      // Continue under the text, not under a leading marker or bullet ("● ", "- ").
+      const lead = /^\s*(?:[^\w\s]\s)?/.exec(line.replace(ANSI, ''))?.[0] ?? '';
+      const indent = ' '.repeat(lead.length);
+      const words = line.trimStart().split(' ');
+      const lines: string[] = [];
+      let current = line.slice(0, line.length - line.trimStart().length);
+      for (const word of words) {
+        const candidate = current.trim() ? `${current} ${word}` : `${current}${word}`;
+        if (visibleLength(candidate) > width && current.trim()) {
+          lines.push(current);
+          current = `${indent}${word}`;
+        } else {
+          current = candidate;
+        }
+      }
+      lines.push(current);
+      return lines.join('\n');
+    })
+    .join('\n');
+}
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching ANSI escape codes.
+const ANSI = /\x1b\[[0-9;]*m/g;

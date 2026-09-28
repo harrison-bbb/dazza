@@ -17,7 +17,8 @@ describe('guard policy: commands', () => {
     'git add -A && git commit -m "wip"',
     'git checkout -- src/app.ts',
     'git stash',
-    'docker compose up -d db',
+    'docker ps -a',
+    'docker build -t app .',
     'psql postgres://postgres@localhost:5432/app -c "select 1"',
     'curl -s https://registry.npmjs.org/react',
     'curl -X POST http://localhost:3000/api/login -d "{}"',
@@ -77,6 +78,10 @@ describe('guard policy: commands', () => {
     ['pnpm add -g playwright', 'a global add'],
     ['brew install postgresql', 'a machine-wide install'],
     ['pkill -f node', 'killing by name'],
+    ['docker compose up -d db', 'starting containers that outlive the task'],
+    ['docker run -d -p 5432:5432 postgres:16', 'starting a container'],
+    ['docker stop instantlyreplica-db-1', 'stopping someone’s container'],
+    ['open -a Docker', 'launching an app on the machine'],
     ['aws s3 ls', 'a live cloud account'],
   ])('asks first: %s (%s)', (command) => {
     expect(run(command)).toBe('ask');

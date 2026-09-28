@@ -9,6 +9,7 @@ import { McpTools } from '../mcp/server.js';
 import type { Remote } from '../notify/channel.js';
 import type { AgentEvent, AgentProvider, McpServerConfig } from '../providers/types.js';
 import { openInBrowser } from '../util/open.js';
+import { BRAND } from './banner.js';
 import { createBuildRenderer } from './buildView.js';
 import type { Usage } from './commands.js';
 import { describeTool, planCard } from './describe.js';
@@ -39,6 +40,10 @@ export interface SessionOptions {
   onBuildEvent?: (event: BuildEvent) => void;
   /** Called once a build has finished, however it ended. */
   onBuildEnd?: () => void;
+  /** The user asked Dazza, in conversation, to start building. */
+  onStartBuild?: () => void;
+  /** Dazza has answered everything it was sent, and is waiting for the next message. */
+  onChatDone?: () => void;
   /**
    * Called with Dazza's full answer to every message, e.g. to answer on Slack.
    * Empty if there was none (the reply was stopped, say).
@@ -87,6 +92,8 @@ export class ChatSession {
    * again by itself when something is ready (see `resumeIfReady`).
    */
   private keepBuilding = false;
+  /** Tasks being built right now. */
+  private readonly inProgress = new Set<string>();
 
   constructor(private readonly options: SessionOptions) {}
 
@@ -117,12 +124,15 @@ export class ChatSession {
   }
 
   /** Stop the build; the current task is paused and resumes next time. */
-  async stopBuild(): Promise<void> {
+  /** Stop the build. Resolves whether a task was underway (its pause is already reported). */
+  async stopBuild(): Promise<boolean> {
     this.keepBuilding = false;
-    if (!this.building) return;
+    if (!this.building) return false;
+    const underway = this.inProgress.size > 0;
     this.options.output.status('build', 'Stopping');
     this.building.controller.abort();
     await this.building.done;
+    return underway;
   }
 
   /**
@@ -171,6 +181,7 @@ export class ChatSession {
     } finally {
       this.chat = undefined;
       this.options.output.status('chat', undefined);
+      this.options.onChatDone?.();
     }
   }
 
@@ -182,6 +193,7 @@ export class ChatSession {
     const { store, manager, boardUrl, output, onReply } = this.options;
     const before = await store.readPlan();
     const reply: string[] = [];
+    let startBuild = false;
     /** What went wrong, for a user who isn't watching the terminal. */
     let failure: string | undefined;
     let rewrotePlan = false;
@@ -194,10 +206,16 @@ export class ChatSession {
         if (event.type === 'retry')
           output.status('chat', retryStatus(event, this.options.provider.name));
         if (event.type === 'text') {
+          // Amid a build's output, a reply needs a name on it to be seen.
+          const label =
+            this.isBuilding && reply.length === 0
+              ? `${paint.hex(BRAND, paint.bold('Dazza:'))} `
+              : '';
           reply.push(event.text);
-          output.say(renderInline(event.text));
+          output.say(label + renderInline(event.text));
         } else if (event.type === 'tool_use') {
           rewrotePlan ||= event.tool === McpTools.savePlan;
+          startBuild ||= event.tool === McpTools.startBuild;
           output.status('chat', describeTool(event.tool, event.input));
         } else if (event.type === 'finished' && !event.ok) {
           failure = event.error
@@ -211,6 +229,7 @@ export class ChatSession {
       output.say(signal.aborted ? paint.dim('Stopped.') : paint.red(failure ?? ''));
     }
     onReply?.(reply.length > 0 ? reply.join('\n\n') : (failure ?? ''), origin);
+    if (startBuild && !signal.aborted) this.options.onStartBuild?.();
 
     // Small edits are confirmed in Dazza's own reply; a rewritten plan gets the full card.
     const after = await store.readPlan();
@@ -225,7 +244,8 @@ export class ChatSession {
     const { store, config, provider, workerMcp, output, onBuildEvent } = this.options;
     const render = createBuildRenderer(store.root);
     output.status('build', 'Getting ready to build');
-    const building = new Set<string>();
+    const building = this.inProgress;
+    building.clear();
     // What each builder does, for the board's live view.
     const activity = new ActivityRecorder(store);
     try {

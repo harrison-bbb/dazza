@@ -287,7 +287,7 @@ function versionLabel(markdown: string | undefined): string {
 
 async function buildLeft(store: Store): Promise<string | null> {
   const plan = await store.readPlan();
-  const minutes = plan ? minutesLeft(plan) : 0;
+  const minutes = plan ? minutesLeft(plan, await store.readEvents()) : 0;
   return minutes > 0 ? humanDuration(minutes) : null;
 }
 

@@ -1,7 +1,9 @@
 import { spawn } from 'node:child_process';
 
-/** Open a URL in the user's default browser. Best effort: failures are ignored. */
+/** Open a URL in the user's default browser, unless DAZZA_NO_BROWSER is set. Best effort. */
 export function openInBrowser(url: string): void {
+  // For headless use (a remote box, scripted runs): the URL is printed anyway.
+  if (process.env.DAZZA_NO_BROWSER) return;
   const [command, ...args] =
     process.platform === 'darwin'
       ? ['open', url]

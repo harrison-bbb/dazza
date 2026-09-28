@@ -18,7 +18,11 @@ export function greeting(plan: Plan | undefined, context: GreetingContext = {}):
   if (!plan) {
     if (context.hasConversation) return 'Picking up where we left off.';
     if (context.codebase) return `This is ${context.codebase}. What do you want to work on?`;
-    return "New project. Tell me what we're building, whenever you're ready.";
+    return (
+      'New project. How this goes: you tell me what you want and who it’s for, I ask a few rounds of questions, ' +
+      'then I play back what I’ll build before I write up the plan. It usually takes 5 to 10 minutes.\n' +
+      'So, what are we building?'
+    );
   }
 
   const { closed, total } = progress(plan);

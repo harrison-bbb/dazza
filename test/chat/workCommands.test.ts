@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { type CommandContext, parseCommand } from '../../src/chat/commands.js';
 import { stripAnsi } from '../../src/chat/style.js';
@@ -17,6 +19,7 @@ describe('work commands', () => {
       say: (text: string) => said.push(stripAnsi(text)),
       confirm: async () => answer,
       stopBuild: async () => {},
+      status: () => {},
     } as unknown as CommandContext;
     return { ctx, said };
   }
@@ -108,5 +111,29 @@ describe('work commands', () => {
     expect(said[0]).toContain('/allow T3 · /deny T3');
     await run(ctx, '/allow T3');
     expect(said.at(-1)).toContain('Allowed `brew install redis` for T3');
+  });
+
+  it('/try runs a task’s work and gives its address; /try stop stops it', async () => {
+    await project.store.writePlan(plan());
+    const dir = join(project.root, 'worktree');
+    await mkdir(dir);
+    await writeFile(join(dir, 'index.html'), '<h1>Editor</h1>');
+    await project.store.writeTaskBuild('T2', {
+      branch: 'dazza/T2-editor',
+      dir,
+      baseBranch: 'main',
+      startCommit: 'abc',
+      seenEvents: 0,
+    });
+    process.env.DAZZA_NO_BROWSER = '1';
+    const { ctx, said } = context();
+    await run(ctx, '/try T4');
+    expect(said.at(-1)).toBe('T4 hasn’t been built yet.');
+    await run(ctx, '/try T2');
+    const url = /http:\/\/localhost:\d+/.exec(said.at(-1) ?? '')?.[0];
+    expect(url).toBeDefined();
+    expect(await (await fetch(url as string)).text()).toContain('Editor');
+    await run(ctx, '/try stop');
+    expect(said.at(-1)).toBe('Stopped T2’s app.');
   });
 });

@@ -6,7 +6,7 @@ import {
   type MenuSource,
   reduce,
 } from '../../src/chat/editor.js';
-import { layout } from '../../src/chat/terminal.js';
+import { layout, wrap } from '../../src/chat/terminal.js';
 
 const commands = ['/dashboard', '/help', '/model', '/usage'];
 const menu: MenuSource = (text) =>
@@ -136,5 +136,25 @@ describe('layout', () => {
   it('deletes a paste’s placeholder in one backspace', () => {
     const result = press(['a ', key('paste', { sequence: 'x\ny' }), key('backspace')]);
     expect(result).toMatchObject({ state: { text: 'a ', cursor: 2 } });
+  });
+});
+
+describe('wrap', () => {
+  it('breaks long lines between words, keeping the indent, and ignores colour codes', () => {
+    const text = '  The quick brown fox jumps over the lazy dog near the riverbank today';
+    expect(wrap(text, 30)).toBe(
+      '  The quick brown fox jumps\n  over the lazy dog near the\n  riverbank today',
+    );
+    expect(wrap('\x1b[2mshort line\x1b[22m', 30)).toBe('\x1b[2mshort line\x1b[22m');
+    expect(wrap('a\n\nb', 30)).toBe('a\n\nb');
+  });
+
+  it('continues under the text of a marked or bulleted line', () => {
+    expect(wrap('● The quick brown fox jumps over the lazy dog', 30)).toBe(
+      '● The quick brown fox jumps\n  over the lazy dog',
+    );
+    expect(wrap('  - The quick brown fox jumps over the lazy dog', 30)).toBe(
+      '  - The quick brown fox jumps\n    over the lazy dog',
+    );
   });
 });

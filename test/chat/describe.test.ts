@@ -7,7 +7,7 @@ const approved = (plan: Plan): Plan => ({ ...plan, approvedAt: '2026-09-27T10:00
 
 describe('greeting', () => {
   it('invites a new project', () => {
-    expect(greeting(undefined)).toMatch(/what we're building/);
+    expect(greeting(undefined)).toMatch(/play back what I’ll build.*\n.*what are we building\?/s);
   });
 
   it('resumes an unfinished scoping conversation', () => {
@@ -58,7 +58,7 @@ describe('greeting', () => {
       milestones: [{ id: 'M1', title: 'Sign in', goal: 'Log in', tasks: ['T1', 'T2'] }],
     };
     expect(greeting(plan)).toBe(
-      '1/2 tasks closed (about 1½ hours of building left). Working towards M1 Sign in (1/2). Next up: T2 Auth. Run /build to start.',
+      '1/2 tasks closed (about 40 minutes of building left). Working towards M1 Sign in (1/2). Next up: T2 Auth. Run /build to start.',
     );
   });
 

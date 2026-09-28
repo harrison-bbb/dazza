@@ -20,6 +20,7 @@ import {
   type SubtaskChanges,
   TaskChanges,
 } from '../core/edits.js';
+import { humanDuration, minutesLeft, sizeMinutes } from '../core/estimates.js';
 import { answerPermission, requestPermission } from '../core/permissions.js';
 import { carryOverProgress } from '../core/plan.js';
 import { REPORT_SECTIONS } from '../core/report.js';
@@ -59,6 +60,7 @@ export const McpTools = {
   prioritise: tool('prioritise'),
   writeReport: tool('write_report'),
   redoTask: tool('redo_task'),
+  startBuild: tool('start_build'),
   answerPermission: tool('answer_permission'),
   screenshot: tool('screenshot'),
 } as const;
@@ -77,6 +79,7 @@ export const MANAGER_TOOLS = [
   McpTools.prioritise,
   McpTools.writeReport,
   McpTools.redoTask,
+  McpTools.startBuild,
   McpTools.screenshot,
 ];
 
@@ -177,7 +180,30 @@ export async function savePlan(store: Store, raw: SavePlanInput): Promise<CallTo
   const text = outcome.rescoped
     ? `Saved ${tasks}. The plan needs the user's approval again.`
     : `Saved ${tasks}.`;
-  return { content: [{ type: 'text', text }] };
+  return { content: [{ type: 'text', text: `${text}\n${await buildingTime(store)}` }] };
+}
+
+/**
+ * How long the saved plan takes to build, by Dazza's numbers, so what the
+ * manager tells the user matches the plan card and the board.
+ */
+async function buildingTime(store: Store): Promise<string> {
+  const plan = await store.readPlan();
+  if (!plan) return '';
+  const events = await store.readEvents();
+  const sizes = sizeMinutes(plan, events);
+  const minutes = (ids: string[]) =>
+    plan.tasks
+      .filter((t) => ids.includes(t.id) && ['planned', 'building', 'blocked'].includes(t.status))
+      .reduce((sum, t) => sum + (t.size ? sizes[t.size] : 0), 0);
+  const lines = plan.milestones.map(
+    (m) => `- ${m.id} ${m.title}: ${humanDuration(minutes(m.tasks))}`,
+  );
+  return [
+    `Building time left, by Dazza’s numbers: ${humanDuration(minutesLeft(plan, events))} in all.`,
+    ...lines,
+    'If you mention time, quote these; don’t give your own estimate.',
+  ].join('\n');
 }
 
 export type McpRole = 'manager' | 'worker';
@@ -332,6 +358,27 @@ function registerManagerTools(server: McpServer, store: Store): void {
       },
     },
     async ({ id, status, note }) => toResult(await setStatus(store, id, status, note)),
+  );
+
+  server.registerTool(
+    'start_build',
+    {
+      description:
+        'Start building the approved plan, when the user clearly asks you to ("go ahead and build it", "start"). ' +
+        'Dazza starts it once your reply is done. Approving a plan is not a request to build.',
+      inputSchema: {},
+    },
+    async () => {
+      const plan = await store.readPlan();
+      if (!plan?.approvedAt)
+        return failure(
+          'The plan isn’t approved yet. Approve it first (approve_plan), if the user said to.',
+        );
+      return toResult({
+        ok: true,
+        message: 'Starting the build once this reply is done. Say so in a line.',
+      });
+    },
   );
 
   server.registerTool(

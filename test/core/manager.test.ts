@@ -169,4 +169,22 @@ describe('describeState', () => {
     };
     expect(describeState(plan)).toContain('approved, 1/2 tasks closed');
   });
+
+  it('tells Dazza what the builders are doing, so it can say how things are going', () => {
+    const plan = makePlan([
+      makeTask({
+        id: 'T1',
+        status: 'building',
+        subtasks: [
+          { id: 'T1.1', title: 'a', description: '', status: 'closed' },
+          { id: 'T1.2', title: 'b', description: '', status: 'planned' },
+        ],
+      }),
+    ]);
+    const state = describeState(plan, [], undefined, {
+      T1: [{ at: new Date().toISOString(), taskId: 'T1', kind: 'do', text: 'Ran npm test' }],
+    });
+    expect(state).toContain("What T1's builder is doing (1 of 2 subtasks done; latest step last):");
+    expect(state).toContain('- just now: Ran npm test');
+  });
 });

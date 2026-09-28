@@ -30,6 +30,13 @@ const LOCAL_ONLY: { name: string; pattern: RegExp }[] = [
   { name: 'a key or certificate', pattern: /\.(pem|key|p12|pfx)$|(^|\/)id_(rsa|ed25519|ecdsa)$/ },
 ];
 
+/**
+ * Placeholder files project templates (create-next-app, create-vite, CRA) ship
+ * with. Left in, they're clutter a reviewer has to ask about.
+ */
+const SCAFFOLD =
+  /(^|\/)(public\/(next|vercel|file|globe|window|vite)\.svg|src\/assets\/(react|vue)\.svg|src\/logo\.svg)$/;
+
 /** Bigger than this is almost never source code. */
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
@@ -46,6 +53,15 @@ export async function checkChanges(tree: Git, from: string): Promise<string[]> {
     else if (bytes > MAX_FILE_BYTES) {
       problems.push(
         `${path} is ${Math.round(bytes / 1024 / 1024)} MB. Leave it out, or explain why it's needed.`,
+      );
+    }
+  }
+  for (const { path } of files.filter((f) => SCAFFOLD.test(f.path))) {
+    const name = path.split('/').pop() ?? path;
+    const users = (await tree.filesMentioning(name)).filter((file) => file !== path);
+    if (users.length === 0) {
+      problems.push(
+        `${path} is a placeholder from the project template and nothing uses it. Delete it.`,
       );
     }
   }
