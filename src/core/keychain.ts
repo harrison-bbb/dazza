@@ -156,27 +156,34 @@ export function secretService(): Keychain {
  */
 export const windowsDpapi = {
   name: 'Windows (encrypted with your sign-in)',
+  // .NET's ProtectedData rather than ConvertTo-SecureString: that cmdlet's
+  // module fails to load in Windows PowerShell when PowerShell 7 is installed too.
   async protect(secret: string): Promise<string | undefined> {
     const out = await powershell(
-      '$s = [Console]::In.ReadToEnd(); ConvertTo-SecureString $s -AsPlainText -Force | ConvertFrom-SecureString',
+      `${LOAD}; $b = [Text.Encoding]::UTF8.GetBytes([Console]::In.ReadToEnd()); [Console]::Out.Write([Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Protect($b, $null, 'CurrentUser')))`,
       secret,
     );
-    return out && /^[0-9a-f]+$/i.test(out) ? out : undefined;
+    return out && BASE64.test(out) ? out : undefined;
   },
   async unprotect(blob: string): Promise<string | undefined> {
-    if (!/^[0-9a-f]+$/i.test(blob)) return undefined;
+    if (!BASE64.test(blob)) return undefined;
     return powershell(
-      '$e = [Console]::In.ReadToEnd().Trim(); $b = [Runtime.InteropServices.Marshal]::SecureStringToBSTR((ConvertTo-SecureString $e)); [Console]::Out.Write([Runtime.InteropServices.Marshal]::PtrToStringBSTR($b))',
+      `${LOAD}; $b = [Convert]::FromBase64String([Console]::In.ReadToEnd().Trim()); [Console]::Out.Write([Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect($b, $null, 'CurrentUser')))`,
       blob,
     );
   },
 };
+
+const LOAD = 'Add-Type -AssemblyName System.Security';
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
 async function powershell(script: string, input: string): Promise<string | undefined> {
   const result = await run(
     'powershell.exe',
     ['-NoProfile', '-NonInteractive', '-Command', script],
     input,
+    // PowerShell 7's module path confuses Windows PowerShell 5.1.
+    { ...process.env, PSModulePath: '' },
   );
   return result.code === 0 ? result.stdout.trim() || undefined : undefined;
 }
@@ -188,11 +195,20 @@ interface Ran {
   stderr: string;
 }
 
-function run(command: string, args: string[], input?: string): Promise<Ran> {
+function run(
+  command: string,
+  args: string[],
+  input?: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<Ran> {
   return new Promise((resolve) => {
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+      child = spawn(command, args, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+        ...(env && { env }),
+      });
     } catch {
       return resolve({ code: undefined, stdout: '', stderr: '' });
     }
