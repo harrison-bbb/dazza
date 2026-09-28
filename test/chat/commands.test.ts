@@ -122,6 +122,8 @@ describe('running commands', () => {
       stopBuild: async () => {},
       building: () => false,
       chatting: () => false,
+      context: () => ({ tokens: 150_000, window: 200_000 }),
+      resetContext: () => {},
       compact: async () => 'Compacted our conversation (50k → 2k tokens).',
       reconnect: async () => {},
       confirm: async () => confirmAnswer,
@@ -228,6 +230,14 @@ describe('running commands', () => {
     expect(await project.config.readSlack()).toBeUndefined();
     expect(said.at(-1)).toContain('Disconnected from Acme. /slack links it again.');
     expect(linked()).toEqual([]);
+  });
+
+  it('/context says how full the conversation is', async () => {
+    const { ctx, said } = context();
+    await run(ctx, '/context');
+    expect(said.at(-1)).toContain(
+      'about 150k tokens: 75% of the 200k this model holds. /compact frees up room.',
+    );
   });
 
   it('/exit ends the chat', async () => {

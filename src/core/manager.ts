@@ -118,6 +118,7 @@ export class Manager {
       tools: userMcp ? [...BUILT_IN_TOOLS, TOOL_SEARCH] : BUILT_IN_TOOLS,
       allowedTools: userMcp ? [...TOOLS, TOOL_SEARCH] : TOOLS,
       userMcp,
+      streamText: true,
       mcpServers: { [MCP_SERVER_NAME]: mcpServer },
       ...(this.options.guard && { guard: this.options.guard }),
       ...(sessionId && { resumeSessionId: sessionId }),

@@ -14,6 +14,7 @@ import { BRAND } from './banner.js';
 import { compactedLine, createBuildRenderer, createStepTracker } from './buildView.js';
 import type { Usage } from './commands.js';
 import { describeTool, planCard } from './describe.js';
+import { describeShellRuns, type ShellRun } from './shell.js';
 import { paint, renderInline, stripAnsi } from './style.js';
 
 /** Where the session's output goes. The terminal in practice; a recorder in tests. */
@@ -24,6 +25,8 @@ export interface SessionOutput {
   print(text: string): void;
   /** Show or clear an activity in the status line. */
   status(key: 'chat' | 'build', text: string | undefined): void;
+  /** Show (or clear) the unfinished line of a reply as it streams in. */
+  draft?(text: string | undefined): void;
 }
 
 export interface SessionOptions {
@@ -53,6 +56,66 @@ export interface SessionOptions {
   /** Called when Dazza shares screenshots in a comment, e.g. to send them to Slack. */
   onShare?: (share: Share) => void;
 }
+
+/** "Dazza:", in front of a reply that arrives amid a build's output. */
+function replyLabel(): string {
+  return `${paint.hex(BRAND, paint.bold('Dazza:'))} `;
+}
+
+/**
+ * A reply streaming in: each finished line goes on screen for good, formatted
+ * as a whole reply would be (● and an indent), and the line still being
+ * written shows live just above the status line until it's done.
+ */
+class StreamedText {
+  started = false;
+  label = '';
+  private text = '';
+  private printed = 0;
+  private lines = 0;
+
+  constructor(private readonly output: SessionOutput) {}
+
+  write(piece: string): void {
+    this.started = true;
+    this.text += piece;
+    const pending = this.text.slice(this.printed);
+    const end = pending.lastIndexOf('\n');
+    if (end >= 0) {
+      for (const line of pending.slice(0, end).split('\n')) this.printLine(line);
+      this.printed += end + 1;
+    }
+    const rest = this.text.slice(this.printed);
+    this.output.draft?.(rest ? this.format(rest) : undefined);
+  }
+
+  /** The message is complete: its last line, then a blank line, as a whole reply ends. */
+  end(): void {
+    const rest = this.text.slice(this.printed);
+    if (rest) this.printLine(rest);
+    this.output.draft?.(undefined);
+    this.output.print('');
+    this.started = false;
+    this.label = '';
+    this.text = '';
+    this.printed = 0;
+    this.lines = 0;
+  }
+
+  private printLine(line: string): void {
+    // A reply opens with a blank line and its marker, like everything Dazza says.
+    this.output.print(this.lines === 0 ? `\n${this.format(line)}` : this.format(line));
+    this.lines++;
+  }
+
+  private format(line: string): string {
+    if (this.lines === 0) return `${paint.hex(BRAND, '●')} ${this.label}${renderInline(line)}`;
+    return line ? `  ${renderInline(line)}` : '';
+  }
+}
+
+/** How full the conversation gets before Dazza suggests /compact. */
+const CONTEXT_NUDGE = 0.7;
 
 /** Screenshots Dazza posted in a comment, with what it said about them. */
 export interface Share {
@@ -93,6 +156,13 @@ export class ChatSession {
    * again by itself when something is ready (see `resumeIfReady`).
    */
   private keepBuilding = false;
+  /** `!` commands since Dazza last heard from the user. */
+  private readonly shellRuns: ShellRun[] = [];
+  private contextTokens: number | undefined;
+  /** Told the user it's getting full, for this conversation. */
+  private nudged = false;
+  /** Most models hold 200k tokens; the 1M-context ones say so in their name. */
+  private contextWindow = 200_000;
   /** Tasks being built right now. */
   private readonly inProgress = new Set<string>();
 
@@ -107,11 +177,30 @@ export class ChatSession {
     return this.keepBuilding || this.building !== undefined;
   }
 
+  /** How full the conversation is, as of Dazza's last reply: tokens, and the model's window. */
+  get context(): { tokens?: number; window: number } {
+    return {
+      ...(this.contextTokens !== undefined && { tokens: this.contextTokens }),
+      window: this.contextWindow,
+    };
+  }
+
+  /** Forget the size: a different conversation, or a compacted one, until the next reply measures it. */
+  resetContext(tokens?: number): void {
+    this.contextTokens = tokens;
+    this.nudged = false;
+  }
+
   get isChatting(): boolean {
     return this.chat !== undefined;
   }
 
   /** Queue a message for Dazza; it's answered after any earlier ones. */
+  /** Remember a `!` command the user ran, to tell Dazza with their next message. */
+  noteShell(run: ShellRun): void {
+    this.shellRuns.push(run);
+  }
+
   send(message: string, origin: MessageOrigin = 'terminal'): void {
     this.queue.push({ text: message, origin });
     if (!this.chat) {
@@ -170,6 +259,7 @@ export class ChatSession {
     try {
       const result = await this.options.manager.compact();
       if (!result) return 'Nothing to compact yet: we haven’t talked in this project.';
+      this.resetContext(result.after);
       return `${stripAnsi(compactedLine(result, 'our conversation')).trim().replace(/^• /, '')}. The plan and the board are as they were.`;
     } catch (error) {
       return `Couldn’t compact: ${errorMessage(error)}`;
@@ -229,11 +319,15 @@ export class ChatSession {
     const showStep = (line: string | undefined) => {
       if (line && !fixingPlan) output.print(paint.dim(stripAnsi(line)));
     };
+    /** A reply arriving in pieces, shown line by line as Claude Code does. */
+    const stream = new StreamedText(output);
     output.status('chat', 'Thinking');
 
     try {
+      // Commands the user ran themselves go along as context.
+      const ran = this.shellRuns.splice(0);
       for await (const event of manager.send(
-        message,
+        ran.length > 0 ? `${describeShellRuns(ran)}\n\n${message}` : message,
         signal,
         origin === 'terminal' ? undefined : origin.channel,
       )) {
@@ -242,21 +336,34 @@ export class ChatSession {
         if (event.type === 'tool_use' || event.type === 'tool_result') {
           showStep(steps.step(event, undefined, store.root));
         }
+        if (event.type === 'started')
+          this.contextWindow = /1m/i.test(event.model) ? 1_000_000 : 200_000;
+        if (event.type === 'context') this.contextTokens = event.tokens;
         // It ran out of room and summarised itself, as Claude Code does.
         if (event.type === 'compacted') showStep(compactedLine(event, 'our conversation'));
         if (event.type === 'retry')
           output.status('chat', retryStatus(event, this.options.provider.name));
-        if (event.type === 'text') {
+        if (event.type === 'text_delta') {
+          if (fixingPlan) continue;
+          if (!stream.started) {
+            output.status('chat', 'Writing');
+            showStep(steps.flush());
+            stream.label = this.isBuilding && reply.length === 0 ? replyLabel() : '';
+          }
+          stream.write(event.text);
+        } else if (event.type === 'text') {
           // Between a plan sent back for more detail and its resubmission, the
           // agent is fixing its own work: the user doesn't need to hear about it.
           if (fixingPlan) continue;
-          // Amid a build's output, a reply needs a name on it to be seen.
-          const label =
-            this.isBuilding && reply.length === 0
-              ? `${paint.hex(BRAND, paint.bold('Dazza:'))} `
-              : '';
-          showStep(steps.flush());
           reply.push(event.text);
+          // Streamed already, as it was written: just finish it off.
+          if (stream.started) {
+            stream.end();
+            continue;
+          }
+          // Amid a build's output, a reply needs a name on it to be seen.
+          const label = this.isBuilding && reply.length === 1 ? replyLabel() : '';
+          showStep(steps.flush());
           output.say(label + renderInline(event.text));
         } else if (event.type === 'tool_use') {
           rewrotePlan ||= event.tool === McpTools.savePlan;
@@ -285,10 +392,21 @@ export class ChatSession {
         }
       }
     } catch (error) {
+      // Stopped (or failed) mid-sentence: keep what was written, then say why.
+      if (stream.started) stream.end();
       if (!signal.aborted) failure = `Error: ${errorMessage(error)}`;
       output.say(signal.aborted ? paint.dim('Stopped.') : paint.red(failure ?? ''));
     }
+    if (stream.started) stream.end();
     onReply?.(reply.length > 0 ? reply.join('\n\n') : (failure ?? ''), origin);
+    // Past most of its room: say so once, as Claude Code does.
+    const full = (this.contextTokens ?? 0) / this.contextWindow;
+    if (full >= CONTEXT_NUDGE && !this.nudged) {
+      this.nudged = true;
+      output.print(
+        paint.dim(`  Our conversation is ${Math.round(full * 100)}% full. /compact frees up room.`),
+      );
+    }
     if (startBuild && !signal.aborted) this.options.onStartBuild?.();
 
     // Small edits are confirmed in Dazza's own reply; a rewritten plan gets the full card.

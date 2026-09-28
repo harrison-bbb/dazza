@@ -62,6 +62,8 @@ export interface AgentRunOptions {
    * cheaper. Leave out for the CLI's full set.
    */
   tools?: string[];
+  /** Stream the reply as it's written (text_delta events), for the chat. */
+  streamText?: boolean;
   /** Dazza's MCP servers for the session, keyed by server name. */
   mcpServers?: Record<string, McpServerConfig>;
   /**
@@ -91,6 +93,8 @@ export interface McpServerConfig {
 export type AgentEvent =
   | { type: 'started'; sessionId: string; model: string }
   | { type: 'text'; text: string }
+  /** Part of the text being written, as it streams (only when asked for); the whole arrives as 'text'. */
+  | { type: 'text_delta'; text: string }
   | { type: 'tool_use'; id: string; tool: string; input: unknown }
   | { type: 'tool_result'; id: string; ok: boolean }
   /**
@@ -98,6 +102,8 @@ export type AgentEvent =
    * (manual) or because it was getting full (auto). Sizes in tokens, when known.
    */
   | { type: 'compacted'; trigger: 'manual' | 'auto'; before?: number; after?: number }
+  /** How big the conversation is now, in tokens: what the latest model call read. */
+  | { type: 'context'; tokens: number }
   /** The CLI is retrying a failed API call itself. */
   | { type: 'retry'; attempt: number; maxRetries: number; reason: string }
   | {

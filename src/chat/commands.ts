@@ -28,6 +28,10 @@ export interface CommandContext {
   requestReport(): Promise<void>;
   /** Summarise the conversation to free up room; says how it went. */
   compact(): Promise<string>;
+  /** How full the conversation is: tokens as of the last reply, and the model's window. */
+  context(): { tokens?: number; window: number };
+  /** A different conversation: its size isn't known until the next reply. */
+  resetContext(): void;
   /** Whether Dazza is in the middle of a reply. */
   chatting(): boolean;
   /** Whether a build is on, so work put back in the queue gets picked up by itself. */
@@ -144,6 +148,21 @@ export const COMMANDS: Command[] = [
     },
   },
   {
+    name: 'context',
+    description: 'How full our conversation is, and when /compact is worth it',
+    run({ context, say }) {
+      const { tokens, window } = context();
+      if (tokens === undefined) return say('Not measured yet: I’ll know after my next reply.');
+      const percent = Math.round((tokens / window) * 100);
+      say(
+        `Our conversation is about ${Math.round(tokens / 1000)}k tokens: ${percent}% of the ${Math.round(window / 1000)}k this model holds.` +
+          (percent >= 50
+            ? ' /compact frees up room.'
+            : paint.dim(' Plenty of room. /compact frees some up when it gets full.')),
+      );
+    },
+  },
+  {
     name: 'compact',
     description: 'Summarise our conversation to free up room, like /compact in Claude Code',
     async run({ compact, say }) {
@@ -246,9 +265,10 @@ export const COMMANDS: Command[] = [
     name: 'new',
     aliases: ['clear'],
     description: 'Start a fresh conversation (the plan and board stay as they are)',
-    async run({ store, say, chatting }) {
+    async run({ store, say, chatting, resetContext }) {
       if (chatting()) return say('I’m still replying. Try /new once I’ve answered.');
       await store.newConversation();
+      resetContext();
       say(
         'Fresh conversation. The plan and the board are as they were. What’s next? ' +
           paint.dim('(/continue goes back to the last one.)'),
@@ -259,8 +279,9 @@ export const COMMANDS: Command[] = [
     name: 'continue',
     aliases: ['resume'],
     description: 'Pick up our last conversation, like dazza --continue',
-    async run({ store, provider, say, chatting }) {
+    async run({ store, provider, say, chatting, resetContext }) {
       if (chatting()) return say('I’m still replying. Try /continue once I’ve answered.');
+      resetContext();
       say(
         (await store.continueConversation(provider.id))
           ? 'Back to our last conversation. Carry on where we left off.'
@@ -375,7 +396,10 @@ export function commandMenu(text: string): MenuItem[] {
 const HELP_GROUPS: [string, string[]][] = [
   ['The work', ['build', 'stop', 'status', 'tasks', 'next', 'parallel']],
   ['Reviewing', ['review', 'try', 'accept', 'changes', 'diff', 'allow', 'deny', 'redo', 'cancel']],
-  ['The project', ['approve', 'scope', 'dashboard', 'report', 'continue', 'new', 'compact']],
+  [
+    'The project',
+    ['approve', 'scope', 'dashboard', 'report', 'continue', 'new', 'compact', 'context'],
+  ],
   ['Setup', ['model', 'mcp', 'usage', 'notify', 'slack', 'telegram', 'logout', 'help', 'exit']],
 ];
 /** In the menu as you type, but not worth a row in /help. */
@@ -394,7 +418,10 @@ export function helpText(): string {
     }
     return [paint.bold(title), ...commands.map(row)].join('\n');
   });
-  return `Just type to talk to me. Or use a command:\n\n${sections.join('\n\n')}`;
+  const tips = paint.dim(
+    'Start a line with ! to run a shell command yourself, and @ to point me at a file. Ctrl+V pastes a screenshot. \\ then Enter (or Option+Enter) starts a new line. Esc stops my reply.',
+  );
+  return `Just type to talk to me. Or use a command:\n${tips}\n\n${sections.join('\n\n')}`;
 }
 
 export function modelList(models: ModelOption[], current: string | undefined): string {

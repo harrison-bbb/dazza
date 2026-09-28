@@ -14,6 +14,8 @@ import { paint } from './style.js';
 const MAX_MENU_ITEMS = 8;
 const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const STATUS_INTERVAL_MS = 100;
+/** A streaming reply's unfinished paragraph shows at most this many lines. */
+const MAX_DRAFT_LINES = 12;
 const MAX_TYPED_AHEAD = 500;
 /** Ask the terminal to mark pastes, so a pasted newline isn't Enter. */
 const PASTE_MODE_ON = '\x1b[?2004h';
@@ -28,6 +30,8 @@ export interface ReadOptions {
   mask?: boolean;
   /** Esc on an empty line: stop what's replying, as in Claude Code. */
   onInterrupt?: () => void;
+  /** Ctrl+V: an image on the clipboard, as text to insert (its saved path), if there is one. */
+  pasteImage?: () => Promise<string | undefined>;
 }
 
 export interface Choice<T> {
@@ -53,6 +57,10 @@ export class Terminal {
   private readonly statuses = new Map<string, { text: string; since: number }>();
   private statusTimer: NodeJS.Timeout | undefined;
   private frame = 0;
+  /** A streaming reply's unfinished line, shown above the status line. */
+  private draft: string | undefined;
+  /** While a `!` command runs, Ctrl-C stops it rather than Dazza. */
+  cancelBusy: (() => void) | undefined;
   /** The line being read stops a reply on Esc, so the status line can say so. */
   private interruptible = false;
   /** What's been pasted so far, while a paste is arriving. */
@@ -100,6 +108,30 @@ export class Terminal {
     this.redrawInput?.();
   }
 
+  /**
+   * Show text being written (a streaming reply's unfinished line) just above
+   * the status line, until it's printed for good. Undefined clears it.
+   */
+  setDraft(text: string | undefined): void {
+    this.draft = text;
+    if (!this.interactive) return;
+    this.redrawInput?.();
+  }
+
+  /** What's drawn above the input: a streaming reply's unfinished line, then the status line. */
+  private aboveInput(): string[] {
+    const status = this.statusLine();
+    return status ? [...this.draftLines(), status] : this.draftLines();
+  }
+
+  /** The draft, wrapped, and only its last few lines if it's long. */
+  private draftLines(): string[] {
+    if (!this.draft) return [];
+    return wrap(this.draft, (stdout.columns || 80) - 1)
+      .split('\n')
+      .slice(-MAX_DRAFT_LINES);
+  }
+
   /** The status line as it should look right now, or undefined when idle. */
   private statusLine(): string | undefined {
     if (this.statuses.size === 0) return undefined;
@@ -134,7 +166,7 @@ export class Terminal {
           showMenu ? menuFor(state.text) : [],
           options.mask,
           undefined,
-          this.statusLine(),
+          this.aboveInput(),
         ),
       );
     this.redrawInput = redraw;
@@ -144,6 +176,13 @@ export class Terminal {
       const onResize = () => redraw();
       stdout.on('resize', onResize);
       this.onKey = (key) => {
+        // Ctrl+V with an image on the clipboard (text pastes arrive as a paste, not Ctrl+V).
+        if (key.ctrl && key.name === 'v' && options.pasteImage) {
+          void options.pasteImage().then((text) => {
+            if (text) this.onKey?.({ name: 'paste', sequence: text });
+          });
+          return;
+        }
         if (key.name === 'escape' && !state.text && options.onInterrupt) {
           options.onInterrupt();
           return;
@@ -298,6 +337,8 @@ export class Terminal {
       return;
     }
     if (this.onKey) this.onKey(pressed);
+    // Something the user started can be stopped on its own (a `!` command).
+    else if (pressed.ctrl && pressed.name === 'c' && this.cancelBusy) this.cancelBusy();
     // Nothing is being read (starting up, or running a command): Ctrl-C quits.
     else if (pressed.ctrl && pressed.name === 'c') this.quit();
     // Anything else typed meanwhile is kept for the next prompt, as a shell would.
@@ -352,38 +393,52 @@ export function layout(
   menu: MenuItem[],
   mask = false,
   columns = stdout.columns || 80,
-  /** An activity line drawn above the input. */
-  status?: string,
+  /** Lines drawn above the input: a reply as it's written, the activity line. */
+  status?: string | string[],
 ): Layout {
   // One column spare so the terminal never auto-wraps behind our back.
   const width = Math.max(10, columns - 1);
   const promptWidth = visibleLength(prompt);
   const text = mask ? '•'.repeat(state.text.length) : state.text;
 
-  const lines: string[] = [];
-  let first = true;
-  let rest = text;
-  do {
-    const room = first ? width - promptWidth : width;
-    lines.push((first ? prompt : '') + rest.slice(0, room));
-    rest = rest.slice(room);
-    first = false;
-  } while (rest.length > 0);
-
-  const position = promptWidth + state.cursor;
-  let cursorRow = Math.floor(position / width);
-  let cursorCol = position % width;
-  if (cursorRow >= lines.length) {
-    // The cursor sits just past a full final line: start a fresh one.
-    lines.push('');
-    cursorRow = lines.length - 1;
+  // Long lines wrap at the edge; typed line breaks start a new line under the text.
+  const indent = ' '.repeat(promptWidth);
+  const lines: string[] = [prompt];
+  let row = 0;
+  let col = promptWidth;
+  let cursorRow = 0;
+  let cursorCol = promptWidth;
+  for (let i = 0; i <= text.length; i++) {
+    if (i === state.cursor) {
+      cursorRow = row;
+      cursorCol = col;
+    }
+    const char = text[i];
+    if (char === undefined) break;
+    if (char === '\n') {
+      lines.push(indent);
+      row++;
+      col = promptWidth;
+      continue;
+    }
+    if (col >= width) {
+      lines.push('');
+      row++;
+      col = 0;
+    }
+    lines[row] += char;
+    col++;
+  }
+  if (cursorCol >= width) {
+    // The cursor sits just past a full line: it goes at the start of the next.
+    cursorRow++;
     cursorCol = 0;
+    if (cursorRow >= lines.length) lines.push('');
   }
 
   if (menu.length > 0) lines.push(...menuLines(menu, state.menuIndex, width));
-  return status === undefined
-    ? { lines, cursorRow, cursorCol }
-    : { lines: [status, ...lines], cursorRow: cursorRow + 1, cursorCol };
+  const above = status === undefined ? [] : Array.isArray(status) ? status : [status];
+  return { lines: [...above, ...lines], cursorRow: cursorRow + above.length, cursorCol };
 }
 
 function menuLines(menu: MenuItem[], selectedIndex: number, width: number): string[] {
@@ -391,12 +446,13 @@ function menuLines(menu: MenuItem[], selectedIndex: number, width: number): stri
   // Keep the highlighted item in view when the list is longer than the window.
   const start = Math.max(0, Math.min(selected - MAX_MENU_ITEMS + 1, menu.length - MAX_MENU_ITEMS));
   const shown = menu.slice(start, start + MAX_MENU_ITEMS);
-  const valueWidth = Math.max(...menu.map((m) => m.value.length)) + 2;
+  const shownAs = (item: MenuItem) => item.label ?? item.value;
+  const valueWidth = Math.max(...menu.map((m) => shownAs(m).length)) + 2;
 
   return shown.map((item, i) => {
     const active = start + i === selected;
     const hint = truncate(item.hint, Math.max(0, width - valueWidth - 4));
-    const value = item.value.padEnd(valueWidth);
+    const value = truncate(shownAs(item), width - 4).padEnd(valueWidth);
     return active
       ? `  ${paint.hex(BRAND, paint.bold(value))}${hint}`
       : `  ${paint.dim(value)}${paint.dim(hint)}`;

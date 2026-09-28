@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.4
+
+- **Replies stream in** as they're written, the way Claude Code shows them (on Claude Code).
+- **`!` mode:** `!npm test` runs a command in your own shell, in the project. Dazza hears the command, its exit code and output with your next message.
+- **`@` mentions and screenshots:** type `@` for a menu of the project's files; Ctrl+V pastes an image from the clipboard (or drag one into the terminal) and Dazza looks at it.
+- **Multi-line messages** (`\` then Enter, Option+Enter or Ctrl+J), and ↑ recalls messages from earlier sessions too.
+- **`/context`** shows how full the conversation is; past 70% Dazza suggests `/compact`.
+
 ## 0.1.3
 
 - **Feels like Claude Code.** The chat shows what it's doing as it goes: files it reads (grouped), web look-ups, your MCP tools, and changes to the plan. Builders' edits show a short diff again. Markdown links read as text. Esc stops Dazza's reply (not the build), and the spinner says so.

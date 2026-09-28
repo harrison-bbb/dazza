@@ -49,7 +49,10 @@ const expectedEvents: AgentEvent[] = [
 describe('parseClaudeLine', () => {
   it('translates a recorded session into Dazza events', () => {
     const lines = readFileSync(fixture('claude/read-file.jsonl'), 'utf8').split('\n');
-    expect(lines.flatMap(parseClaudeLine)).toEqual(expectedEvents);
+    const events = lines.flatMap(parseClaudeLine);
+    expect(events.filter((e) => e.type !== 'context')).toEqual(expectedEvents);
+    // Each model call says how big the conversation is.
+    expect(events.filter((e) => e.type === 'context').length).toBeGreaterThan(0);
   });
 
   it('reports error results as not ok', () => {
@@ -124,7 +127,9 @@ describe('ClaudeProvider', () => {
   };
 
   it('streams events from the CLI', async () => {
-    expect(await collect('Read note.txt')).toEqual(expectedEvents);
+    expect((await collect('Read note.txt')).filter((e) => e.type !== 'context')).toEqual(
+      expectedEvents,
+    );
   });
 
   it('surfaces a crashing CLI as a CommandError with stderr', async () => {
@@ -227,5 +232,19 @@ describe('the user’s own MCP servers', () => {
     expect(buildClaudeArgs({ cwd: '/p', mcpServers: dazza, userMcp: true })).not.toContain(
       '--strict-mcp-config',
     );
+  });
+});
+
+describe('streaming', () => {
+  it('asks for the reply as it’s written, and passes the pieces on', () => {
+    expect(buildClaudeArgs({ cwd: '/p', streamText: true })).toContain(
+      '--include-partial-messages',
+    );
+    expect(buildClaudeArgs({ cwd: '/p' })).not.toContain('--include-partial-messages');
+    const piece = JSON.stringify({
+      type: 'stream_event',
+      event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '1\n2' } },
+    });
+    expect(parseClaudeLine(piece)).toEqual([{ type: 'text_delta', text: '1\n2' }]);
   });
 });

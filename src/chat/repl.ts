@@ -1,6 +1,6 @@
 import { unwatchFile, watchFile } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, join, relative } from 'node:path';
 import pkg from '../../package.json' with { type: 'json' };
 import { startBoard } from '../board/server.js';
 import { type ActionResult, approvePlan, closeTask, requestChanges } from '../core/actions.js';
@@ -37,13 +37,19 @@ import { SlackBridge } from '../slack/bridge.js';
 import { TelegramBridge } from '../telegram/bridge.js';
 import { debounce } from '../util/debounce.js';
 import { errorMessage } from '../util/text.js';
+import { fileMenu, listProjectFiles, pasteClipboardImage, pointedAt } from './attachments.js';
 import { BRAND, logo, sessionInfo } from './banner.js';
 import { type CommandContext, commandMenu, parseCommand, suggest } from './commands.js';
 import { greeting, NO_PLAN } from './describe.js';
 import { ChatSession } from './session.js';
+import { runShell } from './shell.js';
 import { paint, stripAnsi } from './style.js';
 import { Terminal } from './terminal.js';
 
+/** Messages with more lines than this (big pastes, usually) aren't kept for ↑. */
+const MAX_RECALLED_LINES = 20;
+/** How often the @ menu's file list is refreshed. */
+const FILE_LIST_REFRESH_MS = 3 * 60_000;
 const PROMPT = `${paint.hex(BRAND, '›')} `;
 /** How often to look for plan changes made elsewhere (the board, the build). */
 const PLAN_POLL_MS = 500;
@@ -168,6 +174,7 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
       say,
       print: (text) => terminal.print(text),
       status: (key, text) => terminal.setStatus(key, text),
+      draft: (text) => terminal.setDraft(text),
     },
     onReply: (reply, origin) => {
       if (origin !== 'terminal') void channels.get(origin.channel)?.reply(reply, origin);
@@ -355,6 +362,8 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
     building: () => session.isOnTheJob,
     compact: () => session.compact(),
     chatting: () => session.isChatting,
+    context: () => session.context,
+    resetContext: () => session.resetContext(),
     stopBuild: async () => {
       if (!session.isBuilding) return say('Not building right now.');
       // A paused task reports itself; only say so when nothing was underway.
@@ -387,12 +396,26 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
     },
   };
 
-  const history: string[] = [];
+  // @ offers the project's files; listed once now, and again every few minutes.
+  let files: string[] = await listProjectFiles(projectRoot);
+  const refreshFiles = setInterval(() => {
+    void listProjectFiles(projectRoot).then((found) => {
+      files = found;
+    });
+  }, FILE_LIST_REFRESH_MS);
+  refreshFiles.unref();
+  const mentionMenu = fileMenu(() => files);
+  // ↑ reaches what was typed in earlier sessions too, as in Claude Code.
+  const history: string[] = await store.readHistory();
   while (!exiting) {
     const input = await terminal.readLine({
       prompt: PROMPT,
-      menu: commandMenu,
+      menu: (text) => (text.startsWith('/') ? commandMenu(text) : mentionMenu(text)),
       history,
+      pasteImage: async () => {
+        const saved = await pasteClipboardImage(join(store.dir, 'media', 'pasted'));
+        return saved && `${relative(projectRoot, saved)} `;
+      },
       // Esc stops Dazza's reply (not the build), as it does in Claude Code.
       onInterrupt: () => {
         if (session.isChatting) void session.stopChat();
@@ -413,14 +436,38 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
     }
     const line = input.trim();
     // Pastes expand to many lines; the one-line editor can't show those again.
-    if (line && !line.includes('\n') && line !== history.at(-1)) history.push(line);
+    // Pastes expand to many lines; long ones aren't worth recalling whole.
+    if (line && line.split('\n').length <= MAX_RECALLED_LINES && line !== history.at(-1)) {
+      history.push(line);
+      await store.appendHistory(line).catch(() => {});
+    }
 
-    if (isCommand(line)) {
+    if (line.startsWith('!') && line.length > 1) {
+      // `!` mode: the user's own command, in their own shell; Dazza hears about it next time.
+      commandRunning = true;
+      const stop = new AbortController();
+      terminal.cancelBusy = () => stop.abort();
+      const run = await runShell(
+        line.slice(1).trim(),
+        projectRoot,
+        (out) => terminal.print(`  ${out}`),
+        stop.signal,
+      );
+      terminal.cancelBusy = undefined;
+      if (run.exitCode !== 0) say(paint.dim(`Exited with ${run.exitCode ?? 'Ctrl-C'}.`));
+      session.noteShell(run);
+      commandRunning = false;
+      await resumeIfReady();
+    } else if (isCommand(line)) {
       commandRunning = true;
       await runCommand(line, context);
       commandRunning = false;
       await resumeIfReady();
-    } else if (line) session.send(line);
+    } else if (line) {
+      // Files it was pointed at (@mentions, dragged-in screenshots) go along named.
+      const note = pointedAt(line, projectRoot);
+      session.send(note ? `${line}\n\n(${note})` : line);
+    }
   }
 
   await session.stopBuild();

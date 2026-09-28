@@ -37,6 +37,7 @@ describe('CodexStream', () => {
       'tool_use:mcp__dazza__update_subtask',
       'tool_result',
       'text',
+      'context',
       'finished',
     ]);
     expect(events[0]).toEqual({

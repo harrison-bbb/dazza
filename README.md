@@ -79,7 +79,7 @@ On a subscription, Dazza uses the agent CLI's own sign-in. It strips any API key
 
 ## Commands
 
-Just type to talk to Dazza, about anything in the project. Type `/` for commands; they're instant and cost nothing.
+Just type to talk to Dazza, about anything in the project. Type `/` for commands; they're instant and cost nothing. It works like Claude Code: replies stream in, `!npm test` runs a command yourself (Dazza hears how it went), `@src/app.ts` points at a file, Ctrl+V pastes a screenshot, `\` then Enter (or Option+Enter) starts a new line, ↑ recalls earlier messages, and Esc stops a reply.
 
 | The work | |
 |---|---|
@@ -108,7 +108,7 @@ Just type to talk to Dazza, about anything in the project. Type `/` for commands
 | `/report` | A progress report, or the close-out at the end |
 | `/new` | Start a fresh conversation. The plan and board stay as they are |
 | `/continue` | Pick up the last conversation (`dazza --continue` starts there). Each `dazza` starts a new one |
-| `/compact` | Summarise the conversation to free up room, with Claude Code's or Codex's own compaction |
+| `/compact`, `/context` | Summarise the conversation to free up room (Claude Code's or Codex's own compaction); see how full it is |
 
 | Setup | |
 |---|---|

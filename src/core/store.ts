@@ -11,6 +11,9 @@ import { type Activity, Event, type EventInput, Plan } from './schema.js';
 export const STATE_DIR = '.dazza';
 
 const MANAGER_SESSION_FILE = 'session.json';
+/** What the user typed at the prompt, one JSON string per line. */
+const HISTORY_FILE = 'history.jsonl';
+const MAX_HISTORY = 500;
 const USAGE_FILE = 'usage.json';
 const BUILD_FILE = 'build.json';
 const PERMISSIONS_FILE = 'permissions.json';
@@ -370,6 +373,28 @@ export class Store {
       const { [taskId]: _, ...rest } = await this.readTaskBuilds();
       await this.writeAtomic(BUILD_FILE, `${JSON.stringify(rest, null, 2)}\n`);
     });
+  }
+
+  /** What the user has typed in this project, oldest first, for ↑ at the prompt. */
+  async readHistory(): Promise<string[]> {
+    const raw = (await this.readOptional(HISTORY_FILE)) ?? '';
+    return raw
+      .split('\n')
+      .flatMap((line) => {
+        const entry = parseJson(line);
+        return typeof entry === 'string' ? [entry] : [];
+      })
+      .slice(-MAX_HISTORY);
+  }
+
+  /** Add to the history; trimmed to the latest entries now and then. */
+  async appendHistory(entry: string): Promise<void> {
+    await this.init();
+    await appendFile(this.path(HISTORY_FILE), `${JSON.stringify(entry)}\n`);
+    const all = await this.readHistory();
+    if (all.length >= MAX_HISTORY) {
+      await this.writeAtomic(HISTORY_FILE, `${all.map((e) => JSON.stringify(e)).join('\n')}\n`);
+    }
   }
 
   async appendEvent(event: EventInput): Promise<void> {

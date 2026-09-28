@@ -22,6 +22,8 @@ describe('work commands', () => {
       status: () => {},
       building: () => false,
       chatting: () => false,
+      context: () => ({ tokens: 150_000, window: 200_000 }),
+      resetContext: () => {},
       compact: async () => '',
     } as unknown as CommandContext;
     return { ctx, said };

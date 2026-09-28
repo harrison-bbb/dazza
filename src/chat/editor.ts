@@ -1,5 +1,6 @@
 /**
- * A single-line input editor as a pure state machine: keys in, state out.
+ * The input editor as a pure state machine: keys in, state out. One line, or
+ * several (backslash then Enter, Option+Enter or Ctrl+J start a new line).
  * The terminal layer (terminal.ts) feeds it keypresses and draws the result,
  * which keeps all the editing behaviour unit-testable.
  */
@@ -15,6 +16,10 @@ export interface MenuItem {
   /** What gets submitted or completed, e.g. "/model". */
   value: string;
   hint: string;
+  /** Shown instead of the value, e.g. "@src/app.ts" when the value is the whole message. */
+  label?: string;
+  /** Enter completes it into the message instead of sending, like @ mentions. */
+  insert?: boolean;
 }
 
 export interface EditorState {
@@ -83,12 +88,30 @@ export function reduce(state: EditorState, key: Key, menuFor: MenuSource): Outco
     }
   }
 
+  const newline = () =>
+    setText(
+      `${state.text.slice(0, state.cursor)}\n${state.text.slice(state.cursor)}`,
+      state.cursor + 1,
+    );
   switch (key.name) {
-    case 'return':
+    // Ctrl+J (and Shift+Enter, where the terminal sends it that way): a new line.
     case 'enter':
+      return newline();
+    case 'return':
+      // Option+Enter: a new line.
+      if (key.meta) return newline();
+      // Enter on a mention completes it, ready to keep typing.
+      if (selected?.insert) return setText(`${selected.value} `);
       // Enter on an open menu runs the highlighted command.
       if (selected?.value.startsWith(state.text)) {
         return { type: 'submit', value: selected.value };
+      }
+      // A backslash just before the cursor: a new line in its place, as in Claude Code.
+      if (state.text[state.cursor - 1] === '\\') {
+        return setText(
+          `${state.text.slice(0, state.cursor - 1)}\n${state.text.slice(state.cursor)}`,
+          state.cursor,
+        );
       }
       return { type: 'submit', value: expandPastes(state.text, state.pastes) };
     case 'paste': {
@@ -115,10 +138,11 @@ export function reduce(state: EditorState, key: Key, menuFor: MenuSource): Outco
     case 'up':
       if (menu.length > 0)
         return edit({ menuIndex: (state.menuIndex - 1 + menu.length) % menu.length });
-      return browseHistory(state, -1);
+      // Several lines: move up a line first; from the top line, go back through history.
+      return moveLine(state, -1) ?? browseHistory(state, -1);
     case 'down':
       if (menu.length > 0) return edit({ menuIndex: (state.menuIndex + 1) % menu.length });
-      return browseHistory(state, 1);
+      return moveLine(state, 1) ?? browseHistory(state, 1);
     case 'left':
       return edit({ cursor: Math.max(0, state.cursor - 1) });
     case 'right':
@@ -154,6 +178,26 @@ export function reduce(state: EditorState, key: Key, menuFor: MenuSource): Outco
     state.text.slice(0, state.cursor) + typed + state.text.slice(state.cursor),
     state.cursor + typed.length,
   );
+}
+
+/** The cursor a line up or down, at the same column where it can be; undefined at the edge. */
+function moveLine(state: EditorState, step: -1 | 1): Outcome | undefined {
+  const lines = state.text.split('\n');
+  let start = 0;
+  let row = 0;
+  while (row < lines.length - 1 && start + (lines[row]?.length ?? 0) < state.cursor) {
+    start += (lines[row]?.length ?? 0) + 1;
+    row++;
+  }
+  const target = row + step;
+  if (target < 0 || target >= lines.length) return undefined;
+  const column = state.cursor - start;
+  const targetStart =
+    step < 0 ? start - (lines[target]?.length ?? 0) - 1 : start + (lines[row]?.length ?? 0) + 1;
+  return {
+    type: 'edit',
+    state: { ...state, cursor: targetStart + Math.min(column, lines[target]?.length ?? 0) },
+  };
 }
 
 function browseHistory(state: EditorState, step: -1 | 1): Outcome {

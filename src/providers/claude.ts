@@ -208,6 +208,7 @@ export function buildClaudeArgs(options: Omit<AgentRunOptions, 'prompt'>): strin
     // Strict unless asked: the user's own servers stay out of the session.
     if (!options.userMcp) args.push('--strict-mcp-config');
   }
+  if (options.streamText) args.push('--include-partial-messages');
   if (options.tools) args.push('--tools', options.tools.join(','));
   if (options.allowedTools?.length) args.push('--allowedTools', options.allowedTools.join(','));
   if (options.guard) {
@@ -263,10 +264,25 @@ export function parseClaudeLine(line: string): AgentEvent[] {
         },
       ];
     }
-    case 'assistant':
-      return message.message.content.flatMap(toContentEvent);
+    case 'assistant': {
+      const events = message.message.content.flatMap(toContentEvent);
+      const usage = message.message.usage;
+      // What this call read: everything in the conversation so far.
+      const count = (key: string) => (typeof usage?.[key] === 'number' ? usage[key] : 0);
+      const context =
+        count('input_tokens') +
+        count('cache_read_input_tokens') +
+        count('cache_creation_input_tokens');
+      return context > 0 ? [{ type: 'context' as const, tokens: context }, ...events] : events;
+    }
     case 'user':
       return message.message.content.flatMap(toToolResult);
+    case 'stream_event': {
+      const { delta } = message.event;
+      return delta?.type === 'text_delta' && delta.text
+        ? [{ type: 'text_delta', text: delta.text }]
+        : [];
+    }
     case 'rate_limit_event': {
       const info = message.rate_limit_info;
       const limited = info.status === 'rejected' && info.resetsAt !== undefined;
@@ -347,7 +363,17 @@ const StreamLine = z.discriminatedUnion('type', [
   ]),
   z.object({
     type: z.literal('assistant'),
-    message: z.object({ content: z.array(z.unknown()) }),
+    message: z.object({
+      content: z.array(z.unknown()),
+      usage: z.record(z.string(), z.unknown()).optional(),
+    }),
+  }),
+  z.object({
+    type: z.literal('stream_event'),
+    event: z.object({
+      type: z.string(),
+      delta: z.object({ type: z.string(), text: z.string().optional() }).optional(),
+    }),
   }),
   z.object({
     type: z.literal('user'),

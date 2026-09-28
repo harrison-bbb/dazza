@@ -449,6 +449,8 @@ export class CodexStream {
       case 'turn.completed':
         this.finished = true;
         return [
+          // Roughly how big the conversation is: what the turn read.
+          { type: 'context', tokens: event.usage.input_tokens },
           {
             type: 'finished',
             ok: true,

@@ -241,4 +241,42 @@ describe('ChatSession', () => {
     );
     expect(provider.compactions).toEqual(['session-1']);
   });
+
+  it('streams a reply line by line, showing the unfinished line live, and prints it once', async () => {
+    const printed: string[] = [];
+    const said: string[] = [];
+    const drafts: (string | undefined)[] = [];
+    const events: AgentEvent[] = [
+      { type: 'started', sessionId: 's', model: 'fake' },
+      { type: 'text_delta', text: 'Hello\nwor' },
+      { type: 'text_delta', text: 'ld\nbye' },
+      { type: 'text', text: 'Hello\nworld\nbye' },
+      { type: 'finished', ok: true, output: '', sessionId: 's', durationMs: 1 },
+    ];
+    const chat = new ChatSession({
+      store: project.store,
+      config: project.config,
+      provider: new FakeProvider(events),
+      manager: new Manager({
+        store: project.store,
+        config: project.config,
+        provider: new FakeProvider(events),
+        projectRoot: project.root,
+        mcpServer: { command: 'node', args: [] },
+      }),
+      workerMcp: { command: 'node', args: [] },
+      boardUrl: 'http://localhost:4777',
+      output: {
+        say: (text) => said.push(text),
+        print: (text) => printed.push(stripAnsi(text)),
+        status: () => {},
+        draft: (text) => drafts.push(text && stripAnsi(text)),
+      },
+    });
+    chat.send('hi');
+    await chat.idle();
+    expect(printed).toEqual(['\n● Hello', '  world', '  bye', '']);
+    expect(drafts).toEqual(['  wor', '  bye', undefined]);
+    expect(said).toEqual([]); // not printed a second time
+  });
 });

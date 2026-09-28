@@ -139,6 +139,44 @@ describe('layout', () => {
   });
 });
 
+describe('several lines', () => {
+  it('starts a new line with backslash then Enter, Option+Enter or Ctrl+J, and sends on Enter', () => {
+    expect(press(['one\\', key('return'), 'two', key('return')])).toEqual({
+      type: 'submit',
+      value: 'one\ntwo',
+    });
+    expect(press(['a', { name: 'return', meta: true }, 'b', key('return')])).toEqual({
+      type: 'submit',
+      value: 'a\nb',
+    });
+    expect(press(['a', key('enter'), 'b', key('return')])).toEqual({
+      type: 'submit',
+      value: 'a\nb',
+    });
+  });
+
+  it('moves up and down between lines before going through history', () => {
+    const start = initialState(['earlier message']);
+    // Type two lines, go up a line, and type at the same column.
+    expect(press(['abc', key('enter'), 'de', key('up'), 'X', key('return')], start)).toEqual({
+      type: 'submit',
+      value: 'abX\nde'.replace('abX', 'abXc'),
+    });
+    // From the top line, up recalls history as before.
+    expect(press(['x', key('up'), key('return')], start)).toEqual({
+      type: 'submit',
+      value: 'earlier message',
+    });
+  });
+
+  it('lays out each line under the text, with the cursor where it belongs', () => {
+    const state = { ...initialState(), text: 'hello\nworld', cursor: 8 };
+    const { lines, cursorRow, cursorCol } = layout('› ', state, [], false, 40);
+    expect(lines).toEqual(['› hello', '  world']);
+    expect([cursorRow, cursorCol]).toEqual([1, 4]);
+  });
+});
+
 describe('wrap', () => {
   it('breaks long lines between words, keeping the indent, and ignores colour codes', () => {
     const text = '  The quick brown fox jumps over the lazy dog near the riverbank today';

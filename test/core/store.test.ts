@@ -106,3 +106,19 @@ describe('conversations', () => {
     expect(await store.continueConversation('codex')).toBe(true);
   });
 });
+
+describe('prompt history', () => {
+  const project = useTempProject();
+
+  it('keeps what was typed across sessions, the latest 500', async () => {
+    const { store } = project;
+    expect(await store.readHistory()).toEqual([]);
+    await store.appendHistory('first');
+    await store.appendHistory('two\nlines');
+    expect(await store.readHistory()).toEqual(['first', 'two\nlines']);
+    for (let i = 0; i < 520; i++) await store.appendHistory(`m${i}`);
+    const history = await store.readHistory();
+    expect(history).toHaveLength(500);
+    expect(history.at(-1)).toBe('m519');
+  });
+});
