@@ -28,5 +28,10 @@ jobs:
           git config --global user.name "CI"
           git config --global user.email "ci@example.com"
           git config --global init.defaultBranch main
-      - run: pnpm check
+          git config --global core.autocrlf false
+      - run: pnpm lint
+      - run: pnpm typecheck
+      # Run even when lint fails, so a platform's test results are always seen.
+      - run: pnpm test
+        if: ${{ !cancelled() }}
       - run: pnpm build
