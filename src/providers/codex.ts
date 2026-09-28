@@ -294,7 +294,8 @@ export function buildCodexArgs(
   options: Omit<AgentRunOptions, 'prompt'>,
   { disableMcpServers = [] }: CodexExtras = {},
 ): string[] {
-  const args = ['exec', '--json', '--skip-git-repo-check'];
+  // Live web search: Codex's default is a cached index, too stale for prices and versions.
+  const args = ['exec', '--json', '--skip-git-repo-check', '-c', 'web_search="live"'];
   if (options.model) args.push('-m', options.model);
   if (options.autonomous) {
     // --approve-for-me implies the workspace-write sandbox (and Codex rejects an

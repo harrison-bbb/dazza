@@ -368,13 +368,22 @@ describe('SlackBridge', () => {
     b.deliver(dm({ user: 'U_ME', text: 'edited', ts: '10.2', subtype: 'message_changed' }));
     b.deliver(dm({ bot_id: 'B1', user: 'U_BOT', text: 'my own post', ts: '10.3' }));
     expect(b.messages.map((m) => m.text)).toEqual(['what’s blocked?']);
-    await until(() => b.slack.reactions.length > 0);
-    expect(b.slack.reactions).toEqual(['+eyes@10.1']);
+    // A photo arrives as a file_share: its words still come through, with a note.
+    b.deliver(dm({ user: 'U_ME', text: 'see this', ts: '10.4', subtype: 'file_share' }));
+    expect(b.messages[1]?.text).toContain('see this');
+    expect(b.messages[1]?.text).toContain('attached a photo or file');
+    await until(() => b.slack.reactions.length > 1);
+    expect(b.slack.reactions).toEqual(['+eyes@10.1', '+eyes@10.4']);
 
     await b.instance.reply('T5 is waiting on a key.', b.messages[0]?.from as Remote);
     expect(b.slack.posted.at(-1)).toMatchObject({ channel: 'D1', text: 'T5 is waiting on a key.' });
     expect(b.slack.posted.at(-1)?.threadTs).toBeUndefined();
-    expect(b.slack.reactions).toEqual(['+eyes@10.1', '-eyes@10.1', '+white_check_mark@10.1']);
+    expect(b.slack.reactions).toEqual([
+      '+eyes@10.1',
+      '+eyes@10.4',
+      '-eyes@10.1',
+      '+white_check_mark@10.1',
+    ]);
     await b.instance.stop();
   });
 

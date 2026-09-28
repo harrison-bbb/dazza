@@ -11,6 +11,13 @@ export interface Remote {
   ref?: string;
 }
 
+/**
+ * Added to a message that came with a photo or file: Dazza can't open those
+ * from Slack or Telegram yet, and should say so rather than ignore them.
+ */
+export const ATTACHMENT_NOTE =
+  '[The user attached a photo or file here, which you can’t see from this app. Say so in a line, and ask them to describe it, or to save it into the project folder so you can read it.]';
+
 /** Commands that work from a phone as well as the terminal. */
 export const REMOTE_COMMANDS = ['status', 'build', 'stop'] as const;
 export type RemoteCommand = (typeof REMOTE_COMMANDS)[number];

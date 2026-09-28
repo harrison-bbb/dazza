@@ -91,7 +91,8 @@ function step(tool: string, input: unknown, dir: string | undefined): string | u
       return `Edited ${path('notebook_path')}`;
     case 'Read':
       return `Read ${path()}`;
-    case 'Bash': {
+    case 'Bash':
+    case 'Monitor': {
       const command = (field('command') ?? '').replace(/\s+/g, ' ').trim();
       return `Ran ${command.length > 160 ? `${command.slice(0, 159)}…` : command}`;
     }

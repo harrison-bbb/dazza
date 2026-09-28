@@ -26,6 +26,15 @@ describe('Manager', () => {
     return all;
   };
 
+  it('can read the code and the web, but has nothing that edits code', async () => {
+    const { provider, manager } = setup();
+    await drain(manager.send('hi'));
+    expect(provider.runs[0]?.tools).toEqual(['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch']);
+    expect(provider.runs[0]?.allowedTools).toEqual(
+      expect.arrayContaining(['WebSearch', 'WebFetch', 'mcp__dazza__save_plan']),
+    );
+  });
+
   it('relays agent events', async () => {
     const { manager } = setup();
     const events = await drain(manager.send('hi'));

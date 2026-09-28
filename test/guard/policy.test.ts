@@ -101,6 +101,17 @@ describe('guard policy: files', () => {
     expect(tool('Write', '/work/T3/.git/hooks/pre-commit')).toBe('never');
   });
 
+  it('keeps agents out of Dazza’s own keys, wherever they’re kept', () => {
+    const before = process.env.DAZZA_CONFIG_DIR;
+    process.env.DAZZA_CONFIG_DIR = '/srv/sam/dazza-config';
+    try {
+      expect(tool('Read', '/srv/sam/dazza-config/connection.json')).toBe('never');
+    } finally {
+      if (before === undefined) delete process.env.DAZZA_CONFIG_DIR;
+      else process.env.DAZZA_CONFIG_DIR = before;
+    }
+  });
+
   it('never reads credentials, but reads the project freely', () => {
     expect(tool('Read', '/work/T3/.env')).toBe('allow');
     expect(tool('Read', '/home/sam/.ssh/id_ed25519')).toBe('never');
@@ -144,5 +155,24 @@ describe('guard policy: Windows paths', () => {
     expect(fromGitBash('/d', 'win32')).toBe('D:\\');
     expect(fromGitBash('/tmp/x', 'win32')).toBe('/tmp/x');
     expect(fromGitBash('/c/Users', 'darwin')).toBe('/c/Users');
+  });
+});
+
+describe('guard policy: other tools that run commands', () => {
+  const call = (tool: string, input: Record<string, unknown>) => judge({ tool, input }, ctx).kind;
+
+  it('checks Monitor like the shell it is', () => {
+    expect(call('Monitor', { command: 'tail -f dev.log | grep --line-buffered Ready' })).toBe(
+      'allow',
+    );
+    expect(call('Monitor', { command: 'git push origin main' })).toBe('never');
+    expect(call('Monitor', { command: 'npx vercel --prod' })).toBe('never');
+    expect(call('Monitor', { ws: { url: 'ws://localhost:3000/events' } })).toBe('allow');
+    expect(call('Monitor', { ws: { url: 'wss://events.example.com/stream' } })).toBe('ask');
+  });
+
+  it('checks any new tool with a command, but not Dazza’s own', () => {
+    expect(call('SomeFutureShell', { command: 'sudo rm -rf /' })).toBe('never');
+    expect(call('mcp__dazza__ask_permission', { command: 'docker run postgres' })).toBe('allow');
   });
 });

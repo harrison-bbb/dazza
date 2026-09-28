@@ -27,7 +27,7 @@ Project state in `.dazza/` holds no secrets unless you paste one into the chat o
 There are two agent sessions. See [architecture.md](architecture.md).
 
 **The manager** (the conversation) can read your code and use Dazza's planning tools. It can't edit code or run commands.
-- Claude Code: `--tools Read,Glob,Grep` (it has no other built-in tools at all) and `--allowedTools Read,Glob,Grep,<dazza tools>`. In a headless run, anything else that needs permission is denied.
+- Claude Code: `--tools Read,Glob,Grep,WebSearch,WebFetch` (it has no other built-in tools at all) and `--allowedTools` with those plus Dazza's tools. In a headless run, anything else that needs permission is denied.
 - Codex: `-s read-only` with `approval_policy="never"`.
 
 **The worker** (the builder) edits files and runs commands without asking you.
@@ -38,7 +38,7 @@ Be clear about what that means. During `/build`, the agent runs shell commands o
 
 ### Dazza's guard
 
-On both agents, every tool call goes through `dazza guard` first (a `PreToolUse` hook; the rules are in `src/guard/policy.ts`). Codex's own tools are covered too: every file an `apply_patch` touches is checked like a write, and keys typed into a running shell (`write_stdin`) are checked like a command. It works like a careful engineer on someone else's systems: the task's own worktree is theirs to change, and everything outside it isn't. Each call gets one of three answers:
+On both agents, every tool call goes through `dazza guard` first (a `PreToolUse` hook; the rules are in `src/guard/policy.ts`). Codex's own tools are covered too: every file an `apply_patch` touches is checked like a write, and keys typed into a running shell (`write_stdin`) are checked like a command. So is Claude Code's `Monitor`, which runs a script (a WebSocket to anywhere but this machine asks first), and any other tool that carries a `command`: a new tool can't be a way around the rules. It works like a careful engineer on someone else's systems: the task's own worktree is theirs to change, and everything outside it isn't. Each call gets one of three answers:
 
 | | What | Examples |
 |---|---|---|

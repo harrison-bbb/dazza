@@ -6,7 +6,7 @@ import {
   type MenuSource,
   reduce,
 } from '../../src/chat/editor.js';
-import { layout, wrap } from '../../src/chat/terminal.js';
+import { layout, userMessage, wrap } from '../../src/chat/terminal.js';
 
 const commands = ['/dashboard', '/help', '/model', '/usage'];
 const menu: MenuSource = (text) =>
@@ -156,5 +156,15 @@ describe('wrap', () => {
     expect(wrap('  - The quick brown fox jumps over the lazy dog', 30)).toBe(
       '  - The quick brown fox jumps\n    over the lazy dog',
     );
+  });
+});
+
+describe('userMessage', () => {
+  it('marks what the user sent, wrapping under the text and keeping their line breaks', () => {
+    // Tests run without colour, so this is the plain form: no band, no padding.
+    expect(userMessage('the quick brown fox jumps over the lazy dog', 24)).toBe(
+      '› the quick brown fox\n  jumps over the lazy\n  dog',
+    );
+    expect(userMessage('first\nsecond', 40)).toBe('› first\n  second');
   });
 });

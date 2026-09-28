@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2
+
+- **Web access.** Dazza's chat can search the web and read pages while scoping: current prices and free tiers, what a host supports, library versions, and any link you paste. Builders keep theirs, and can once again watch and stop what they run in the background (like a dev server) and edit Jupyter notebooks. On Codex, web search is now live rather than a cached index.
+- **Your messages stand out** in the terminal, on a shaded band, so they don't blend into Dazza's replies.
+- **Photos from your phone:** a Slack or Telegram message with a photo or file no longer goes unanswered. Dazza gets its words, and says it can't see images from there yet.
+- **Update notice:** once a day, Dazza checks whether a newer version is out, and says how to update (also in `dazza doctor`). `DAZZA_NO_UPDATE_CHECK=1` turns it off.
+- **Safety:** the guard now checks every tool that runs commands, not just the shell, and protects Dazza's own settings wherever `DAZZA_CONFIG_DIR` or `XDG_CONFIG_HOME` put them.
+- Screenshots on Windows find Chrome installed for one user.
+
 ## 0.1.1
 
 - **Windows:** Dazza now finds Claude Code and Codex however they were installed. npm installs them as `.cmd` wrappers, which Dazza couldn't start, so it reported them as not installed. `/try` can run `npm` again for the same reason. Dazza's guard also understands the `/c/Users/...` paths Git Bash uses, and quotes its hook command so a Node path with spaces works.

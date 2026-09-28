@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { SlackLink } from '../core/config.js';
 import {
+  ATTACHMENT_NOTE,
   type Channel,
   type ChannelHandlers,
   isRemoteCommand,
@@ -191,7 +192,10 @@ export class SlackBridge implements Channel {
     }
     // Only plain messages in a DM with the bot: not edits, joins, or its own posts.
     if (event.type !== 'message' || event.channel_type !== 'im') return;
-    if (event.subtype || event.bot_id || !event.text || !event.user) return;
+    // A message with a photo or file comes as a file_share: keep its words, and say it had one.
+    const attached = event.subtype === 'file_share';
+    if ((event.subtype && !attached) || event.bot_id || !event.user) return;
+    if (!event.text && !attached) return;
     if (event.user !== this.link.userId) {
       void this.guard(() =>
         this.api.postMessage({
@@ -209,7 +213,9 @@ export class SlackBridge implements Channel {
     });
     void this.api.react(event.channel, event.ts, THINKING, true).catch(() => {});
     const taskId = event.thread_ts ? this.threads.get(event.thread_ts) : undefined;
-    const text = fromSlackText(event.text);
+    const text = [fromSlackText(event.text ?? ''), attached && ATTACHMENT_NOTE]
+      .filter(Boolean)
+      .join('\n\n');
     this.handlers.onMessage(taskId ? `About ${taskId}: ${text}` : text, { channel: 'slack', ref });
   }
 

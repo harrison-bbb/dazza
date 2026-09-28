@@ -153,10 +153,8 @@ export class Terminal {
           this.draw(layout(options.prompt, state, [], options.mask));
           stdout.write('\n');
         } else {
-          // Rewrapped at word boundaries now that it's no longer being edited.
-          stdout.write(
-            `\r\x1b[J${wrap(options.prompt + state.text, (stdout.columns || 80) - 1)}\n`,
-          );
+          // Set apart from Dazza's words, rewrapped now it's no longer being edited.
+          stdout.write(`\r\x1b[J${userMessage(state.text, (stdout.columns || 80) - 1)}\n`);
         }
         this.drawnCursorRow = 0;
         this.onKey = undefined;
@@ -408,6 +406,22 @@ function visibleLength(text: string): number {
  * Wrap text to a width at word boundaries, keeping each line's indent on the
  * lines it wraps onto. Colour codes don't count towards the width.
  */
+/**
+ * What the user sent, as it stays on screen: a shaded band the width of the
+ * terminal, so it doesn't blend into Dazza's replies. Plain `›` lines when
+ * colour is off.
+ */
+export function userMessage(text: string, width: number): string {
+  const inner = Math.max(10, width - 2);
+  const lines = text
+    .split('\n')
+    .map((line, i) => `${i === 0 ? '›' : ' '} ${line}`)
+    .flatMap((line) => wrap(line, inner).split('\n'));
+  // Without colour there's no band to fill, so no padding either.
+  if (paint.band('') === '') return lines.join('\n');
+  return lines.map((line) => paint.band(` ${line.padEnd(inner)} `)).join('\n');
+}
+
 export function wrap(text: string, width: number): string {
   if (width < 20) return text;
   return text

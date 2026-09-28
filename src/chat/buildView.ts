@@ -167,11 +167,14 @@ export function toolLine(
       return step('Edit', `${path()}${changeSize(field('old_string'), field('new_string'))}`);
     case 'Delete':
       return step('Delete', path());
+    case 'NotebookEdit':
+      return step('Edit', path('notebook_path'));
     case 'Write': {
       const lines = (field('content') ?? '').split('\n').length;
       return step('Write', `${path()} ${paint.dim(`(${lines} lines)`)}`);
     }
     case 'Bash':
+    case 'Monitor':
       return step('Run', paint.dim(truncate(field('command') ?? '', 90)));
     case 'Glob':
     case 'Grep':

@@ -77,7 +77,7 @@ The whole folder is kept out of the project's git history. Dazza adds `.dazza/` 
 
 ## Two agent sessions
 
-**The manager** is the conversation. Every user message, from the terminal or from messaging, resumes the same agent session and carries a fresh `<project-state>` snapshot (plan status, recent comments), because the board and the builder change things between messages. The manager can read the codebase (`Read`, `Glob`, `Grep`) and use Dazza's manager tools. It has no tools that edit code. On Codex it runs in a read-only sandbox.
+**The manager** is the conversation. Every user message, from the terminal or from messaging, resumes the same agent session and carries a fresh `<project-state>` snapshot (plan status, recent comments), because the board and the builder change things between messages. The manager can read the codebase (`Read`, `Glob`, `Grep`), search and read the web (`WebSearch`, `WebFetch`), and use Dazza's manager tools. It has no tools that edit code. On Codex it runs in a read-only sandbox.
 
 **The worker** builds one task. It runs in auto mode (see [security.md](security.md)) with the worker tools, and gets a brief made from the scope, the task, its acceptance criteria and the comments so far.
 

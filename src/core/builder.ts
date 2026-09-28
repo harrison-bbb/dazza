@@ -52,23 +52,27 @@ export interface Timing {
   resumeMarginMs: number;
 }
 
-/** Independent tasks built at once, unless the user chose otherwise (/parallel). */
 /**
- * What a builder works with. Subagents and workflows are left out: they
- * multiply tokens, and a builder works its one task itself.
+ * What a builder works with: files and notebooks, the shell (with Monitor and
+ * TaskStop to watch and stop what it runs in the background, like a dev
+ * server), and the web. Subagents and workflows are left out: they multiply
+ * tokens, and a builder works its one task itself.
  */
 const BUILDER_TOOLS = [
   'Bash',
+  'Monitor',
+  'TaskStop',
   'Read',
   'Edit',
   'Write',
+  'NotebookEdit',
   'Glob',
   'Grep',
   'WebFetch',
   'WebSearch',
-  'TodoWrite',
 ];
 
+/** Independent tasks built at once, unless the user chose otherwise (/parallel). */
 export const DEFAULT_PARALLEL = 2;
 const MAX_PARALLEL = 3;
 /** How often a build with free slots looks for newly ready tasks. */

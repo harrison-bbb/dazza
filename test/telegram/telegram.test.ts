@@ -182,6 +182,27 @@ describe('TelegramBridge', () => {
     expect(bot.sent.map((m) => m.text)).toEqual(['ran status']);
   });
 
+  it('keeps the words sent with a photo, and says there was one', async () => {
+    const bot = new FakeBot();
+    bot.updates = [
+      {
+        update_id: 5,
+        message: {
+          message_id: 5,
+          chat: { id: 42, type: 'private', first_name: 'Sam' },
+          caption: 'this button is broken',
+          photo: [{}],
+        },
+      },
+    ];
+    const b = bridge(bot);
+    b.instance.start();
+    await until(() => b.received.length > 0);
+    await b.instance.stop();
+    expect(b.received[0]).toContain('this button is broken');
+    expect(b.received[0]).toContain('attached a photo or file');
+  });
+
   it('sends to the linked chat, screenshots after', async () => {
     const bot = new FakeBot();
     await bridge(bot).instance.send('hello', ['/shots/a.png']);

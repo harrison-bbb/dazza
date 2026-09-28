@@ -70,6 +70,10 @@ export const Limits = z.object({
 });
 export type Limits = z.infer<typeof Limits>;
 
+/** When Dazza last asked npm for its latest version, and the answer. */
+export const UpdateCheck = z.object({ checkedAt: z.iso.datetime(), latest: z.string() });
+export type UpdateCheck = z.infer<typeof UpdateCheck>;
+
 export class Config {
   constructor(readonly dir = defaultConfigDir()) {}
 
@@ -81,6 +85,14 @@ export class Config {
     const next = { ...(await this.readSettings()), ...changes };
     await this.write('settings.json', next);
     return next;
+  }
+
+  readUpdateCheck(): Promise<UpdateCheck | undefined> {
+    return this.read('update.json', UpdateCheck);
+  }
+
+  writeUpdateCheck(check: UpdateCheck): Promise<void> {
+    return this.write('update.json', check);
   }
 
   readConnection(): Promise<Connection | undefined> {
@@ -152,7 +164,8 @@ export class Config {
   }
 }
 
-function defaultConfigDir(): string {
+/** Where Dazza keeps its settings and keys. Exported for the guard, which keeps agents out of it. */
+export function defaultConfigDir(): string {
   if (process.env.DAZZA_CONFIG_DIR) return process.env.DAZZA_CONFIG_DIR;
   return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'dazza');
 }

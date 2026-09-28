@@ -1,6 +1,8 @@
 import { basename } from 'node:path';
 import { styleText } from 'node:util';
+import pkg from '../../package.json' with { type: 'json' };
 import { Config, type Connection } from '../core/config.js';
+import { newerDazza, updateNotice } from '../core/updates.js';
 import { findBrowser } from '../preview/capture.js';
 import { createProvider, PROVIDER_HELP, providerFor } from '../providers/index.js';
 import type { ProviderId } from '../providers/types.js';
@@ -18,8 +20,10 @@ const MIN_NODE_MAJOR = 22;
 
 /** `dazza doctor`: verify everything Dazza depends on. Exits non-zero if anything is missing. */
 export async function doctor(): Promise<void> {
-  const connection = await new Config().readConnection();
+  const config = new Config();
+  const connection = await config.readConnection();
   const checks = await Promise.all([
+    checkDazza(config),
     checkNode(),
     checkGit(),
     checkAgent('claude', connection),
@@ -41,6 +45,16 @@ export async function doctor(): Promise<void> {
   } else {
     console.log('\nAll set. Run `dazza` in your project folder to start.');
   }
+}
+
+async function checkDazza(config: Config): Promise<Check> {
+  const newer = await newerDazza(config);
+  return {
+    label: 'Dazza',
+    // Out of date still works: a nudge, not a failure.
+    ok: true,
+    detail: `v${pkg.version}${newer ? ` · ${updateNotice(newer)}` : ''}`,
+  };
 }
 
 async function checkNode(): Promise<Check> {

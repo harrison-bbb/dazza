@@ -103,6 +103,8 @@ describe('buildCodexArgs', () => {
     // Codex refuses --sandbox alongside --approve-for-me (it implies workspace-write).
     expect(args).not.toContain('-s');
     expect(args).toContain('sandbox_workspace_write.network_access=true');
+    // Live web search, not Codex's cached index.
+    expect(args).toContain('web_search="live"');
     expect(args.slice(-3)).toEqual(['resume', 'abc', '-']);
   });
 });

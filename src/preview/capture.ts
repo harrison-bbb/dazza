@@ -154,6 +154,9 @@ export async function findBrowser(): Promise<string | undefined> {
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    // Chrome installed for one user, not the whole machine.
+    process.env.LOCALAPPDATA &&
+      `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`,
   ];
   const found = candidates.find((path) => path && existsSync(path));
   if (found) return found;

@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { TelegramLink } from '../core/config.js';
 import {
+  ATTACHMENT_NOTE,
   type Channel,
   type ChannelHandlers,
   isRemoteCommand,
@@ -168,8 +169,13 @@ export class TelegramBridge implements Channel {
     }
 
     const message = update.message;
-    if (!message?.text || String(message.chat.id) !== this.link.chatId) return;
-    const text = message.text.trim();
+    if (!message || String(message.chat.id) !== this.link.chatId) return;
+    // A photo or file carries its words as a caption: keep them, and say it had one.
+    const attached = Boolean(message.photo?.length || message.document);
+    const text = [(message.text ?? message.caption ?? '').trim(), attached && ATTACHMENT_NOTE]
+      .filter(Boolean)
+      .join('\n\n');
+    if (!text) return;
     if (text === '/start') return;
 
     const repliedTo = message.reply_to_message?.message_id;

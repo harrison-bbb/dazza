@@ -12,6 +12,7 @@ import { isComplete, recordMilestones } from '../core/milestones.js';
 import { answerPermission } from '../core/permissions.js';
 import { reportRequest } from '../core/report.js';
 import { StateError, Store } from '../core/store.js';
+import { newerDazza, updateNotice } from '../core/updates.js';
 import type {
   Channel,
   ChannelHandlers,
@@ -72,6 +73,8 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
   write = (text) => terminal.print(text);
   console.log(`\n${logo()}\n`);
   const config = new Config();
+  // Asked now, shown with the banner: it runs alongside the checks below.
+  const update = newerDazza(config);
   const connection = (await config.readConnection()) ?? (await firstConnect(terminal, config));
   if (!connection) {
     say('Not connected yet. Run `dazza` again whenever you’re ready.');
@@ -119,6 +122,8 @@ async function chat(projectRoot: string, terminal: Terminal): Promise<void> {
       board: board.url,
     })}`,
   );
+  const newer = await update;
+  if (newer) console.log(paint.amber(updateNotice(newer)));
   const hasConversation = (await store.readManagerSession(provider.id)) !== undefined;
   say(greeting(await store.readPlan(), { hasConversation, ...(codebase && { codebase }) }));
 

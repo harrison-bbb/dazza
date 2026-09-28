@@ -115,6 +115,11 @@ describe('a resilient build', () => {
     );
     expect(status).toBe('review');
     expect(provider.runs[1]?.resumeSessionId).toBe('session-1');
+    // Builders get the web and background-process tools, but no subagents.
+    expect(provider.runs[0]?.tools).toEqual(
+      expect.arrayContaining(['Bash', 'WebSearch', 'WebFetch', 'Monitor', 'TaskStop']),
+    );
+    expect(provider.runs[0]?.tools).not.toContain('Task');
     // The session has the brief already: the resume carries only what's new.
     expect(provider.runs[0]?.prompt).toMatch(/^Build T1/);
     expect(provider.runs[1]?.prompt).toMatch(/^Carry on building T1/);

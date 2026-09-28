@@ -51,7 +51,7 @@ claude -p --output-format stream-json --verbose
 ```
 
 - `--strict-mcp-config` means the session only gets Dazza's MCP server, not the user's own.
-- `--tools` sets which built-in tools the session has at all. Every tool a session has is described in every request, so this is also the biggest saving: the manager gets only `Read`, `Glob` and `Grep` (about 20k tokens per turn instead of 46k), and builders get what building needs (`Bash`, `Read`, `Edit`, `Write`, `Glob`, `Grep`, `WebFetch`, `WebSearch`, `TodoWrite`), without subagents or workflows.
+- `--tools` sets which built-in tools the session has at all. Every tool a session has is described in every request, so this is also the biggest saving: the manager gets `Read`, `Glob`, `Grep`, `WebSearch` and `WebFetch` (to check prices, versions and docs while scoping), and builders get what building needs (`Bash`, `Monitor`, `TaskStop`, `Read`, `Edit`, `Write`, `NotebookEdit`, `Glob`, `Grep`, `WebFetch`, `WebSearch`), without subagents or workflows. Tools not listed aren't loaded at all, which roughly halves the context of every turn.
 - `--allowedTools` lists what runs without asking. In a non-interactive run, anything else that needs permission is denied. The manager gets `Read`, `Glob`, `Grep` and its Dazza tools.
 - The worker adds `--permission-mode auto`: edits and commands go ahead, and Claude Code's own safety checks block risky actions.
 

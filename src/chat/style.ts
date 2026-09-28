@@ -12,6 +12,8 @@ export const paint = {
   red: wrap('31', '39'),
   green: wrap('32', '39'),
   amber: wrap('33', '39'),
+  /** What the user wrote: light text on a dark band, readable on light and dark terminals. */
+  band: wrap('48;2;44;44;44;38;2;236;236;236', '49;39'),
   hex(color: string, text: string): string {
     const [r, g, b] = [1, 3, 5].map((i) => Number.parseInt(color.slice(i, i + 2), 16));
     return wrap(`38;2;${r};${g};${b}`, '39')(text);

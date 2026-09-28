@@ -306,7 +306,7 @@ function registerScreenshotTool(
         return toResult({
           ok: true,
           message:
-            `Saved ${shot.path} (${shot.width}×${shot.height}). To look at it yourself, Read ${mediaFile(shot.path)}. ` +
+            `Saved ${shot.path} (${shot.width}×${shot.height}). To look at it yourself, open the image at ${mediaFile(shot.path)}. ` +
             `To show the user, attach it with screenshots: ["${shot.path}"].`,
         });
       } catch (error) {

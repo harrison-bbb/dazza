@@ -1,5 +1,6 @@
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, relative, resolve } from 'node:path';
+import { defaultConfigDir } from '../core/config.js';
 
 /** Docker commands that only look, or build an image. */
 const DOCKER_READ_ONLY = ['ps', 'images', 'logs', 'inspect', 'version', 'info', 'build'];
@@ -63,9 +64,41 @@ export function judge(call: ToolCall, context: Context): Decision {
       const typed = stringField(call.input, 'chars') ?? '';
       return typed.trim() ? judgeCommand(typed, ctx) : allow;
     }
-    default:
-      return allow;
+    // Claude Code's Monitor runs a script, or listens to a WebSocket.
+    case 'Monitor': {
+      const url = objectField(call.input, 'ws')?.url;
+      if (typeof url === 'string') {
+        return isLocal(url) ? allow : ask('It listens to an outside service.');
+      }
+      return judgeCommand(stringField(call.input, 'command') ?? '', ctx);
+    }
+    default: {
+      // Any other tool that runs a command is a way to run commands: check it
+      // like one, so a new tool can't be a way around these rules. Dazza's own
+      // tools are exempt (ask_permission names a command; it doesn't run it).
+      const command = stringField(call.input, 'command');
+      return command && !call.tool.startsWith('mcp__') ? judgeCommand(command, ctx) : allow;
+    }
   }
+}
+
+/** A URL on this machine. */
+function isLocal(url: string): boolean {
+  try {
+    return ['localhost', '127.0.0.1', '[::1]'].includes(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function objectField(
+  input: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> | undefined {
+  const value = input[key];
+  return typeof value === 'object' && value !== null
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 /** The files a Codex patch adds, updates, deletes or moves to. Exported for tests. */
@@ -122,7 +155,11 @@ const SECRET_PATHS = [
 ];
 
 function isSecret(target: string, home: string): boolean {
-  return SECRET_PATHS.some((p) => inside(target, resolve(home, p)));
+  // Dazza's own keys too, wherever DAZZA_CONFIG_DIR or XDG_CONFIG_HOME put them.
+  return (
+    SECRET_PATHS.some((p) => inside(target, resolve(home, p))) ||
+    inside(target, resolve(defaultConfigDir()))
+  );
 }
 
 /**

@@ -158,6 +158,10 @@ export const Update = z.object({
       message_id: z.number().default(0),
       chat: Chat,
       text: z.string().optional(),
+      /** What's written under a photo or file; such messages have no `text`. */
+      caption: z.string().optional(),
+      photo: z.array(z.unknown()).optional(),
+      document: z.unknown().optional(),
       /** The message this one replies to, e.g. a notification or a "what should change?" */
       reply_to_message: z.object({ message_id: z.number() }).optional(),
     })

@@ -10,8 +10,12 @@ import type { Activity, Event, Plan } from './schema.js';
 import type { Store } from './store.js';
 import { trackUsage } from './usage.js';
 
-/** Read-only tools to inspect the codebase. No tools that edit code, and nothing else to pay for. */
-const BUILT_IN_TOOLS = ['Read', 'Glob', 'Grep'];
+/**
+ * Read-only tools: the codebase, and the web, to check what changes (prices,
+ * free tiers, versions, API limits) and read what the user links. Nothing that
+ * edits code, and nothing else to pay for.
+ */
+const BUILT_IN_TOOLS = ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch'];
 /** Those, plus Dazza's own tools to plan and to change the project when the user asks. */
 const TOOLS = [...BUILT_IN_TOOLS, ...MANAGER_TOOLS];
 
