@@ -4,9 +4,12 @@ import { FINAL_STATUSES, type Plan, type Subtask, type Task, type TaskStatus } f
  * The next task a worker should pick up: the first `planned` task, in plan order,
  * whose dependencies are all closed. Returns `undefined` when nothing is ready.
  */
-export function nextTask(plan: Plan): Task | undefined {
+export function nextTask(plan: Plan, skip: readonly string[] = []): Task | undefined {
   const closed = new Set(plan.tasks.filter((t) => t.status === 'closed').map((t) => t.id));
-  return plan.tasks.find((t) => t.status === 'planned' && t.dependsOn.every((d) => closed.has(d)));
+  return plan.tasks.find(
+    (t) =>
+      t.status === 'planned' && !skip.includes(t.id) && t.dependsOn.every((d) => closed.has(d)),
+  );
 }
 
 /** The task Dazza is building right now, if any. */

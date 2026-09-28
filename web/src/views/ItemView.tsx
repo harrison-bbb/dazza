@@ -7,6 +7,7 @@ import { StatusIcon, StatusLabel } from '../components/StatusIcon';
 import { Button, Heading, Id, InlineText } from '../components/ui';
 import {
   answerPermission,
+  buildNext,
   cancelTask,
   closeTask,
   type Event,
@@ -232,13 +233,18 @@ function TaskActions(props: { task: Task; onRequestChanges(): void; onChange(): 
         </>
       )}
       {task.status === 'planned' && (
-        <Button
-          variant="quiet"
-          disabled={busy}
-          onClick={() => run(() => setStatus(task.id, 'backlog'))}
-        >
-          Move to backlog
-        </Button>
+        <>
+          <Button disabled={busy} onClick={() => run(() => buildNext(task.id))}>
+            Build next
+          </Button>
+          <Button
+            variant="quiet"
+            disabled={busy}
+            onClick={() => run(() => setStatus(task.id, 'backlog'))}
+          >
+            Move to backlog
+          </Button>
+        </>
       )}
       {task.status === 'backlog' && (
         <Button disabled={busy} onClick={() => run(() => setStatus(task.id, 'planned'))}>

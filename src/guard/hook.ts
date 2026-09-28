@@ -21,10 +21,12 @@ export async function runGuard(
   projectRoot: string,
   role: GuardRole,
   stdin: string,
+  /** The task this builder is building; tasks can build side by side. */
+  taskId?: string,
 ): Promise<string> {
   try {
     const call = HookInput.parse(JSON.parse(stdin));
-    return await answer(new Store(projectRoot), role, call.tool_name, call.tool_input);
+    return await answer(new Store(projectRoot), role, call.tool_name, call.tool_input, taskId);
   } catch (error) {
     // Fail closed: an unchecked call doesn't run.
     return refuse(
@@ -38,11 +40,15 @@ async function answer(
   role: GuardRole,
   tool: string,
   input: Record<string, unknown>,
+  taskId: string | undefined,
 ): Promise<string> {
+  const tasks = (await store.readPlan())?.tasks ?? [];
   const task =
-    role === 'worker'
-      ? (await store.readPlan())?.tasks.find((t) => t.status === 'building')
-      : undefined;
+    role !== 'worker'
+      ? undefined
+      : taskId
+        ? tasks.find((t) => t.id === taskId)
+        : tasks.find((t) => t.status === 'building');
   const workspace = (task && (await store.readTaskBuild(task.id))?.dir) ?? store.root;
   const decision = judge({ tool, input }, { workspace });
   if (decision.kind === 'allow') return '';

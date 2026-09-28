@@ -224,6 +224,7 @@ export class ChatSession {
     const { store, config, provider, workerMcp, output, onBuildEvent } = this.options;
     const render = createBuildRenderer(store.root);
     output.status('build', 'Getting ready to build');
+    const building = new Set<string>();
     try {
       const { workerGuard } = this.options;
       for await (const event of build({
@@ -240,7 +241,14 @@ export class ChatSession {
           if (event.event.type === 'retry')
             output.status('build', retryStatus(event.event, this.options.provider.name));
         }
-        if (event.type === 'task_started') output.status('build', `Building ${event.task.id}`);
+        if (event.type === 'task_started') building.add(event.task.id);
+        if (event.type === 'task_finished') building.delete(event.task.id);
+        if (event.type === 'task_started' || event.type === 'task_finished') {
+          output.status(
+            'build',
+            building.size ? `Building ${[...building].join(' and ')}` : 'Looking for the next task',
+          );
+        }
         if (event.type === 'waiting' && event.reason === 'usage_limit') {
           output.status('build', `Waiting for your usage limit to reset (${clock(event.until)})`);
         }

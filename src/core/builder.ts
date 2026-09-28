@@ -31,6 +31,8 @@ export interface BuilderOptions {
   /** Checks every tool call the builder makes; see src/guard. */
   guard?: McpServerConfig;
   signal?: AbortSignal;
+  /** How many independent tasks to build at once; defaults to the user's setting, or 2. */
+  parallel?: number;
   /** Overrides for the timing policy, e.g. in tests. */
   timing?: Partial<Timing>;
 }
@@ -50,6 +52,12 @@ export interface Timing {
   resumeMarginMs: number;
 }
 
+/** Independent tasks built at once, unless the user chose otherwise (/parallel). */
+const DEFAULT_PARALLEL = 2;
+const MAX_PARALLEL = 3;
+/** How often a build with free slots looks for newly ready tasks. */
+const REFILL_MS = 5_000;
+
 export const DEFAULT_TIMING: Timing = {
   // Long installs and test runs can be quiet for a while; twenty minutes of
   // complete silence is something else.
@@ -64,7 +72,7 @@ export const DEFAULT_TIMING: Timing = {
 /** What the build loop reports, for the CLI (and other channels) to show. */
 export type BuildEvent =
   | { type: 'repo_created' }
-  | { type: 'task_started'; task: Task; branch: string; resumed: boolean }
+  | { type: 'task_started'; task: Task; branch: string; resumed: boolean; dir?: string }
   | { type: 'agent'; task: Task; event: AgentEvent }
   | { type: 'task_finished'; task: Task; outcome: 'review' | 'blocked' | 'paused' }
   /** Holding off until a usage limit resets, or a busy service settles. */
@@ -136,127 +144,254 @@ async function* buildTasks(options: BuilderOptions): AsyncGenerator<BuildEvent> 
   await landApprovedWork(store, git);
   await tidyWorktrees(store, git);
 
-  while (!signal?.aborted) {
-    const plan = await store.readPlan();
-    if (!plan?.approvedAt) {
-      yield {
-        type: 'stopped',
-        reason: 'The plan needs your approval before I can build. Use /approve.',
-      };
-      return;
-    }
-    const task = nextTask(plan);
-    if (!task) {
-      yield { type: 'stopped', reason: idleReason(plan), idle: true };
-      return;
-    }
+  const limit = Math.min(
+    MAX_PARALLEL,
+    Math.max(
+      1,
+      options.parallel ?? (await config.readSettings()).parallelTasks ?? DEFAULT_PARALLEL,
+    ),
+  );
+  // Independent tasks build side by side, each in its own worktree. Their
+  // events are passed on as they come; git setup happens one task at a time.
+  const running = new Map<string, Promise<void>>();
+  const queue: BuildEvent[] = [];
+  let wake: (() => void) | undefined;
+  let refill = true;
+  let ended = false;
+  const workers = new AbortController();
+  const stopWorkers = () => workers.abort();
+  signal?.addEventListener('abort', stopWorkers);
+  // A stop that came while the repo was being prepared still counts.
+  if (signal?.aborted) workers.abort();
+  const setup = serial();
+  const push = (event: BuildEvent) => {
+    queue.push(event);
+    wake?.();
+  };
 
-    let crashes = 0;
-    let overloads = 0;
-    let announced = false;
+  try {
     for (;;) {
-      const resumed = (await store.readTaskBuild(task.id)) !== undefined;
-      let build: TaskBuild;
-      try {
-        build = await startTask(store, git, task);
-      } catch (error) {
-        if (!(error instanceof WorkError)) throw error;
-        await blockTask(store, task.id, error.message);
-        yield { type: 'task_finished', task, outcome: 'blocked' };
-        break;
+      if (refill && !ended && !workers.signal.aborted) {
+        refill = false;
+        const plan = await store.readPlan();
+        if (!plan?.approvedAt) {
+          if (running.size === 0) {
+            yield {
+              type: 'stopped',
+              reason: 'The plan needs your approval before I can build. Use /approve.',
+            };
+            return;
+          }
+        } else {
+          for (
+            let task = nextTask(plan, [...running.keys()]);
+            task && running.size < limit;
+            task = nextTask(plan, [...running.keys()])
+          ) {
+            const id = task.id;
+            const work = buildOne(
+              { ...options, signal: workers.signal },
+              git,
+              plan,
+              task,
+              timing,
+              setup,
+            );
+            running.set(
+              id,
+              (async () => {
+                for (;;) {
+                  const next = await work.next();
+                  if (next.done) {
+                    // A problem the user has to fix (no credit, say) stops everything.
+                    if (next.value === 'end') {
+                      ended = true;
+                      workers.abort();
+                    }
+                    return;
+                  }
+                  push(next.value);
+                }
+              })()
+                .catch((error: unknown) => {
+                  ended = true;
+                  workers.abort();
+                  push({ type: 'stopped', reason: `Build stopped: ${errorMessage(error)}` });
+                })
+                .finally(() => {
+                  running.delete(id);
+                  refill = true;
+                  wake?.();
+                }),
+            );
+          }
+        }
       }
-      if (!announced) yield { type: 'task_started', task, branch: build.branch, resumed };
-      announced = true;
 
-      const attempt = yield* runWorker(options, plan, task, resumed, build, timing);
-
-      if (attempt.kind === 'aborted') {
-        await pauseTask(store, task.id);
-        yield { type: 'task_finished', task, outcome: 'paused' };
+      if (queue.length === 0 && running.size === 0) {
+        if (!ended && !signal?.aborted) {
+          const plan = await store.readPlan();
+          if (plan) yield { type: 'stopped', reason: idleReason(plan), idle: true };
+        }
         return;
       }
-      if (attempt.kind === 'stalled') {
-        await pauseTask(store, task.id);
-        await blockTask(
-          store,
-          task.id,
-          `I stopped because nothing happened for ${Math.round(timing.stallMs / 60_000)} minutes, so ` +
-            'something was probably stuck (a command waiting for input, or a hung dev server). ' +
-            'Tell me how to proceed, or /build to try again.',
-        );
-        yield { type: 'task_finished', task, outcome: 'blocked' };
-        break;
+      if (queue.length === 0) {
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+          // Work the user approved elsewhere can make more tasks ready: look again now and then.
+          setTimeout(() => {
+            refill = true;
+            resolve();
+          }, REFILL_MS).unref();
+        });
+        wake = undefined;
       }
-      if (attempt.kind === 'crashed') {
-        if (crashes++ < timing.crashRetries) {
-          yield {
-            type: 'retrying',
-            task,
-            reason: `${options.provider.name} crashed (${attempt.message}). Trying again.`,
-          };
-          continue;
-        }
-        await pauseTask(store, task.id);
-        await blockTask(
-          store,
-          task.id,
-          `${options.provider.name} kept crashing on this task: ${attempt.message}`,
-        );
-        yield { type: 'task_finished', task, outcome: 'blocked' };
-        break;
-      }
-      if (attempt.kind === 'error') {
-        const { error } = attempt;
-        await pauseTask(store, task.id);
-        if (error.kind === 'usage_limit') {
-          const until =
-            error.resetsAt ??
-            (await limitResetTime(options.provider, config)) ??
-            inFuture(timing.limitFallbackMs);
-          yield { type: 'waiting', task, reason: 'usage_limit', until };
-          await sleepUntil(Date.parse(until) + timing.resumeMarginMs, signal);
-          break; // back to the top: the task is picked up again, resuming its session
-        }
-        if (error.kind === 'overloaded' && overloads++ < timing.overloadRetries) {
-          const until = inFuture(timing.overloadDelayMs * overloads);
-          yield { type: 'waiting', task, reason: 'overloaded', until };
-          await sleepUntil(Date.parse(until), signal);
-          if (signal?.aborted) return;
-          continue;
-        }
-        if (error.kind === 'credits' || error.kind === 'auth' || error.kind === 'overloaded') {
-          yield {
-            type: 'stopped',
-            reason: explainAgentError(error, { taskId: task.id, provider: options.provider.id }),
-          };
-          return;
-        }
-        // Anything else: the worker stopped with an error; surface it below.
-      }
-
-      const finalText =
-        attempt.kind === 'finished'
-          ? attempt.finalText
-          : attempt.kind === 'error'
-            ? attempt.error.message
-            : '';
-      const status = (await store.readPlan())?.tasks.find((t) => t.id === task.id)?.status;
-      if (status === 'review' || status === 'blocked') {
-        yield { type: 'task_finished', task, outcome: status };
-      } else {
-        // The worker stopped without handing over or asking anything: surface it
-        // to the user rather than silently retrying.
-        await pauseTask(store, task.id);
-        await blockTask(
-          store,
-          task.id,
-          `I stopped before finishing this task.${finalText ? ` My last note: ${finalText}` : ''}`,
-        );
-        yield { type: 'task_finished', task, outcome: 'blocked' };
-      }
-      break;
+      while (queue.length > 0) yield queue.shift() as BuildEvent;
     }
+  } finally {
+    signal?.removeEventListener('abort', stopWorkers);
+    workers.abort();
+    await Promise.all(running.values());
   }
+}
+
+/**
+ * Build one task: set up its worktree, run the worker, and deal with how it
+ * ended. Resolves 'end' when the whole build should stop (the user stopped it,
+ * or something they must fix), 'done' otherwise.
+ */
+async function* buildOne(
+  options: BuilderOptions,
+  git: Git,
+  plan: Plan,
+  task: Task,
+  timing: Timing,
+  setup: <T>(work: () => Promise<T>) => Promise<T>,
+): AsyncGenerator<BuildEvent, 'done' | 'end'> {
+  const { store, config, signal } = options;
+  let crashes = 0;
+  let overloads = 0;
+  let announced = false;
+  for (;;) {
+    const resumed = (await store.readTaskBuild(task.id)) !== undefined;
+    let build: TaskBuild;
+    try {
+      build = await setup(() => startTask(store, git, task));
+    } catch (error) {
+      if (!(error instanceof WorkError)) throw error;
+      await blockTask(store, task.id, error.message);
+      yield { type: 'task_finished', task, outcome: 'blocked' };
+      return 'done';
+    }
+    if (!announced) {
+      yield {
+        type: 'task_started',
+        task,
+        branch: build.branch,
+        resumed,
+        ...(build.dir && { dir: build.dir }),
+      };
+    }
+    announced = true;
+
+    const attempt = yield* runWorker(options, plan, task, resumed, build, timing);
+
+    if (attempt.kind === 'aborted') {
+      await pauseTask(store, task.id);
+      yield { type: 'task_finished', task, outcome: 'paused' };
+      return 'end';
+    }
+    if (attempt.kind === 'stalled') {
+      await pauseTask(store, task.id);
+      await blockTask(
+        store,
+        task.id,
+        `I stopped because nothing happened for ${Math.round(timing.stallMs / 60_000)} minutes, so ` +
+          'something was probably stuck (a command waiting for input, or a hung dev server). ' +
+          'Tell me how to proceed, or /build to try again.',
+      );
+      yield { type: 'task_finished', task, outcome: 'blocked' };
+      return 'done';
+    }
+    if (attempt.kind === 'crashed') {
+      if (crashes++ < timing.crashRetries) {
+        yield {
+          type: 'retrying',
+          task,
+          reason: `${options.provider.name} crashed (${attempt.message}). Trying again.`,
+        };
+        continue;
+      }
+      await pauseTask(store, task.id);
+      await blockTask(
+        store,
+        task.id,
+        `${options.provider.name} kept crashing on this task: ${attempt.message}`,
+      );
+      yield { type: 'task_finished', task, outcome: 'blocked' };
+      return 'done';
+    }
+    if (attempt.kind === 'error') {
+      const { error } = attempt;
+      await pauseTask(store, task.id);
+      if (error.kind === 'usage_limit') {
+        const until =
+          error.resetsAt ??
+          (await limitResetTime(options.provider, config)) ??
+          inFuture(timing.limitFallbackMs);
+        yield { type: 'waiting', task, reason: 'usage_limit', until };
+        await sleepUntil(Date.parse(until) + timing.resumeMarginMs, signal);
+        return 'done'; // it's back in the queue, and picked up again, resuming its session
+      }
+      if (error.kind === 'overloaded' && overloads++ < timing.overloadRetries) {
+        const until = inFuture(timing.overloadDelayMs * overloads);
+        yield { type: 'waiting', task, reason: 'overloaded', until };
+        await sleepUntil(Date.parse(until), signal);
+        if (signal?.aborted) return 'end';
+        continue;
+      }
+      if (error.kind === 'credits' || error.kind === 'auth' || error.kind === 'overloaded') {
+        yield {
+          type: 'stopped',
+          reason: explainAgentError(error, { taskId: task.id, provider: options.provider.id }),
+        };
+        return 'end';
+      }
+      // Anything else: the worker stopped with an error; surface it below.
+    }
+
+    const finalText =
+      attempt.kind === 'finished'
+        ? attempt.finalText
+        : attempt.kind === 'error'
+          ? attempt.error.message
+          : '';
+    const status = (await store.readPlan())?.tasks.find((t) => t.id === task.id)?.status;
+    if (status === 'review' || status === 'blocked') {
+      yield { type: 'task_finished', task, outcome: status };
+    } else {
+      // The worker stopped without handing over or asking anything: surface it
+      // to the user rather than silently retrying.
+      await pauseTask(store, task.id);
+      await blockTask(
+        store,
+        task.id,
+        `I stopped before finishing this task.${finalText ? ` My last note: ${finalText}` : ''}`,
+      );
+      yield { type: 'task_finished', task, outcome: 'blocked' };
+    }
+    return 'done';
+  }
+}
+
+/** Run async work one at a time, in the order it was asked for. */
+function serial(): <T>(work: () => Promise<T>) => Promise<T> {
+  let last: Promise<unknown> = Promise.resolve();
+  return (work) => {
+    const next = last.then(work, work);
+    last = next.catch(() => {});
+    return next;
+  };
 }
 
 /** One run of the worker on a task, with a watchdog for runs that go silent. */
@@ -291,13 +426,21 @@ async function* runWorker(
   try {
     feedWatchdog();
     const events = provider.run({
-      prompt: taskBrief(plan, task, await store.readScope(), await store.readEvents(), resumed),
+      prompt: taskBrief(
+        plan,
+        task,
+        await store.readScope(),
+        await store.readEvents(),
+        resumed,
+        await store.readNotes(),
+      ),
       cwd: build.dir ?? store.root,
       systemPrompt: workerPrompt,
       autonomous: true,
       allowedTools: WORKER_TOOLS,
-      mcpServers: { [MCP_SERVER_NAME]: mcpServer },
-      ...(options.guard && { guard: options.guard }),
+      // Each builder is told its task: tasks can build side by side.
+      mcpServers: { [MCP_SERVER_NAME]: forTask(mcpServer, task.id) },
+      ...(options.guard && { guard: forTask(options.guard, task.id) }),
       ...(build.sessionId && { resumeSessionId: build.sessionId }),
       ...(model && { model }),
       signal: run.signal,
@@ -363,6 +506,7 @@ export function taskBrief(
   scope: string | undefined,
   events: Event[],
   resumed: boolean,
+  notes?: string,
 ): string {
   const ids = new Set([task.id, ...task.subtasks.map((s) => s.id)]);
   const thread = events
@@ -407,6 +551,9 @@ export function taskBrief(
     ...(done.length > 0 ? ['', '## Already built and approved', ...done.map((d) => `- ${d}`)] : []),
     ...(foundations.length > 0 ? ['', '## What this builds on', ...foundations] : []),
     ...(later.length > 0 ? ['', '## Coming in other tasks (leave these alone)', ...later] : []),
+    ...(notes
+      ? ['', '## Project notes (from earlier tasks: follow them)', recentNotes(notes)]
+      : []),
     ...(scope ? ['', '## Project scope', scope] : []),
   ].join('\n');
 }
@@ -422,4 +569,21 @@ function idleReason(plan: Plan): string {
     count('planned') && `${count('planned')} waiting on those`,
   ].filter(Boolean);
   return `Nothing else is ready to build: ${waiting.join(', ')}.`;
+}
+
+/** Notes grow task by task; the latest matter most, and the brief shouldn't balloon. */
+const MAX_NOTES = 6_000;
+
+function recentNotes(notes: string): string {
+  const body = notes.replace(/^# Project notes\s*/, '').trim();
+  if (body.length <= MAX_NOTES) return body;
+  return `…(earlier notes are in .dazza/notes.md)\n${body.slice(-MAX_NOTES).replace(/^[^\n]*\n/, '')}`;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function forTask(server: McpServerConfig, taskId: string): McpServerConfig {
+  return { ...server, args: [...server.args, '--task', taskId] };
 }

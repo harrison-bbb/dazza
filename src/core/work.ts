@@ -53,6 +53,12 @@ export const WorkReport = z.object({
     .array(MediaPath)
     .default([])
     .describe('Screenshots of finished UI work, from the screenshot tool. Leave empty otherwise.'),
+  notes: z
+    .string()
+    .optional()
+    .describe(
+      'What the builders of later tasks should know: conventions you set, where things live, commands that matter, gotchas you hit. Short bullets. Leave out what the code or README already makes obvious.',
+    ),
 });
 export type WorkReport = z.input<typeof WorkReport>;
 
@@ -238,8 +244,9 @@ export async function submitTask(
     };
   }
   const commit = (await tree.commitAll(`${taskId}: ${current.task.title}`)) ?? (await tree.head());
+  const { notes: _, ...details } = parsed.data;
   const handoff: Handoff = {
-    ...parsed.data,
+    ...details,
     branch: build.branch,
     ...(build.dir && { worktree: build.dir }),
     baseBranch: build.baseBranch,
@@ -257,6 +264,8 @@ export async function submitTask(
     ];
   });
   if (!handedOver) return notBuilding;
+  if (parsed.data.notes?.trim())
+    await store.addNotes(taskId, current.task.title, parsed.data.notes);
   await log(store, now, 'task_submitted', taskId, 'Ready for your review');
   return { ok: true, message: `${taskId} committed on ${build.branch} and sent for review.` };
 }

@@ -186,16 +186,16 @@ export type McpRole = 'manager' | 'worker';
 export function createMcpServer(
   store: Store,
   role: McpRole,
-  screenshots: Pick<Screenshots, 'take'> = new Screenshots(store, appRoot(store, role)),
+  /** The task this builder is building. Tasks can build side by side, so each builder is told. */
+  taskId?: string,
+  screenshots: Pick<Screenshots, 'take'> = new Screenshots(store, appRoot(store, role, taskId)),
 ): McpServer {
   const server = new McpServer({ name: MCP_SERVER_NAME, version: pkg.version });
   if (role === 'manager') registerManagerTools(server, store);
-  else registerWorkerTools(server, store);
+  else registerWorkerTools(server, store, taskId);
   // The builder's screenshots belong to the task it's building unless it says otherwise.
   const defaultTask = async () =>
-    role === 'worker'
-      ? (await store.readPlan())?.tasks.find((t) => t.status === 'building')?.id
-      : undefined;
+    role === 'worker' ? (taskId ?? (await buildingTask(store))?.id) : undefined;
   registerScreenshotTool(server, screenshots, defaultTask, (path) => store.mediaFile(path));
   return server;
 }
@@ -204,12 +204,17 @@ export function createMcpServer(
  * Where the app to screenshot lives: for the builder, the worktree of the task
  * it's building, so it sees its own work; otherwise the user's checkout.
  */
-function appRoot(store: Store, role: McpRole): () => Promise<string> {
+function appRoot(store: Store, role: McpRole, taskId?: string): () => Promise<string> {
   return async () => {
     if (role !== 'worker') return store.root;
-    const building = (await store.readPlan())?.tasks.find((t) => t.status === 'building');
-    return (building && (await store.readTaskBuild(building.id))?.dir) ?? store.root;
+    const id = taskId ?? (await buildingTask(store))?.id;
+    return (id && (await store.readTaskBuild(id))?.dir) ?? store.root;
   };
+}
+
+/** The one task being built, for callers not told which (a single build). */
+async function buildingTask(store: Store) {
+  return (await store.readPlan())?.tasks.find((t) => t.status === 'building');
 }
 
 /** Both roles can look at the app; what they do with the picture differs. */
@@ -455,7 +460,7 @@ function registerManagerTools(server: McpServer, store: Store): void {
   );
 }
 
-function registerWorkerTools(server: McpServer, store: Store): void {
+function registerWorkerTools(server: McpServer, store: Store, taskId?: string): void {
   // Every reply carries anything the user has said about the task since the
   // worker last checked, so comments reach it mid-build.
   const withNews = async (taskOrSubtaskId: string, result: ActionResult) => {
@@ -467,10 +472,12 @@ function registerWorkerTools(server: McpServer, store: Store): void {
     id: string,
     act: () => Promise<CallToolResult>,
   ): Promise<CallToolResult> => {
-    const building = (await store.readPlan())?.tasks.find((t) => t.status === 'building');
-    const taskId = id.split('.')[0];
+    const plan = await store.readPlan();
+    const building = taskId
+      ? plan?.tasks.find((t) => t.id === taskId && t.status === 'building')
+      : plan?.tasks.find((t) => t.status === 'building');
     if (!building) return failure('No task is being built right now.');
-    if (taskId !== building.id) {
+    if (id.split('.')[0] !== building.id) {
       return failure(
         `You're building ${building.id}; ${id} isn't part of it. Leave other tasks alone, and mention anything about them in a comment on ${building.id}.`,
       );
@@ -566,8 +573,8 @@ function registerWorkerTools(server: McpServer, store: Store): void {
 }
 
 /** Entry point for `dazza mcp`, spawned by the agent CLI over stdio. */
-export async function serveMcp(projectRoot: string, role: McpRole): Promise<void> {
-  await createMcpServer(new Store(projectRoot), role).connect(new StdioServerTransport());
+export async function serveMcp(projectRoot: string, role: McpRole, taskId?: string): Promise<void> {
+  await createMcpServer(new Store(projectRoot), role, taskId).connect(new StdioServerTransport());
 }
 
 function toResult(result: ActionResult, news: string[] = []): CallToolResult {

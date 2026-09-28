@@ -34,10 +34,11 @@ Dazza turns [Claude Code](https://docs.claude.com/en/docs/claude-code) or [Codex
 
 1. **Scoping is a conversation.** Dazza reads your code first if there is any, asks a few questions at a time, and makes sensible calls on anything you don't care about. It asks what's live (real users, data or money) before planning.
 2. **The plan is a real spec.** It has a scope document (users, flows, data model, what's in and out, decisions, risks, guardrails) and tasks with clear descriptions, subtasks, checkable acceptance criteria and a size. Bigger plans are grouped into milestones, each a stage you can actually try. It all shows on a local board.
-3. **Building happens beside you, not over you.** Each task is built in its own git worktree, on its own branch, so your checkout is never touched. Keep working, uncommitted changes and all.
-4. **Every handoff comes with proof.** The builder reports on each acceptance criterion with evidence: the test, the command and what it showed. Dazza won't accept a handoff that contains secrets or files that shouldn't be committed. You review, then `/accept` to merge or `/changes` to send it back.
-5. **You're only interrupted for real decisions.** Blocked tasks ask one clear question and the build moves on. Answer from anywhere, and it picks the task back up.
-6. **Milestones and a close-out.** When a stage is done, Dazza tells you what it delivered. At the end, it writes a report: what was built, what changed along the way, how to run it, and what's next.
+3. **Building happens beside you, not over you.** Each task is built in its own git worktree, on its own branch, so your checkout is never touched. Keep working, uncommitted changes and all. Independent tasks build side by side (two at once by default), and each builder leaves notes (conventions, commands, gotchas) for the ones after it.
+4. **Built to fit.** In an existing codebase, Dazza plans like an engineer joining the team: it maps how the code is laid out and where the new code goes, follows the patterns already there, and reuses the libraries you use. Every plan also has a security section (who can do what, validation, secrets, the attacks that apply), and every task spells out its edge cases, with criteria that test them.
+5. **Every handoff comes with proof.** The builder reports on each acceptance criterion with evidence: the test, the command and what it showed. Dazza won't accept a handoff that contains secrets or files that shouldn't be committed. You review, then `/accept` to merge or `/changes` to send it back.
+6. **You're only interrupted for real decisions.** Blocked tasks ask one clear question and the build moves on. Answer from anywhere, and it picks the task back up.
+7. **Milestones and a close-out.** When a stage is done, Dazza tells you what it delivered. At the end, it writes a report: what was built, what changed along the way, how to run it, and what's next.
 
 ## Get started
 
@@ -74,6 +75,7 @@ Just type to talk to Dazza, about anything in the project. Type `/` for commands
 | `/status` | Where the project is at |
 | `/tasks` | Every task, by milestone, with status and size |
 | `/next T7` | Build T7 next (it still waits for what it depends on) |
+| `/parallel 1–3` | How many independent tasks to build at once (default 2) |
 
 | Reviewing | |
 |---|---|
@@ -152,7 +154,7 @@ More in [docs/architecture.md](docs/architecture.md), [docs/providers.md](docs/p
 
 ## Limits
 
-- Dazza builds one task at a time, and only while it's open.
+- Dazza builds only while it's open. Building tasks side by side finishes sooner but uses your plan's limits faster: `/parallel 1` builds one at a time.
 - The guard is strongest on Claude Code. On Codex, the agent's own sandbox applies but Dazza's command rules don't.
 - Task sizes are estimates. The close-out report compares them with how long tasks actually took.
 - Deploying is deliberately yours: Dazza prepares the config and a checklist, and you do the final steps.

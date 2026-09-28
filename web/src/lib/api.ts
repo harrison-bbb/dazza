@@ -18,6 +18,7 @@ export const addComment = (id: string, body: string) => post(`${task(id)}/commen
 export const setStatus = (id: string, status: 'backlog' | 'planned', note?: string) =>
   post(`${task(id)}/status`, { status, ...(note && { note }) });
 
+export const buildNext = (id: string) => post(`${task(id)}/next`);
 export const answerPermission = (id: string, allow: boolean) =>
   post(`${task(id)}/permission`, { allow });
 

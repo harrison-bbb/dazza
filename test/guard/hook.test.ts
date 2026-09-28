@@ -70,6 +70,31 @@ describe('the guard hook', () => {
     expect(decision(await bash(command))).toMatch(/needs the user's OK/);
   });
 
+  it('with tasks building side by side, keeps each builder in its own worktree', async () => {
+    await project.store.writePlan({
+      ...makePlan([
+        makeTask({ id: 'T1', status: 'building' }),
+        makeTask({ id: 'T2', status: 'building' }),
+      ]),
+      approvedAt: '2026-09-27T10:00:00Z',
+    });
+    const build = { branch: 'b', baseBranch: 'main', startCommit: 'x', seenEvents: 0 };
+    await project.store.writeTaskBuild('T1', { ...build, dir: '/work/T1' });
+    await project.store.writeTaskBuild('T2', { ...build, dir: '/work/T2' });
+    const write = (task: string, path: string) =>
+      runGuard(
+        project.root,
+        'worker',
+        JSON.stringify({ tool_name: 'Write', tool_input: { file_path: path } }),
+        task,
+      );
+    expect(await write('T1', '/work/T1/app.js')).toBe('');
+    expect(decision(await write('T1', '/work/T2/app.js'))).toMatch(
+      /outside this task.s checkout \(\/work\/T1\)/,
+    );
+    expect(await write('T2', '/work/T2/app.js')).toBe('');
+  });
+
   it('fails closed when it can’t read the call', async () => {
     expect(decision(await runGuard(project.root, 'worker', 'not json'))).toMatch(
       /couldn't check this/,

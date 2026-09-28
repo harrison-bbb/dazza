@@ -135,6 +135,20 @@ describe('building tasks', () => {
     expect((await task('T1')).handoff?.criteria).toEqual(report.criteria);
   });
 
+  it('keeps what a builder learned, for the builders after it', async () => {
+    await git.init();
+    const build = await startTask(project.store, git, await task('T1'));
+    await writeFile(join(build.dir as string, 'a.js'), 'x');
+    await submitTask(project.store, 'T1', {
+      ...report,
+      notes: '- Components live in src/ui\n- Run tests with pnpm test',
+    });
+    expect(await project.store.readNotes()).toBe(
+      '# Project notes\n\n## T1: Setup\n\n- Components live in src/ui\n- Run tests with pnpm test\n',
+    );
+    expect((await task('T1')).handoff).not.toHaveProperty('notes');
+  });
+
   it('resumes where it left off, and recreates a worktree that was deleted', async () => {
     await git.init();
     const first = await startTask(project.store, git, await task('T1'));

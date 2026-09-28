@@ -30,8 +30,22 @@ export type BuildRenderer = (event: BuildEvent, plan: Plan | undefined) => strin
  */
 export function createBuildRenderer(root: string): BuildRenderer {
   const pending = new Map<string, { tool: string; input: unknown }>();
+  /** Tasks being built, and the worktree each is in, so paths read relative to it. */
+  const active = new Map<string, string>();
   return (event, plan) => {
+    if (event.type === 'task_started') active.set(event.task.id, event.dir ?? root);
+    if (event.type === 'task_finished') active.delete(event.task.id);
     if (event.type !== 'agent') return renderBuildEvent(event, plan, root);
+
+    const dir = active.get(event.task.id) ?? root;
+    // With tasks building side by side, say which one each line is about.
+    const tag = (text: string | undefined) =>
+      text && active.size > 1
+        ? text
+            .split('\n')
+            .map((line) => (line.trim() ? `${paint.dim(event.task.id)} ${line}` : line))
+            .join('\n')
+        : text;
     const agentEvent = event.event;
     if (agentEvent.type === 'tool_use' && REPORTED_ON_SUCCESS.has(agentEvent.tool)) {
       pending.set(agentEvent.id, agentEvent);
@@ -40,9 +54,9 @@ export function createBuildRenderer(root: string): BuildRenderer {
     if (agentEvent.type === 'tool_result') {
       const call = pending.get(agentEvent.id);
       pending.delete(agentEvent.id);
-      return call && agentEvent.ok ? toolLine(call.tool, call.input, plan, root) : undefined;
+      return tag(call && agentEvent.ok ? toolLine(call.tool, call.input, plan, dir) : undefined);
     }
-    return renderBuildEvent(event, plan, root);
+    return tag(renderBuildEvent(event, plan, dir));
   };
 }
 

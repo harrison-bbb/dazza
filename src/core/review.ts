@@ -15,6 +15,8 @@ export const SCOPE_SECTIONS = [
   'In scope',
   'Out of scope',
   'Tech stack',
+  'Structure & conventions',
+  'Security',
   'Decisions & assumptions',
   'Risks & open questions',
   'What I’ll need from you',

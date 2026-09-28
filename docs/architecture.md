@@ -124,6 +124,12 @@ Tasks are listed in priority order: the builder takes the first one whose depend
 
 **Landing** (`landApprovedWork` in `work.ts`). Approving a task brings its commit into its base branch: a fast-forward when possible, otherwise a merge commit. If the user has the base branch checked out, the merge happens there, but never over their uncommitted changes. If it isn't checked out, the merge happens in a throwaway worktree. A task lands only after the tasks it depends on, so approving T4 before T3 waits for T3. When something stops a task landing (uncommitted changes, a conflict, or a dependency still in review or cancelled), the user is told exactly that, and the next `/build` tries again. A landed task's worktree is removed; its branch stays. Requesting changes sends the task back to planned with the user's note, and the next build picks it up in the same worktree.
 
+**Side by side.** Up to `parallelTasks` independent tasks (default 2, `/parallel`) build at once: the loop fills free slots with the next ready tasks, each worker runs in its own worktree, and their events are passed on as they come. Git setup runs one task at a time. Each builder's MCP server and guard are started with `--task <id>`, so its tools and the guard's fence apply to its own task and worktree. A problem the user must fix (no credit, say) stops every worker.
+
+**Project notes.** A handoff can carry notes for later builders: conventions set, where things live, commands, gotchas. They collect in `.dazza/notes.md`, and each task's brief includes the latest.
+
+**Handoff checks.** Before the commit, `src/core/hygiene.ts` checks the changes like a reviewer: secrets, files that belong only on the developer's machine, very large files. The worker must fix them and submit again. The handoff also reports on every acceptance criterion, with evidence, and Dazza refuses one that skips any.
+
 ## Resilience
 
 Builds are meant to run unattended, so the loop handles the common failures (`DEFAULT_TIMING` in `builder.ts`):

@@ -74,6 +74,50 @@ describe('build loop', () => {
     expect(provider.runs[0]?.allowedTools).not.toContain('mcp__dazza__save_plan');
   });
 
+  it('builds independent tasks side by side, up to the limit', async () => {
+    // T1 and T3 are independent; each run waits until both have started.
+    let started = 0;
+    let bothRunning: () => void = () => {};
+    const together = new Promise<void>((resolve) => {
+      bothRunning = resolve;
+    });
+    const provider = new FakeProvider();
+    provider.onRun = async (options) => {
+      const id = currentTask(options);
+      if (++started === 2) bothRunning();
+      await Promise.race([together, new Promise((r) => setTimeout(r, 3000))]);
+      await writeFile(join(options.cwd, `${id}.js`), id);
+      await submitTask(project.store, id, report);
+    };
+    const events = await run(provider);
+    expect(started).toBe(2);
+    expect(await statuses()).toEqual(['T1:review', 'T2:planned', 'T3:review']);
+    const starts = events
+      .filter((e) => e.type === 'task_started')
+      .map((e) => e.type === 'task_started' && e.task.id);
+    expect(starts.sort()).toEqual(['T1', 'T3']);
+    // Each builder is told which task it's on, for its tools and the guard.
+    expect(provider.runs.map((r) => r.mcpServers?.dazza?.args.slice(-2)).sort()).toEqual([
+      ['--task', 'T1'],
+      ['--task', 'T3'],
+    ]);
+  });
+
+  it('builds one at a time when asked', async () => {
+    let concurrent = 0;
+    let most = 0;
+    const provider = new FakeProvider();
+    provider.onRun = async (options) => {
+      most = Math.max(most, ++concurrent);
+      await new Promise((r) => setTimeout(r, 20));
+      await submitTask(project.store, currentTask(options), report);
+      concurrent--;
+    };
+    await project.config.updateSettings({ parallelTasks: 1 });
+    await run(provider);
+    expect(most).toBe(1);
+  });
+
   it('moves on when a task is blocked', async () => {
     const provider = new FakeProvider();
     provider.onRun = async (options) => {
@@ -205,6 +249,21 @@ describe('taskBrief', () => {
     expect(brief).toContain('User on T2.1: Use magic links');
     expect(brief).toContain('- T1 Setup');
     expect(brief).toContain('An app');
+  });
+
+  it('passes on what earlier builders learned', () => {
+    const task = makeTask({ id: 'T2' });
+    const brief = taskBrief(
+      makePlan([task]),
+      task,
+      undefined,
+      [],
+      false,
+      '# Project notes\n\n## T1: Setup\n\n- Use pnpm',
+    );
+    expect(brief).toContain(
+      '## Project notes (from earlier tasks: follow them)\n## T1: Setup\n\n- Use pnpm',
+    );
   });
 
   it('leaves dropped subtasks out of the work, and says not to build them', () => {

@@ -151,6 +151,25 @@ export class Store {
     await rm(this.path(MANAGER_SESSION_FILE), { force: true });
   }
 
+  /**
+   * What builders have learned about the project, task by task: conventions
+   * set, commands that matter, gotchas. Each task's builder reads it first.
+   */
+  readNotes(): Promise<string | undefined> {
+    return this.readOptional('notes.md');
+  }
+
+  async addNotes(taskId: string, title: string, notes: string): Promise<void> {
+    await this.init();
+    await withLock(this.path('notes.lock'), async () => {
+      const current = (await this.readNotes()) ?? '# Project notes\n';
+      await this.writeAtomic(
+        'notes.md',
+        `${current.trimEnd()}\n\n## ${taskId}: ${title}\n\n${notes.trim()}\n`,
+      );
+    });
+  }
+
   /** The close-out (or progress) report, written by Dazza for the user. */
   readReport(): Promise<string | undefined> {
     return this.readOptional('report.md');

@@ -12,6 +12,7 @@ import {
   approvePlan,
   cancelTask,
   closeTask,
+  prioritise,
   REQUESTABLE_STATUSES,
   requestChanges,
   setStatus,
@@ -84,6 +85,11 @@ export function createBoardApp(store: Store, projectRoot: string, webRoot: strin
     const parsed = StatusBody.safeParse(await c.req.json().catch(() => undefined));
     if (!parsed.success) return c.json({ ok: false, message: 'Expected { status, note? }' }, 400);
     const result = await setStatus(store, c.req.param('id'), parsed.data.status, parsed.data.note);
+    return c.json(result, result.ok ? 200 : 409);
+  });
+
+  app.post('/api/tasks/:id/next', async (c) => {
+    const result = await prioritise(store, c.req.param('id'));
     return c.json(result, result.ok ? 200 : 409);
   });
 

@@ -123,6 +123,32 @@ export const COMMANDS: Command[] = [
     },
   },
   {
+    name: 'parallel',
+    args: '[1–3]',
+    description: 'How many independent tasks to build at once',
+    async run({ config, say }, args) {
+      const current = (await config.readSettings()).parallelTasks ?? 2;
+      const wanted = Number(args.trim());
+      if (!args.trim()) {
+        say(
+          `Building up to ${current} independent task${current === 1 ? '' : 's'} at once. ` +
+            paint.dim(
+              '/parallel 1 to build one at a time, up to /parallel 3. More at once finishes sooner but uses your limits faster.',
+            ),
+        );
+        return;
+      }
+      if (!Number.isInteger(wanted) || wanted < 1 || wanted > 3) {
+        say('Pick 1, 2 or 3.');
+        return;
+      }
+      await config.updateSettings({ parallelTasks: wanted });
+      say(
+        `${paint.green('✔')} Up to ${wanted} task${wanted === 1 ? '' : 's'} at once, from the next task that starts.`,
+      );
+    },
+  },
+  {
     name: 'usage',
     description: 'Plan limits, or API spend if you pay as you go',
     async run({ provider, config, store, connection, session, say, status }) {

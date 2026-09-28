@@ -13,6 +13,8 @@ import { z } from 'zod';
 export const Settings = z.object({
   /** Model id passed to the agent CLI; unset means the provider's default. */
   model: z.string().optional(),
+  /** How many independent tasks to build at once (1–3). Unset means 2. */
+  parallelTasks: z.number().int().min(1).max(3).optional(),
   /** The user chose not to connect Slack or Telegram during onboarding; don't ask again. */
   messagingSkipped: z.boolean().optional(),
 });

@@ -104,7 +104,7 @@ describe('MCP tools, called through a real client', () => {
 
   const connect = async (role: McpRole = 'manager') => {
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-    await createMcpServer(project.store, role, fakeScreenshots).connect(serverSide);
+    await createMcpServer(project.store, role, undefined, fakeScreenshots).connect(serverSide);
     const client = new Client({ name: 'test', version: '1.0.0' });
     await client.connect(clientSide);
     return client;

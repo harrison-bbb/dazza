@@ -69,7 +69,11 @@ function Group({ status, tasks, events, next }: GroupProps) {
 }
 
 function Row({ task, context, comments }: { task: Task; context: string; comments: number }) {
-  const closed = task.subtasks.filter((s) => s.status === 'closed').length;
+  const subtasks = task.subtasks.filter((s) => s.status !== 'cancelled');
+  const closed = subtasks.filter((s) => s.status === 'closed').length;
+  // For work in review, what the builder reported against the acceptance criteria.
+  const criteria = task.status === 'review' ? (task.handoff?.criteria ?? []) : [];
+  const unmet = criteria.filter((c) => !c.met).length;
   return (
     <a
       href={paths.item(task.id)}
@@ -87,6 +91,18 @@ function Row({ task, context, comments }: { task: Task; context: string; comment
       >
         <InlineText>{task.title}</InlineText>
       </span>
+      {criteria.length > 0 && (
+        <span className={cn('shrink-0 text-[12px]', unmet ? 'text-red' : 'text-muted')}>
+          {unmet
+            ? `${unmet} of ${criteria.length} criteria unmet`
+            : `${criteria.length}/${criteria.length} criteria`}
+        </span>
+      )}
+      {task.size && (
+        <span className="w-4 shrink-0 text-center font-mono text-[11px] text-faint">
+          {task.size}
+        </span>
+      )}
       <span
         className={cn(
           'hidden shrink-0 text-[12px] sm:block',
@@ -104,7 +120,7 @@ function Row({ task, context, comments }: { task: Task; context: string; comment
         )}
       </span>
       <span className="w-10 shrink-0 text-right font-mono text-[12px] text-muted tabular-nums">
-        {task.subtasks.length > 0 && `${closed}/${task.subtasks.length}`}
+        {subtasks.length > 0 && `${closed}/${subtasks.length}`}
       </span>
     </a>
   );

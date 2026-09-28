@@ -32,11 +32,12 @@ program
   .description("Check an agent's tool call against Dazza's safety rules (a Claude Code hook)")
   .requiredOption('--root <path>', 'project root')
   .option('--role <role>', 'manager or worker', 'worker')
-  .action(async ({ root, role }: { root: string; role: string }) => {
+  .option('--task <id>', 'the task this builder is building')
+  .action(async ({ root, role, task }: { root: string; role: string; task?: string }) => {
     let input = '';
     for await (const chunk of process.stdin) input += chunk;
     process.stdout.write(
-      await runGuard(resolve(root), role === 'manager' ? 'manager' : 'worker', input),
+      await runGuard(resolve(root), role === 'manager' ? 'manager' : 'worker', input, task),
     );
   });
 
@@ -45,8 +46,9 @@ program
   .description("Serve Dazza's tools to a coding agent over stdio")
   .requiredOption('--root <path>', 'project root')
   .option('--role <role>', 'manager or worker', 'manager')
-  .action(({ root, role }: { root: string; role: string }) =>
-    serveMcp(resolve(root), role === 'worker' ? 'worker' : 'manager'),
+  .option('--task <id>', 'for a worker: the task it is building')
+  .action(({ root, role, task }: { root: string; role: string; task?: string }) =>
+    serveMcp(resolve(root), role === 'worker' ? 'worker' : 'manager', task),
   );
 
 await program.parseAsync();
