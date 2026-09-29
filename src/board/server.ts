@@ -21,16 +21,23 @@ import {
   scopeVersion,
   setStatus,
 } from '../core/actions.js';
+import { Config, DEFAULT_PARALLEL } from '../core/config.js';
 import { editTask, TaskChanges } from '../core/edits.js';
-import { humanDuration, minutesLeft } from '../core/estimates.js';
+import { humanDuration, timeLeft } from '../core/estimates.js';
 import { answerPermission } from '../core/permissions.js';
 import { type Event, MediaPath, type Plan } from '../core/schema.js';
 import { changeLogEntries } from '../core/scope.js';
 import type { Store } from '../core/store.js';
 import { redoTask } from '../core/work.js';
 import { Git } from '../git/git.js';
+import { stopTrying, tryingNow, tryTask } from '../preview/trying.js';
 import { debounce } from '../util/debounce.js';
-import { CSRF_HEADER, type ProjectSnapshot, type ScopeVersion } from './api.js';
+import {
+  type ActionResponse,
+  CSRF_HEADER,
+  type ProjectSnapshot,
+  type ScopeVersion,
+} from './api.js';
 
 export const DEFAULT_PORT = 4777;
 const PORT_ATTEMPTS = 10;
@@ -97,7 +104,8 @@ export function createBoardApp(
       events,
       permissions,
       report: report ?? null,
-      buildLeft: buildLeft(plan, events),
+      trying: tryingNow() ?? null,
+      buildLeft: await buildLeft(plan, events),
     });
   });
 
@@ -116,6 +124,24 @@ export function createBoardApp(
   app.post('/api/tasks/:id/close', async (c) => {
     const result = await closeTask(store, c.req.param('id'));
     return c.json(result, result.ok ? 200 : 409);
+  });
+
+  // Try it: start the task's work and open it, as /try does. Clicking it is the
+  // go-ahead to install its dependencies if they're missing (the button says so).
+  app.post('/api/tasks/:id/try', async (c) => {
+    const id = c.req.param('id');
+    const result = await tryTask(store, id, { install: true });
+    return result.ok
+      ? c.json<ActionResponse>({ ok: true, message: `${id} is running.`, url: result.url })
+      : c.json<ActionResponse>({ ok: false, message: result.message }, 409);
+  });
+
+  app.post('/api/try/stop', async (c) => {
+    const was = await stopTrying();
+    return c.json<ActionResponse>({
+      ok: true,
+      message: was ? `Stopped ${was}.` : 'Nothing’s running.',
+    });
   });
 
   app.post('/api/tasks/:id/cancel', async (c) => {
@@ -316,7 +342,10 @@ function versionLabel(markdown: string | undefined): string {
     : 'v1: The first plan';
 }
 
-function buildLeft(plan: Plan | undefined, events: Event[]): string | null {
-  const minutes = plan ? minutesLeft(plan, events) : 0;
-  return minutes > 0 ? humanDuration(minutes) : null;
+/** The same estimate the terminal and phone give: tasks side by side, as the user set it. */
+async function buildLeft(plan: Plan | undefined, events: Event[]): Promise<string | null> {
+  if (!plan) return null;
+  const parallel = (await new Config().readSettings()).parallelTasks ?? DEFAULT_PARALLEL;
+  const { wall } = timeLeft(plan, events, { parallel });
+  return wall > 0 ? humanDuration(wall) : null;
 }

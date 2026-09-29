@@ -1,4 +1,5 @@
-import type { Milestone, Task } from './schema.js';
+import { milestoneTimes } from './estimates.js';
+import { type Milestone, type Plan, SCHEMA_VERSION, type Task } from './schema.js';
 
 /**
  * A floor under plan quality, checked when the manager saves a plan. The
@@ -30,6 +31,11 @@ const MIN_SUBTASKS = 2;
 const MIN_CRITERIA = 2;
 /** Plans this big get milestones. */
 const MILESTONE_THRESHOLD = 4;
+/**
+ * The first milestone is when the user first gets to try something: a long
+ * wait there is what makes a build feel slow.
+ */
+const FIRST_MILESTONE_MINUTES = 60;
 /** Enough to act on without burying the manager in a wall of errors. */
 const MAX_REPORTED = 12;
 
@@ -101,4 +107,24 @@ export function missingSections(scope: string): string[] {
 /** Headings match regardless of case, spacing or curly apostrophes. */
 function normalise(heading: string): string {
   return heading.toLowerCase().replace(/[’']/g, "'").replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Advice, not a rule: if a new plan's first stage takes more than an hour to
+ * build, say so, so the manager can offer a smaller one. The user may want it
+ * big, so it never stops the plan being approved.
+ */
+export function firstMilestoneAdvice(plan: Plan, parallel: number): string | undefined {
+  const [first, second] = plan.milestones;
+  // One stage is the whole plan; and once work's been built, they've seen something.
+  if (!first || !second) return undefined;
+  if (plan.tasks.some((t) => ['building', 'blocked', 'review', 'closed'].includes(t.status))) {
+    return undefined;
+  }
+  const minutes = milestoneTimes(plan, [], { parallel })[0]?.minutes ?? 0;
+  if (minutes <= FIRST_MILESTONE_MINUTES) return undefined;
+  return (
+    `${first.id} takes about ${Math.round(minutes)} minutes to build before the user can try anything. ` +
+    'Unless they asked for it this way, offer a smaller first stage (an hour or less): move tasks into later milestones, or split one.'
+  );
 }

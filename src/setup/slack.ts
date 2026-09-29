@@ -161,7 +161,9 @@ export async function connectSlack(
     ui.say(`Couldn’t message you in Slack (${errorMessage(error)}). Run /slack to try again.`);
     return undefined;
   }
-  ui.say(`Connected to ${bot.team}. I just said hello in Slack.`);
+  ui.say(
+    `Connected to ${bot.team}. I just said hello in Slack. Approve there merges the work; to keep merging to this computer, turn off Approving from your phone merges in /settings.`,
+  );
   return {
     botToken: bot.token,
     appToken,

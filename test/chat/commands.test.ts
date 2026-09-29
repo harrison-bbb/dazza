@@ -42,7 +42,7 @@ describe('parsing and completion', () => {
     expect(commandMenu('hello')).toEqual([]);
   });
 
-  it('lists every command in /help, grouped, with the -disconnect ones mentioned by their parent', () => {
+  it('lists every command in /help, grouped, with the rest mentioned by their parent', () => {
     const help = stripAnsi(helpText());
     for (const command of COMMANDS) expect(help).toContain(`/${command.name}`);
     expect(help.indexOf('The work')).toBeLessThan(help.indexOf('Reviewing'));
@@ -108,6 +108,10 @@ describe('running commands', () => {
     const said: string[] = [];
     const linked: string[] = [];
     const confirmAnswer = true;
+    /** Answers to pick from lists, in order: the label to choose (undefined is Esc). */
+    const picks: (string | undefined)[] = [];
+    const asked: string[] = [];
+    let reconnects = 0;
     const provider = new FakeProvider(undefined, models);
     let exited = false;
     const ctx: CommandContext = {
@@ -125,8 +129,17 @@ describe('running commands', () => {
       context: () => ({ tokens: 150_000, window: 200_000 }),
       resetContext: () => {},
       compact: async () => 'Compacted our conversation (50k → 2k tokens).',
-      reconnect: async () => {},
+      reconnect: async () => {
+        reconnects++;
+      },
       confirm: async () => confirmAnswer,
+      select: async (question, choices) => {
+        asked.push(question);
+        const label = picks.shift();
+        return label === undefined
+          ? undefined
+          : choices.find((c) => c.label.startsWith(label))?.value;
+      },
       status: () => {},
       link: async (channel) => {
         linked.push(channel);
@@ -140,7 +153,16 @@ describe('running commands', () => {
         exited = true;
       },
     };
-    return { ctx, said, provider, exited: () => exited, linked: () => linked };
+    return {
+      ctx,
+      said,
+      provider,
+      picks,
+      asked,
+      reconnects: () => reconnects,
+      exited: () => exited,
+      linked: () => linked,
+    };
   };
   const run = (ctx: CommandContext, line: string) => {
     const { command, args } = parseCommand(line);
@@ -238,6 +260,45 @@ describe('running commands', () => {
     expect(said.at(-1)).toContain(
       'about 150k tokens: 75% of the 200k this model holds. /compact frees up room.',
     );
+  });
+
+  it('/settings changes one setting at a time, back to the list until Esc', async () => {
+    const { ctx, said, picks, asked, reconnects } = context();
+    picks.push(
+      'Keep building after you close Dazza', // pick it…
+      'On', // …turn it on, back to the list
+      'Tasks built at once',
+      '3',
+      'Desktop notifications',
+      'Off',
+      undefined, // Esc: done
+    );
+    await run(ctx, '/settings');
+    const settings = await project.config.readSettings();
+    expect(settings).toMatchObject({
+      backgroundBuild: true,
+      parallelTasks: 3,
+      desktopNotifications: false,
+    });
+    expect(reconnects()).toBe(1); // notifications reopen; nothing else needs to
+    expect(said.at(-1)).toContain('Keep building after you close Dazza: On');
+    expect(said.at(-1)).toContain('Tasks built at once: 3');
+    expect(asked.filter((q) => q.startsWith('Settings')).length).toBe(4);
+  });
+
+  it('/settings shows each setting’s default, and changes nothing on Esc', async () => {
+    const { ctx, said, picks } = context();
+    picks.push(undefined);
+    await run(ctx, '/settings');
+    expect(said.at(-1)).toContain('Nothing changed.');
+    expect(await project.config.readSettings()).toEqual({});
+  });
+
+  it('/settings leaves a setting alone when the same value is picked', async () => {
+    const { ctx, said, picks } = context();
+    picks.push('Keep building while you review', 'On', undefined);
+    await run(ctx, '/settings');
+    expect(said.at(-1)).toContain('Nothing changed.');
   });
 
   it('/background switches building in the background on and off, off by default', async () => {

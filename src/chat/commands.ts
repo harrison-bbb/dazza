@@ -1,6 +1,5 @@
 import { approvePlan } from '../core/actions.js';
-import { DEFAULT_PARALLEL } from '../core/builder.js';
-import type { Config, Connection, Limits } from '../core/config.js';
+import { type Config, type Connection, DEFAULT_PARALLEL, type Limits } from '../core/config.js';
 import { clock } from '../core/errors.js';
 import type { Store } from '../core/store.js';
 import type { ChannelId } from '../notify/channel.js';
@@ -10,6 +9,8 @@ import { openInBrowser } from '../util/open.js';
 import { BRAND } from './banner.js';
 import { greeting, NO_PLAN } from './describe.js';
 import type { MenuItem } from './editor.js';
+import { projectEstimate } from './progress.js';
+import { editSettings } from './settings.js';
 import { paint } from './style.js';
 import { WORK_COMMANDS } from './workCommands.js';
 
@@ -40,6 +41,11 @@ export interface CommandContext {
   stopBuild(): Promise<void>;
   /** Ask the user a yes/no question. */
   confirm(question: string): Promise<boolean>;
+  /** Let the user pick from a list; undefined if they back out (Esc). */
+  select<T>(
+    question: string,
+    choices: { label: string; hint?: string; value: T }[],
+  ): Promise<T | undefined>;
   /** Show (or clear) an activity in the status line while a command works. */
   status(text: string | undefined): void;
   /** Walk through linking Slack or a Telegram bot. */
@@ -83,9 +89,9 @@ export const COMMANDS: Command[] = [
   {
     name: 'status',
     description: 'Where the project is at',
-    async run({ store, say }) {
+    async run({ store, config, say }) {
       const plan = await store.readPlan();
-      say(plan ? greeting(plan) : NO_PLAN);
+      say(plan ? greeting(plan, await projectEstimate(store, config)) : NO_PLAN);
     },
   },
   ...WORK_COMMANDS,
@@ -134,6 +140,22 @@ export const COMMANDS: Command[] = [
         on
           ? 'Building in the background is on: leave with a build under way and it carries on. /background off switches it off.'
           : 'Building in the background is off: closing Dazza stops the build. /background on keeps it going after you leave.',
+      );
+    },
+  },
+  {
+    name: 'settings',
+    aliases: ['config'],
+    description:
+      'How Dazza works: building while you review or after you leave, notifications, and more',
+    async run({ config, select, say, reconnect }) {
+      const changed = await editSettings(config, select, async (setting) => {
+        if (setting.after === 'reconnect') await reconnect();
+      });
+      say(
+        changed.length > 0
+          ? `${paint.green('✔')} ${changed.join(' · ')}`
+          : paint.dim('Nothing changed.'),
       );
     },
   },
@@ -462,33 +484,26 @@ export function commandMenu(text: string): MenuItem[] {
 
 /** /help's sections, in the README's order. Anything unlisted goes under Setup. */
 const HELP_GROUPS: [string, string[]][] = [
-  [
-    'The work',
-    ['build', 'stop', 'status', 'tasks', 'next', 'parallel', 'build-ahead', 'background'],
-  ],
+  ['The work', ['build', 'stop', 'status', 'tasks', 'next']],
   ['Reviewing', ['review', 'try', 'accept', 'changes', 'diff', 'allow', 'deny', 'redo', 'cancel']],
   [
     'The project',
     ['approve', 'scope', 'dashboard', 'report', 'continue', 'new', 'compact', 'context'],
   ],
-  [
-    'Setup',
-    [
-      'model',
-      'mcp',
-      'usage',
-      'notify',
-      'slack',
-      'telegram',
-      'phone-merge',
-      'logout',
-      'help',
-      'exit',
-    ],
-  ],
+  ['Setup', ['settings', 'model', 'mcp', 'usage', 'slack', 'telegram', 'logout', 'help', 'exit']],
 ];
 /** In the menu as you type, but not worth a row in /help. */
-const HELP_HIDDEN = new Set(['slack-disconnect', 'telegram-disconnect']);
+const SETTING_SHORTCUTS = '/build-ahead, /background, /parallel, /notify, /phone-merge';
+const HELP_HIDDEN = new Set([
+  'slack-disconnect',
+  'telegram-disconnect',
+  // In /settings; the commands still work for anyone who knows them.
+  'background',
+  'build-ahead',
+  'parallel',
+  'notify',
+  'phone-merge',
+]);
 
 export function helpText(): string {
   const row = (c: Command) => {
@@ -501,7 +516,14 @@ export function helpText(): string {
     if (title === 'Setup') {
       commands.push(...COMMANDS.filter((c) => !listed.has(c.name) && !HELP_HIDDEN.has(c.name)));
     }
-    return [paint.bold(title), ...commands.map(row)].join('\n');
+    return [
+      paint.bold(title),
+      ...commands.flatMap((c) =>
+        c.name === 'settings'
+          ? [row(c), `  ${' '.repeat(26)}${paint.dim(`Or straight to one: ${SETTING_SHORTCUTS}`)}`]
+          : [row(c)],
+      ),
+    ].join('\n');
   });
   const tips = paint.dim(
     'Start a line with ! to run a shell command yourself, and @ to point me at a file. Ctrl+V pastes a screenshot. \\ then Enter (or Option+Enter) starts a new line. Esc stops my reply.',

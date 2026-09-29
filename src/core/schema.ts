@@ -55,6 +55,11 @@ export const Handoff = z.object({
   /** The commit holding the submitted work. */
   commit: z.string().optional(),
   filesChanged: z.number().int().nonnegative().optional(),
+  /**
+   * Whether Dazza can start the work for the user to try (a dev or start
+   * script, or static files), checked at handoff. Unset on older handoffs.
+   */
+  runnable: z.boolean().optional(),
   /** Each acceptance criterion, in order: whether it's met and how that was checked. */
   criteria: z
     .array(z.object({ criterion: z.string(), met: z.boolean(), evidence: z.string() }))

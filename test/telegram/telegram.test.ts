@@ -215,6 +215,7 @@ describe('TelegramBridge', () => {
     const b = bridge(bot);
     await b.instance.notify({
       kind: 'review',
+      howToTry: [],
       taskId: 'T3',
       title: 'Editor',
       facts: [],
@@ -246,6 +247,7 @@ describe('TelegramBridge', () => {
     const b = bridge(bot);
     await b.instance.notify({
       kind: 'review',
+      howToTry: [],
       taskId: 'T3',
       title: 'Editor',
       facts: [],
@@ -296,7 +298,7 @@ describe('notificationFor', () => {
       status: 'review',
       handoff: {
         summary: 'Built the editor.',
-        howToVerify: [],
+        howToVerify: ['Open the app', 'Click New note and type something'],
         criteria: [],
         checks: [{ name: 'Tests', passed: true }],
         screenshots: ['T3/editor-desktop.png'],
@@ -304,16 +306,21 @@ describe('notificationFor', () => {
         submittedAt: '2026-09-27T10:00:00Z',
       },
     });
-    await project.store.writePlan(makePlan([task]));
+    await project.store.writePlan(makePlan([task, makeTask({ id: 'T4', size: 'M' })]));
     const note = await notificationFor(
       { type: 'task_finished', task, outcome: 'review' },
       project.store,
     );
     const text = note && telegramText(note);
     expect(note?.images).toEqual([project.store.mediaFile('T3/editor-desktop.png')]);
-    expect(text).toContain('T3 is ready for your review: Editor');
+    expect(text).toContain('T3 is ready for you to try: Editor');
     expect(text).toContain('Built the editor.');
+    expect(text).toContain('/try T3');
+    expect(text).toContain('1. Open the app\n2. Click New note and type something');
     expect(text).toContain('5 files changed · 1 check passed');
+    expect(text).toContain('⏱ 1 of 2 built · about 20 min of building to go');
+    // Try it first, the technical facts after.
+    expect(text?.indexOf('How to try it')).toBeLessThan(text?.indexOf('files changed') ?? 0);
     expect(note?.kind).toBe('review');
   });
 

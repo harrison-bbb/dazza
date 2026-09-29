@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { reviewPlan } from '../../src/core/review.js';
+import { firstMilestoneAdvice, reviewPlan } from '../../src/core/review.js';
+import type { Milestone, Plan, Task } from '../../src/core/schema.js';
 import { makeTask, plannedTask, SCOPE } from '../fixtures.js';
 
 describe('reviewPlan', () => {
@@ -37,5 +38,50 @@ describe('reviewPlan', () => {
     const m1 = { id: 'M1', title: 'Core', goal: 'Add todos', tasks: ['T1', 'T2', 'T3'] };
     expect(reviewPlan(SCOPE, tasks, [m1])).toContain('Put T4 in a milestone.');
     expect(reviewPlan(SCOPE, tasks, [{ ...m1, tasks: ['T1', 'T2', 'T3', 'T4'] }])).toEqual([]);
+  });
+});
+
+describe('firstMilestoneAdvice', () => {
+  const plan = (tasks: Task[], milestones: Milestone[]): Plan => ({
+    version: 1,
+    approvedAt: null,
+    tasks,
+    milestones,
+    problems: [],
+  });
+  // Each builds on the last: 80 minutes before there's anything to try.
+  const chain = ['T1', 'T2', 'T3', 'T4'].map((id, i) =>
+    plannedTask({ id, dependsOn: i ? [`T${i}`] : [] }),
+  );
+  const big = { id: 'M1', title: 'Most of it', goal: 'Use it', tasks: ['T1', 'T2', 'T3'] };
+  const rest = { id: 'M2', title: 'The rest', goal: 'Use it all', tasks: ['T4'] };
+
+  it('suggests a smaller first stage when it takes over an hour, in minutes', () => {
+    // An hour exactly is fine.
+    expect(firstMilestoneAdvice(plan(chain, [big, rest]), 2)).toBeUndefined();
+    const bigger = { ...big, tasks: ['T1', 'T2', 'T3', 'T4'] };
+    expect(firstMilestoneAdvice(plan(chain, [bigger, { ...rest, tasks: [] }]), 2)).toContain(
+      'M1 takes about 80 minutes to build before the user can try anything',
+    );
+  });
+
+  it('never gets in the way of approving', () => {
+    const bigger = { ...big, tasks: ['T1', 'T2', 'T3', 'T4'] };
+    expect(reviewPlan(SCOPE, chain, [bigger, { ...rest, tasks: [] }])).toEqual([]);
+  });
+
+  it('says nothing about a one-stage plan, or one that’s under way', () => {
+    const all = { ...big, tasks: ['T1', 'T2', 'T3', 'T4'] };
+    expect(firstMilestoneAdvice(plan(chain, [all]), 2)).toBeUndefined();
+    const started = chain.map((t) => (t.id === 'T1' ? { ...t, status: 'blocked' as const } : t));
+    expect(firstMilestoneAdvice(plan(started, [all, rest]), 2)).toBeUndefined();
+  });
+
+  it('goes by how many tasks build at once', () => {
+    const wide = ['T1', 'T2', 'T3', 'T4'].map((id) => plannedTask({ id }));
+    const m1 = { ...big, tasks: ['T1', 'T2', 'T3', 'T4'] };
+    const m2 = { ...rest, tasks: [] };
+    expect(firstMilestoneAdvice(plan(wide, [m1, m2]), 2)).toBeUndefined(); // 40 minutes
+    expect(firstMilestoneAdvice(plan(wide, [m1, m2]), 1)).toContain('80 minutes');
   });
 });

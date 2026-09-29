@@ -87,6 +87,8 @@ The board server binds to `127.0.0.1`, never to a public interface. The API also
 
 Anything that runs as you on your machine can read the key file, and so can use the board.
 
+The board's **Try it** button starts a task's work on your machine, as `/try` does: it installs the task's dependencies if they're missing and runs its dev script (or serves its static files) from the task's worktree. That's the builder's code, running as you, outside the guard, so it's behind the same key and header as approving work. One app runs at a time, and it stops when Dazza closes.
+
 ## Building in the background
 
 Off by default. With `/background on`, closing the terminal mid-build hands the build to a detached `dazza` process in the same project, which logs to `.dazza/background.log` and records its process id in `.dazza/background.json`. It uses the same guard, settings and connected phone as the terminal did. It stops when the plan is built, when you run `dazza stop` or send "stop" from Slack or Telegram, after 12 hours with nothing happening, or when you open `dazza` in the project again (which takes the build back). On macOS it holds a `caffeinate -i` assertion for as long as it runs, so the computer doesn't sleep mid-build.

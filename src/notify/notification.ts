@@ -1,5 +1,7 @@
+import { progressLine } from '../chat/progress.js';
 import type { BuildEvent } from '../core/builder.js';
 import { clock } from '../core/errors.js';
+import { timeLeft } from '../core/estimates.js';
 import { milestoneProgress } from '../core/milestones.js';
 import type { Milestone, Plan } from '../core/schema.js';
 import type { Store } from '../core/store.js';
@@ -14,8 +16,14 @@ export type Notification =
       taskId: string;
       title: string;
       summary?: string;
+      /** The builder's steps for seeing it work, written for a non-developer. */
+      howToTry: string[];
+      /** Dazza can start it for them (/try, Try it); false for a library or CLI tool. */
+      runnable?: boolean;
       /** Short facts about the work, e.g. "5 files changed". */
       facts: string[];
+      /** How far the build is, e.g. "3 of 11 built · about 2 hours of building to go". */
+      progress?: string;
       /** Screenshot files to send with it. */
       images: string[];
     }
@@ -54,6 +62,7 @@ export function info(text: string, images: string[] = [], taskId?: string): Noti
 export async function notificationFor(
   event: BuildEvent,
   store: Store,
+  parallel?: number,
 ): Promise<Notification | undefined> {
   // Idle for want of the user's review or answer: they've just been told about
   // that task, so "nothing else to build" on top is noise. Real stops still go out.
@@ -102,12 +111,22 @@ export async function notificationFor(
     checks.length > 0 &&
       (failing ? `${plural(failing, 'failing check')}` : plural(checks.length, 'check', 'passed')),
   ].filter((fact): fact is string => typeof fact === 'string');
+  const progress =
+    plan &&
+    progressLine(
+      plan.tasks.filter((t) => t.status === 'review' || t.status === 'closed').length,
+      plan.tasks.filter((t) => t.status !== 'cancelled' && t.status !== 'backlog').length,
+      timeLeft(plan, await store.readEvents(), parallel === undefined ? {} : { parallel }),
+    );
   return {
     kind: 'review',
     taskId: task.id,
     title: task.title,
     ...(handoff?.summary && { summary: handoff.summary }),
+    howToTry: (handoff?.howToVerify ?? []).slice(0, MAX_TRY_STEPS),
+    ...(handoff?.runnable !== undefined && { runnable: handoff.runnable }),
     facts,
+    ...(progress && { progress }),
     images: (handoff?.screenshots ?? []).map((path) => store.mediaFile(path)),
   };
 }
@@ -140,6 +159,9 @@ export function milestoneNotification(
       .map((path) => store.mediaFile(path)),
   };
 }
+
+/** A phone screen's worth: the rest are on the board. */
+const MAX_TRY_STEPS = 4;
 
 /** Enough to show what a milestone looks like, without a wall of pictures. */
 const MAX_MILESTONE_SHOTS = 4;

@@ -3,6 +3,7 @@ import { styleText } from 'node:util';
 import pkg from '../../package.json' with { type: 'json' };
 import { Config, type Connection } from '../core/config.js';
 import { newerDazza, updateNotice } from '../core/updates.js';
+import { gitInstall, hasGit } from '../git/install.js';
 import { findBrowser } from '../preview/capture.js';
 import { createProvider, PROVIDER_HELP, providerFor } from '../providers/index.js';
 import type { ProviderId } from '../providers/types.js';
@@ -69,11 +70,12 @@ async function checkNode(): Promise<Check> {
 }
 
 async function checkGit(): Promise<Check> {
-  const result = await execCommand('git', ['--version']);
+  // hasGit first: on a Mac without the developer tools, running git pops up Apple's installer.
+  const result = (await hasGit()) ? await execCommand('git', ['--version']) : undefined;
   return {
     label: 'git',
     ok: result?.exitCode === 0,
-    detail: result ? result.stdout.trim() : 'not installed',
+    detail: result ? result.stdout.trim() : `not installed. ${gitInstall().how}`,
   };
 }
 

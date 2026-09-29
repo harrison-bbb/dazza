@@ -101,10 +101,14 @@ export async function connectTelegram(
     return undefined;
   }
   ui.say(
-    `Connected. I just sent ${chat.name ? `${chat.name} ` : 'you '}a test message on Telegram.`,
+    `Connected. I just sent ${chat.name ? `${chat.name} ` : 'you '}a test message on Telegram.${PHONE_MERGE_TIP}`,
   );
   return { botToken: bot.token, botUsername: bot.username, chatId: chat.id };
 }
+
+/** Said once, at the moment approving from the phone becomes possible. */
+const PHONE_MERGE_TIP =
+  ' Approve there merges the work; to keep merging to this computer, turn off Approving from your phone merges in /settings.';
 
 /**
  * The private chat that most recently messaged the bot. Reading updates also

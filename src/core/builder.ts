@@ -6,7 +6,7 @@ import type { AgentError, AgentEvent, AgentProvider, McpServerConfig } from '../
 import { claim } from '../util/lock.js';
 import { stopProcessesIn } from '../util/process.js';
 import { errorMessage } from '../util/text.js';
-import type { Config } from './config.js';
+import { type Config, DEFAULT_PARALLEL } from './config.js';
 import { explainAgentError } from './errors.js';
 import { sizeMinutes } from './estimates.js';
 import { nextTask } from './plan.js';
@@ -72,8 +72,8 @@ const BUILDER_TOOLS = [
   'WebSearch',
 ];
 
-/** Independent tasks built at once, unless the user chose otherwise (/parallel). */
-export const DEFAULT_PARALLEL = 2;
+export { DEFAULT_PARALLEL };
+
 const MAX_PARALLEL = 3;
 /** How often a build with free slots looks for newly ready tasks. */
 const REFILL_MS = 5_000;

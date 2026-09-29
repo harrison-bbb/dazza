@@ -11,6 +11,9 @@ import {
 } from './editor.js';
 import { paint } from './style.js';
 
+/** What the status line says: fixed, or worked out afresh at each redraw. */
+export type StatusText = string | (() => string);
+
 const MAX_MENU_ITEMS = 8;
 const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const STATUS_INTERVAL_MS = 100;
@@ -54,7 +57,7 @@ export class Terminal {
   private drawnCursorRow = 0;
   /** Redraws the input being read, so output and status updates can go around it. */
   private redrawInput: (() => void) | undefined;
-  private readonly statuses = new Map<string, { text: string; since: number }>();
+  private readonly statuses = new Map<string, { text: StatusText; since: number }>();
   private statusTimer: NodeJS.Timeout | undefined;
   private frame = 0;
   /** A streaming reply's unfinished line, shown above the status line. */
@@ -91,8 +94,11 @@ export class Terminal {
     this.redrawInput();
   }
 
-  /** Show (or clear) an activity in the status line above the input, e.g. "Building T3". */
-  setStatus(key: string, text: string | undefined): void {
+  /**
+   * Show (or clear) an activity in the status line above the input, e.g.
+   * "Building T3". A function is asked again at every redraw, for a countdown.
+   */
+  setStatus(key: string, text: StatusText | undefined): void {
     if (text === undefined) this.statuses.delete(key);
     else this.statuses.set(key, { text, since: this.statuses.get(key)?.since ?? Date.now() });
 
@@ -141,9 +147,11 @@ export class Terminal {
       const elapsed =
         seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
       const hint = key === 'chat' && this.interruptible ? ' · esc to interrupt' : '';
-      return `${text} ${paint.dim(`· ${elapsed}${hint}`)}`;
+      return `${typeof text === 'function' ? text() : text} ${paint.dim(`· ${elapsed}${hint}`)}`;
     });
-    return `${paint.hex(BRAND, FRAMES[this.frame % FRAMES.length] ?? '')} ${parts.join(paint.dim('  ·  '))}`;
+    const line = `${paint.hex(BRAND, FRAMES[this.frame % FRAMES.length] ?? '')} ${parts.join(paint.dim('  ·  '))}`;
+    // One row, always: a status the terminal wraps throws every redraw off by a line.
+    return clipVisible(line, (stdout.columns || 80) - 1);
   }
 
   private erase(): void {
@@ -245,23 +253,51 @@ export class Terminal {
     }
 
     let index = Math.max(0, choices.indexOf(enabled[0] as Choice<T>));
-    const labelWidth = Math.max(...choices.map((c) => c.label.length));
-    const redraw = (final = false) => {
+    // Every row fits on one line: a row the terminal wraps throws the redraw off.
+    const width = Math.max(20, (stdout.columns || 80) - 1);
+    const labelWidth = Math.min(Math.max(...choices.map((c) => c.label.length)), width - 4);
+    const redraw = (final = false, cancelled = false) => {
       const rows = choices.map((c, i) => {
         const active = i === index && !final;
         const marker = active ? paint.hex(BRAND, '›') : ' ';
-        const padded = c.label.padEnd(labelWidth);
+        const padded = clip(c.label, labelWidth).padEnd(labelWidth);
         const label = c.disabled ? paint.dim(padded) : active ? paint.bold(padded) : padded;
-        return `  ${marker} ${label}${c.hint ? `   ${paint.dim(c.hint)}` : ''}`;
+        const room = width - 4 - labelWidth - 3;
+        const hint = c.hint && room >= 8 ? `   ${paint.dim(clip(c.hint, room))}` : '';
+        return `  ${marker} ${label}${hint}`;
       });
-      const picked = choices[index];
+      // A hint cut short to fit: the highlighted one in full, underneath.
+      const fullHint = () => {
+        const hint = choices[index]?.hint;
+        const room = width - 4 - labelWidth - 3;
+        if (!hint || (room >= 8 && hint.length <= room)) return [];
+        return wrap(hint, width - 4)
+          .split('\n')
+          .map((line) => `    ${paint.dim(line)}`);
+      };
+      const picked = cancelled ? undefined : choices[index];
+      const asked = wrap(question, width)
+        .split('\n')
+        .map((line) => paint.bold(line));
       const lines = final
-        ? [`${paint.bold(question)} ${paint.dim(picked?.label ?? '')}`]
-        : [paint.bold(question), ...rows];
-      this.draw({ lines, cursorRow: lines.length - 1, cursorCol: 0 });
+        ? wrap(`${question} ${picked?.label ?? ''}`.trimEnd(), width)
+            .split('\n')
+            .map((line, i, all) =>
+              i === all.length - 1 && picked && line.endsWith(picked.label)
+                ? `${paint.bold(line.slice(0, -picked.label.length))}${paint.dim(picked.label)}`
+                : paint.bold(line),
+            )
+        : [...asked, ...rows, ...fullHint()];
+      // wrap() never breaks a long word (a path, a URL): clip anything still too wide.
+      const fitted = lines.map((line) => clipVisible(line, width));
+      this.draw({ lines: fitted, cursorRow: fitted.length - 1, cursorCol: 0 });
     };
     stdout.write('\x1b[?25l'); // hide the cursor while picking
     redraw();
+    // Output while picking (a build going on) is printed above the list, which
+    // is then drawn again below it, rather than written over it.
+    const previous = this.redrawInput;
+    this.redrawInput = () => redraw();
 
     return new Promise((resolve) => {
       const step = (direction: 1 | -1) => {
@@ -274,7 +310,8 @@ export class Terminal {
         }
       };
       const finish = (value: T | undefined) => {
-        redraw(true);
+        this.redrawInput = previous;
+        redraw(true, value === undefined);
         stdout.write('\n\x1b[?25h');
         this.drawnCursorRow = 0;
         this.onKey = undefined;
@@ -470,6 +507,35 @@ function menuLines(menu: MenuItem[], selectedIndex: number, width: number): stri
 
 function truncate(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`;
+}
+
+/** Cut plain text to `max` characters, with an ellipsis if it was longer. */
+function clip(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`;
+}
+
+/**
+ * Cut text with colour codes to `max` visible characters, ending in an
+ * ellipsis if it was longer; the codes are kept, and colour reset at the cut.
+ */
+export function clipVisible(text: string, max: number): string {
+  if (visibleLength(text) <= max) return text;
+  let out = '';
+  let shown = 0;
+  for (let i = 0; i < text.length; ) {
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: keeping ANSI codes intact.
+    const code = /^\x1b\[[0-9;]*m/.exec(text.slice(i));
+    if (code) {
+      out += code[0];
+      i += code[0].length;
+      continue;
+    }
+    if (shown === max - 1) return `${out}…\x1b[0m`;
+    out += text[i];
+    shown++;
+    i++;
+  }
+  return out;
 }
 
 function visibleLength(text: string): number {

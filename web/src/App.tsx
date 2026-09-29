@@ -82,6 +82,7 @@ export function App() {
               tasks={plan.tasks}
               events={events}
               permission={project.permissions[found.task.id]}
+              trying={project.trying}
               milestone={plan.milestones.find((m) => m.tasks.includes(found.task.id))}
               focus={route.focus}
               onChange={refresh}

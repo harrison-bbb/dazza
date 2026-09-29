@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readFile, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { execCommand } from '../util/process.js';
+import { gitInstall } from './install.js';
 
 /**
  * The few git operations Dazza needs. Each task is built on its own branch, in
@@ -225,7 +226,7 @@ export class Git {
 
   private async run(args: string[]): Promise<{ ok: boolean; out: string; err: string }> {
     const result = await execCommand('git', ['-C', this.root, ...args]);
-    if (!result) throw new Error('git is not installed');
+    if (!result) throw new Error(`Building needs git, which isn’t installed. ${gitInstall().how}`);
     return { ok: result.exitCode === 0, out: result.stdout.trim(), err: result.stderr.trim() };
   }
 

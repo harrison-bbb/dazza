@@ -231,6 +231,27 @@ describe('board server', () => {
     expect(statuses).toEqual(['closed', 'planned', 'cancelled']);
   });
 
+  it('starts a task’s work from Try it, and stops it', async () => {
+    await project.store.writePlan(
+      makePlan([makeTask({ id: 'T1', status: 'closed' }), makeTask({ id: 'T2' })]),
+    );
+    await writeFile(join(project.root, 'index.html'), '<h1>Hello</h1>');
+    try {
+      const started = await post('/api/tasks/T1/try');
+      expect(started.status).toBe(200);
+      const { url } = (await started.json()) as { url: string };
+      expect(await (await fetch(url)).text()).toContain('Hello');
+
+      const unbuilt = await post('/api/tasks/T2/try');
+      expect(unbuilt.status).toBe(409);
+      expect(((await unbuilt.json()) as { message: string }).message).toContain(
+        'hasn’t been built',
+      );
+    } finally {
+      expect((await post('/api/try/stop')).status).toBe(200);
+    }
+  });
+
   it('serves screenshots and nothing else', async () => {
     const dir = join(project.store.dir, 'media', 'T1');
     await mkdir(dir, { recursive: true });

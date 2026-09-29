@@ -1,8 +1,9 @@
 import { boardLink } from '../board/link.js';
 import { ActivityRecorder } from '../core/activity.js';
 import { type BuildEvent, build } from '../core/builder.js';
-import type { Config } from '../core/config.js';
+import { type Config, DEFAULT_PARALLEL } from '../core/config.js';
 import { clock, explainAgentError } from '../core/errors.js';
+import { milestoneTimes, timeLeft } from '../core/estimates.js';
 import type { Manager } from '../core/manager.js';
 import { nextTask } from '../core/plan.js';
 import type { Store } from '../core/store.js';
@@ -15,17 +16,22 @@ import { BRAND } from './banner.js';
 import { compactedLine, createBuildRenderer, createStepTracker } from './buildView.js';
 import type { Usage } from './commands.js';
 import { describeTool, planCard } from './describe.js';
+import { buildStatus } from './progress.js';
 import { describeShellRuns, type ShellRun } from './shell.js';
 import { paint, renderInline, stripAnsi } from './style.js';
+import type { StatusText } from './terminal.js';
 
 /** Where the session's output goes. The terminal in practice; a recorder in tests. */
+
+/** How often the build's countdown is worked out afresh. */
+const PROGRESS_REFRESH_MS = 60_000;
 export interface SessionOutput {
   /** Dazza speaking. */
   say(text: string): void;
   /** Raw lines, e.g. build progress. */
   print(text: string): void;
   /** Show or clear an activity in the status line. */
-  status(key: 'chat' | 'build', text: string | undefined): void;
+  status(key: 'chat' | 'build', text: StatusText | undefined): void;
   /** Show (or clear) the unfinished line of a reply as it streams in. */
   draft?(text: string | undefined): void;
 }
@@ -162,6 +168,10 @@ export class ChatSession {
   private contextTokens: number | undefined;
   /** Told the user it's getting full, for this conversation. */
   private nudged = false;
+  /** Counts builds, so a finished build's late status update can't land on the next. */
+  private buildGeneration = 0;
+  /** Told them building ahead could save waiting on reviews. */
+  private suggestedAhead = false;
   /** Most models hold 200k tokens; the 1M-context ones say so in their name. */
   private contextWindow = 200_000;
   /** Tasks being built right now. */
@@ -417,7 +427,13 @@ export class ChatSession {
     // Small edits are confirmed in Dazza's own reply; a rewritten plan gets the full card.
     const after = await store.readPlan();
     if (rewrotePlan && after && JSON.stringify(after) !== JSON.stringify(before)) {
-      output.print(`${planCard(after, Boolean(before?.approvedAt), boardUrl)}\n`);
+      const events = await store.readEvents();
+      const parallel = (await this.options.config.readSettings()).parallelTasks ?? DEFAULT_PARALLEL;
+      const times = {
+        wall: timeLeft(after, events, { parallel }).wall,
+        milestones: milestoneTimes(after, events, { parallel }),
+      };
+      output.print(`${planCard(after, Boolean(before?.approvedAt), boardUrl, times)}\n`);
       // The first plan is the moment to show the board; after that the tab is already open.
       if (!before) openInBrowser(boardUrl);
     }
@@ -431,6 +447,38 @@ export class ChatSession {
     building.clear();
     // What each builder does, for the board's live view.
     const activity = new ActivityRecorder(store);
+    // The countdown in the status line: a fresh estimate as tasks start and
+    // finish, and every minute in between (a task can run long).
+    // A task retrying or waiting says so, until that task moves again; tasks
+    // building beside it don't clear it.
+    const held = new Map<string, string>();
+    // This build's own: a slow estimate from a build that's ended mustn't
+    // overwrite the next one's.
+    const generation = ++this.buildGeneration;
+    const current = () => generation === this.buildGeneration && !signal.aborted;
+    const showProgress = async () => {
+      if (!current()) return;
+      if (held.size > 0) {
+        output.status('build', [...held.values()].join(' · '));
+        return;
+      }
+      const plan = await store.readPlan().catch(() => undefined);
+      const events = await store.readEvents().catch(() => []);
+      const parallel = (await config.readSettings()).parallelTasks ?? DEFAULT_PARALLEL;
+      const left = plan ? timeLeft(plan, events, { parallel }) : undefined;
+      if (this.building && held.size === 0 && current()) {
+        output.status('build', buildStatus([...building], left));
+      }
+    };
+    const hold = async (taskId: string, text: string) => {
+      held.set(taskId, text);
+      await showProgress();
+    };
+    const release = async (taskId: string) => {
+      if (held.delete(taskId)) await showProgress();
+    };
+    const ticker = setInterval(() => void showProgress(), PROGRESS_REFRESH_MS);
+    ticker.unref();
     try {
       const { workerGuard } = this.options;
       for await (const event of build({
@@ -444,31 +492,54 @@ export class ChatSession {
         if (event.type === 'agent') {
           this.countUsage(event.event);
           this.noticeShares(event.event);
-          if (event.event.type === 'retry')
-            output.status('build', retryStatus(event.event, this.options.provider.name));
+          if (event.event.type === 'retry') {
+            await hold(event.task.id, retryStatus(event.event, this.options.provider.name));
+          } else if (event.event.type !== 'limits') {
+            await release(event.task.id);
+          }
         }
         await activity.record(event);
         if (event.type === 'task_started') building.add(event.task.id);
         if (event.type === 'task_finished') building.delete(event.task.id);
         if (event.type === 'task_started' || event.type === 'task_finished') {
-          output.status(
-            'build',
-            building.size ? `Building ${[...building].join(' and ')}` : 'Looking for the next task',
-          );
+          held.delete(event.task.id);
+          await showProgress();
         }
-        if (event.type === 'waiting' && event.reason === 'usage_limit') {
-          output.status('build', `Waiting for your usage limit to reset (${clock(event.until)})`);
+        if (event.type === 'waiting') {
+          await hold(
+            event.task.id,
+            event.reason === 'usage_limit'
+              ? `Waiting for your usage limit to reset (${clock(event.until)})`
+              : `${this.options.provider.name} is overloaded; trying again at ${clock(event.until)}`,
+          );
         }
         const text = render(event, await store.readPlan());
         if (text) output.print(text);
         // A problem (no credit, a sign-in to fix) needs the user before building again.
         if (event.type === 'stopped' && !event.idle) this.keepBuilding = false;
+        // Waiting on a review with building ahead switched off: say it could carry on, once.
+        if (
+          event.type === 'stopped' &&
+          event.idle &&
+          /review/.test(event.reason) &&
+          !this.suggestedAhead &&
+          (await config.readSettings()).buildAhead === false &&
+          (await config.firstTime('build-ahead'))
+        ) {
+          this.suggestedAhead = true;
+          output.print(
+            paint.dim(
+              '  I could keep building on top of work while you review it: /settings, Keep building while you review.',
+            ),
+          );
+        }
         onBuildEvent?.(event);
       }
     } catch (error) {
       this.keepBuilding = false;
       output.say(paint.red(`Build stopped: ${errorMessage(error)}`));
     } finally {
+      clearInterval(ticker);
       this.building = undefined;
       output.status('build', undefined);
       this.options.onBuildEnd?.();

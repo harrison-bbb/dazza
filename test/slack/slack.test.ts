@@ -86,6 +86,7 @@ describe('Slack blocks', () => {
     const { text, blocks } = notificationMessage(
       {
         kind: 'review',
+        howToTry: [],
         taskId: 'T3',
         title: 'Editor <beta>',
         summary: 'Built the **editor**.',
@@ -424,6 +425,7 @@ describe('SlackBridge', () => {
     await until(b.ready);
     await b.instance.notify({
       kind: 'review',
+      howToTry: [],
       taskId: 'T3',
       title: 'Editor',
       facts: [],
@@ -447,6 +449,7 @@ describe('SlackBridge', () => {
     await until(b.ready);
     await b.instance.notify({
       kind: 'review',
+      howToTry: [],
       taskId: 'T3',
       title: 'Editor',
       facts: [],
@@ -464,6 +467,7 @@ describe('SlackBridge', () => {
     await until(b.ready);
     await b.instance.notify({
       kind: 'review',
+      howToTry: [],
       taskId: 'T3',
       title: 'Editor',
       facts: [],
@@ -604,7 +608,8 @@ describe('connectSlack', () => {
     expect(d.opened[1]).toBe('https://api.slack.com/apps/A1/general');
     expect(d.opened[2]).toBe('https://slack.com/app_redirect?app=A1&team=T1');
     expect(d.posted[0]).toMatchObject({ channel: 'D1', text: 'Dazza is connected.' });
-    expect(said.at(-1)).toBe('Connected to Acme. I just said hello in Slack.');
+    expect(said.at(-1)).toContain('Connected to Acme. I just said hello in Slack.');
+    expect(said.at(-1)).toContain('/settings');
   });
 
   it('stops when the user backs out', async () => {

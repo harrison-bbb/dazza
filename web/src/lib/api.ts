@@ -74,6 +74,10 @@ export const saveScope = (markdown: string, base: string, summary?: string) =>
 
 const task = (id: string) => `/api/tasks/${encodeURIComponent(id)}`;
 
+/** Start a task's work and open it; can take a minute or two (install, start-up). */
+export const tryTask = (id: string) => post(`${task(id)}/try`);
+export const stopTrying = () => post('/api/try/stop');
+
 function post(path: string, body?: unknown): Promise<ActionResponse> {
   return send('POST', path, body);
 }

@@ -26,7 +26,8 @@ Dazza turns [Claude Code](https://docs.claude.com/en/docs/claude-code) or [Codex
 › looks right
 
 ● Writing up the plan now, a few minutes.
-✔ Plan saved · 9 tasks · about 5½ hours of building
+✔ Plan saved · 9 tasks · about 3 hours of building
+  First thing you can try: M1 Bookings, about 45 minutes after you start
   M1 Bookings · Clients can request walks and you approve them
     T1  Project setup · S
     T2  Client sign-up and dogs · M
@@ -36,23 +37,29 @@ Dazza turns [Claude Code](https://docs.claude.com/en/docs/claude-code) or [Codex
 › looks good, approve it. /build
 
 ● Building T1 · Project setup
-  on branch dazza/T1-project-setup · usually ~20 minutes · towards M1 Bookings · /stop to stop
+  usually ~10 minutes · towards M1 Bookings · /stop to stop
+⠋ Building T1 · ~6 min left · all built in ~2½ hours
   …
-● T1 is ready for your review · all 4 criteria met · 6 files changed · 12 checks passed
-  /accept T1 to merge it · /changes T1 <what to change> · /try T1 to run it first
+● T1 is ready for you to try · Project setup
+  The app starts and shows your bookings page, with sample walks.
+  Try it: /try T1, or Try it on the board
+    1. Open the app and check the bookings page shows three sample walks
+  all 4 criteria met · 6 files changed · 12 checks passed
+  /accept T1 to approve it · /changes T1 <what to change>
 ```
 
 1. **Scoping is a meeting, not a form.** Dazza reads your code first if there is any, then runs a short scoping meeting. It asks a few plain-language questions at a time, recaps what's settled as it goes, and always asks what goes wrong today. It makes sensible calls on anything you don't care about. It checks the plan can actually work: if other people will use it, that includes where it's hosted. Before writing anything, it plays back what it'll build and the calls it made, so you can correct it in a line instead of after a rewrite.
-2. **The plan is a real spec.** It has a scope document (users, flows, data model, what's in and out, decisions, risks, guardrails) and tasks with clear descriptions, subtasks, checkable acceptance criteria and a size. Bigger plans are grouped into milestones, each a stage you can actually try. It all shows on a local board.
-3. **Building happens beside you, not over you.** Each task is built in its own git worktree, on its own branch, so your checkout is never touched. Keep working, uncommitted changes and all. Independent tasks build side by side (two at once by default), and each builder leaves notes (conventions, commands, gotchas) for the ones after it.
-4. **Built to fit.** In an existing codebase, Dazza plans like an engineer joining the team: it maps how the code is laid out and where the new code goes, follows the patterns already there, and reuses the libraries you use. Every plan also has a security section (who can do what, validation, secrets, the attacks that apply), and every task spells out its edge cases, with criteria that test them.
-5. **Every handoff comes with proof.** The builder reports on each acceptance criterion with evidence: the test, the command and what it showed. Work that changes what you see comes with screenshots. Dazza won't accept a handoff that contains secrets, files that shouldn't be committed, or a project template's unused placeholders. You review, `/try` it (Dazza installs and starts it for you), then `/accept` to merge or `/changes` to send it back.
-6. **You're only interrupted for real decisions.** Blocked tasks ask one clear question and the build moves on. Answer from anywhere, and it picks the task back up.
-7. **Milestones and a close-out.** When a stage is done, Dazza tells you what it delivered. At the end, it writes a report: what was built, what changed along the way, how to run it, and what's next.
+2. **The right size.** Dazza builds what you asked for, at the size you asked for, and offers anything bigger as a later stage. It aims for a first stage you can open and try within about an hour (and says if a plan's first stage runs longer), and T1 ends with the app starting and showing something.
+3. **The plan is a real spec.** It has a scope document (users, flows, data model, what's in and out, decisions, risks, guardrails) and tasks with clear descriptions, subtasks, checkable acceptance criteria and a size. Bigger plans are grouped into milestones, each a stage you can actually try. It all shows on a local board.
+4. **Building happens beside you, not over you.** Each task is built in its own git worktree, on its own branch, so your checkout is never touched. Keep working, uncommitted changes and all. Independent tasks build side by side (two at once by default), and each builder leaves notes (conventions, commands, gotchas) for the ones after it.
+5. **Built to fit.** In an existing codebase, Dazza plans like an engineer joining the team: it maps how the code is laid out and where the new code goes, follows the patterns already there, and reuses the libraries you use. Every plan also has a security section (who can do what, validation, secrets, the attacks that apply), and every task spells out its edge cases, with criteria that test them.
+6. **Every handoff comes with proof.** The builder reports on each acceptance criterion with evidence: the test, the command and what it showed. Work that changes what you see comes with screenshots. Dazza won't accept a handoff that contains secrets, files that shouldn't be committed, or a project template's unused placeholders. You try it first (the board's **Try it** button, or `/try`: Dazza installs and starts it for you), then `/accept` to merge or `/changes` to send it back. You always know how long's left: the status line counts down each task and the whole build, and your phone hears it too.
+7. **You're only interrupted for real decisions.** Blocked tasks ask one clear question and the build moves on. Answer from anywhere, and it picks the task back up.
+8. **Milestones and a close-out.** When a stage is done, Dazza tells you what it delivered. At the end, it writes a report: what was built, what changed along the way, how to run it, and what's next.
 
 ## Get started
 
-You need Node 22+ and [Claude Code](https://docs.claude.com/en/docs/claude-code) or [Codex](https://github.com/openai/codex) installed and signed in.
+You need Node 22+ and git. Dazza drives [Claude Code](https://docs.claude.com/en/docs/claude-code) or [Codex](https://github.com/openai/codex): if neither is installed, the first run offers to install one for you and sign you in (and on a Mac or Windows, to install git).
 
 ```sh
 npm i -g dazza
@@ -88,16 +95,13 @@ Just type to talk to Dazza, about anything in the project. Type `/` for commands
 | `/status` | Where the project is at |
 | `/tasks` | Every task, by milestone, with status and size |
 | `/next T7` | Build T7 next (it still waits for what it depends on) |
-| `/build-ahead on\|off` | Start the next tasks on top of work waiting for your review, so building doesn't stop until you get to it (on by default). Sending that work back or starting it over carries through |
-| `/background on\|off` | Keep building after you close the terminal (off by default). `dazza stop`, or "stop" from your phone, stops it; opening `dazza` takes it back |
-| `/parallel 1–3` | How many independent tasks to build at once (default 2) |
 
 | Reviewing | |
 |---|---|
 | `/review` | Everything waiting on you, and what to do about each |
 | `/accept T3` | Approve T3; it merges into your branch |
 | `/changes T3 <note>` | Send T3 back with what to change |
-| `/try T3` | Run T3's work and open it in your browser, to try it before approving (`/try stop` to stop it) |
+| `/try T3` | Run T3's work and open it in your browser, to try it before approving (`/try stop` to stop it). The board's **Try it** button does the same |
 | `/diff T3` | What T3 changed, file by file |
 | `/allow T3`, `/deny T3` | Answer T3's request to run a command that needs your OK |
 | `/redo T3 [note]` | Throw away T3's work and build it again from scratch (asks first) |
@@ -114,12 +118,22 @@ Just type to talk to Dazza, about anything in the project. Type `/` for commands
 
 | Setup | |
 |---|---|
+| `/settings` | How Dazza works, in one list: pick one to change it (below) |
 | `/model`, `/usage` | Switch models; see your plan's limits or API spend |
 | `/mcp [on\|off]` | The MCP servers you have in Claude Code or Codex. Dazza's chat can use them (builders can't) |
-| `/notify on\|off` | Desktop notifications when a task needs you (on by default) |
-| `/phone-merge on\|off` | Whether approving from Slack or Telegram merges the work. Off keeps merging to the terminal and the board |
 | `/slack`, `/telegram` | Connect (or check) Slack or Telegram. `-disconnect` to unlink |
 | `/logout`, `/help`, `/exit` | |
+
+`/settings` has everything that changes how Dazza works, each with a sensible default. Each also has its own command, for anyone who'd rather type it:
+
+| Setting | Default | Command |
+|---|---|---|
+| Keep building while you review: the next tasks start on top of work waiting for your review. Sending it back or starting it over carries through | on | `/build-ahead on\|off` |
+| Keep building after you close Dazza: `dazza stop`, or "stop" from your phone, stops it; opening `dazza` takes it back | off | `/background on\|off` |
+| Tasks built at once: more finishes sooner, but uses your plan's limits faster | 2 | `/parallel 1–3` |
+| Desktop notifications when a task needs you | on | `/notify on\|off` |
+| Approving from your phone merges: off keeps merging to this computer | on | `/phone-merge on\|off` |
+| Use your MCP servers in chat (builders never get them) | on | `/mcp on\|off` |
 
 The board runs at `http://localhost:4777` while Dazza is open. You can **watch builds live**: the dashboard and each task page show what the builder is doing right now (what it's thinking, the files it touches, the commands it runs), and afterwards the task's build log shows how it was built. The board has the dashboard and milestones, and every task with its handoff, evidence and a comment thread shared with Dazza. The **scope of work** reads like a proper project plan. It has the agreed scope, a deliverables table with every task's acceptance criteria and status (always in step with the tasks), and the change log. You can **edit it right there**: once the plan is approved, your edit goes in the change log as yours, and Dazza and the builder work from the new version. Every version of the scope is kept: view any earlier one and restore it. Restoring adds a version, so nothing is lost. You can also download the scope as Markdown, or print it or save it as a PDF. Tasks can be edited on the board too (title, size, description, criteria). `dazza board` opens the board without starting a chat. The board only answers links that carry its key, which Dazza adds for you (`/dashboard` opens one), so other websites and other people on your network can't read it.
 

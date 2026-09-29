@@ -17,7 +17,9 @@ import {
   redoTask,
   type Subtask,
   setStatus,
+  stopTrying,
   type Task,
+  tryTask,
 } from '../lib/api';
 import { cn, timeAgo } from '../lib/format';
 import { paths } from '../lib/router';
@@ -35,6 +37,8 @@ interface ItemViewProps {
   permission?: { command: string; why: string } | undefined;
   /** Opened to answer a question: start with the reply box ready. */
   focus?: 'unblock' | undefined;
+  /** The app running for the user to try, if any. */
+  trying?: { taskId: string; url: string } | null;
   onChange(): void;
 }
 
@@ -54,6 +58,7 @@ export function ItemView({
   permission,
   milestone,
   focus,
+  trying,
   onChange,
 }: ItemViewProps) {
   const [mode, setMode] = useState<ComposerMode>(focus ?? 'comment');
@@ -124,7 +129,9 @@ export function ItemView({
           )}
 
           {/* In review, what was delivered comes first; what was asked folds away. */}
-          {reviewing && task.handoff && <HandoffSection taskId={task.id} handoff={task.handoff} />}
+          {reviewing && task.handoff && (
+            <HandoffSection task={task} handoff={task.handoff} trying={trying} />
+          )}
 
           {!editing &&
             item.description &&
@@ -145,7 +152,7 @@ export function ItemView({
             ))}
 
           {!reviewing && !subtask && task.handoff && (
-            <HandoffSection taskId={task.id} handoff={task.handoff} />
+            <HandoffSection task={task} handoff={task.handoff} trying={trying} />
           )}
 
           <dl className="mt-8 divide-y divide-line border-y border-line text-[13px]">
@@ -468,9 +475,24 @@ function PermissionNote({
   );
 }
 
-/** What Dazza delivered: the summary, how to check it, the evidence, and the technical detail. */
-function HandoffSection({ taskId, handoff }: { taskId: string; handoff: Handoff }) {
+/**
+ * What Dazza delivered, in the order a non-developer needs it: what it does,
+ * trying it, the screenshots, and only then the technical facts.
+ */
+function HandoffSection({
+  task,
+  handoff,
+  trying,
+}: {
+  task: Task;
+  handoff: Handoff;
+  trying?: { taskId: string; url: string } | null | undefined;
+}) {
+  // Only work that's finished (in review or approved) and that Dazza can start.
+  const canTry =
+    (task.status === 'review' || task.status === 'closed') && handoff.runnable !== false;
   const technical = handoff.details || handoff.branch || handoff.worktree;
+  const facts = handoff.filesChanged !== undefined || handoff.checks.length > 0;
   return (
     <section className="mt-10">
       <Heading aside={`Submitted ${timeAgo(handoff.submittedAt)}`}>Handoff</Heading>
@@ -479,7 +501,18 @@ function HandoffSection({ taskId, handoff }: { taskId: string; handoff: Handoff 
           <InlineText>{handoff.summary}</InlineText>
         </p>
 
-        {(handoff.filesChanged !== undefined || handoff.checks.length > 0) && (
+        <TryIt
+          taskId={task.id}
+          steps={handoff.howToVerify}
+          canTry={canTry}
+          running={trying?.taskId === task.id ? trying.url : undefined}
+        />
+
+        {handoff.screenshots.length > 0 && (
+          <Screenshots paths={handoff.screenshots} className="border-t border-line p-2" />
+        )}
+
+        {facts && (
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 border-t border-line px-4 py-2.5 text-[12px] text-muted">
             {handoff.filesChanged !== undefined && (
               <span>
@@ -497,26 +530,6 @@ function HandoffSection({ taskId, handoff }: { taskId: string; handoff: Handoff 
               </span>
             ))}
           </div>
-        )}
-
-        {handoff.howToVerify.length > 0 && (
-          <div className="border-t border-line px-4 py-3">
-            <div className="mb-1.5 text-[12px] text-muted">How to check it</div>
-            <p className="mb-2 text-[13px] leading-6 text-ink-2">
-              <InlineText>{`Try it: type \`/try ${taskId}\` in your terminal and it opens in your browser.`}</InlineText>
-            </p>
-            <ol className="list-decimal space-y-1 pl-5 text-[13px] leading-6 text-ink-2 marker:text-faint">
-              {handoff.howToVerify.map((step) => (
-                <li key={step}>
-                  <InlineText>{step}</InlineText>
-                </li>
-              ))}
-            </ol>
-          </div>
-        )}
-
-        {handoff.screenshots.length > 0 && (
-          <Screenshots paths={handoff.screenshots} className="border-t border-line p-2" />
         )}
 
         {technical && (
@@ -543,6 +556,90 @@ function HandoffSection({ taskId, handoff }: { taskId: string; handoff: Handoff 
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * Try it: Dazza starts the work on this computer and opens it, the same as
+ * /try. Starting can take a minute or two, so the button says what it's doing.
+ */
+function TryIt({
+  taskId,
+  steps,
+  canTry,
+  running,
+}: {
+  taskId: string;
+  steps: string[];
+  canTry: boolean;
+  /** Where it's running already, if it is (started earlier, or from /try). */
+  running: string | undefined;
+}) {
+  const [state, setState] = useState<
+    | { kind: 'idle' }
+    | { kind: 'starting' }
+    | { kind: 'running'; url: string }
+    | { kind: 'failed'; message: string }
+  >(running ? { kind: 'running', url: running } : { kind: 'idle' });
+  const start = async () => {
+    setState({ kind: 'starting' });
+    const result = await tryTask(taskId);
+    setState(
+      result.ok && result.url
+        ? { kind: 'running', url: result.url }
+        : { kind: 'failed', message: result.message },
+    );
+  };
+  const stop = async () => {
+    await stopTrying();
+    setState({ kind: 'idle' });
+  };
+  if (!canTry && steps.length === 0) return null;
+  return (
+    <div className="border-t border-line px-4 py-3">
+      {canTry && (
+        <div className="flex flex-wrap items-center gap-3">
+          {state.kind === 'running' ? (
+            <>
+              <a
+                href={state.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-8 items-center rounded-md bg-accent px-3 text-[13px] font-medium text-accent-ink hover:bg-accent/90"
+              >
+                Open {taskId}
+              </a>
+              <Button onClick={stop}>Stop it</Button>
+              <span className="text-[12px] text-muted">Running at {state.url}</span>
+            </>
+          ) : (
+            <>
+              <Button variant="primary" disabled={state.kind === 'starting'} onClick={start}>
+                {state.kind === 'starting' ? 'Starting…' : 'Try it'}
+              </Button>
+              <span className="text-[12px] text-muted">
+                {state.kind === 'starting'
+                  ? 'Starting it on your computer. This can take a minute.'
+                  : 'Starts it on your computer and opens it (installing what it needs first).'}
+              </span>
+            </>
+          )}
+        </div>
+      )}
+      {state.kind === 'failed' && <p className="mt-2 text-[13px] text-red">{state.message}</p>}
+      {steps.length > 0 && (
+        <>
+          <div className={cn('mb-1.5 text-[12px] text-muted', canTry && 'mt-3')}>What to check</div>
+          <ol className="list-decimal space-y-1 pl-5 text-[13px] leading-6 text-ink-2 marker:text-faint">
+            {steps.map((step) => (
+              <li key={step}>
+                <InlineText>{step}</InlineText>
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
+    </div>
   );
 }
 

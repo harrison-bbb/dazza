@@ -36,6 +36,103 @@ export function minutesLeft(plan: Plan, events: Event[] = []): number {
     .reduce((sum, t) => sum + (t.size ? minutes[t.size] : 0), 0);
 }
 
+/** What's left of a build, in minutes, as of `at`. */
+export interface TimeLeft {
+  /** Minutes left on each open task (tasks in review are done, backlog isn't counted). */
+  perTask: Record<string, number>;
+  /** Tasks being built that have already taken longer than their size usually does. */
+  overdue: string[];
+  /** Minutes of building left, all tasks added up. */
+  working: number;
+  /**
+   * Minutes until it's all built: tasks build side by side (`parallel` at a
+   * time), but never before what they build on, so it's the longer of the
+   * work shared out and the longest chain of dependent tasks.
+   */
+  wall: number;
+  at: number;
+}
+
+/**
+ * How long the rest of the build should take. Each task's size gives its
+ * time (calibrated to this project, see sizeMinutes), less what's already been
+ * spent on it. Only a guess: it doesn't know how long the user takes to answer
+ * questions or review, so it counts building time only.
+ */
+export function timeLeft(
+  plan: Plan,
+  events: Event[],
+  options: { parallel?: number; now?: number } = {},
+): TimeLeft {
+  const now = options.now ?? Date.now();
+  const parallel = Math.max(1, options.parallel ?? 2);
+  const minutes = sizeMinutes(plan, events);
+  const perTask: Record<string, number> = {};
+  const overdue: string[] = [];
+  for (const task of plan.tasks) {
+    if (!task.size || !OPEN.includes(task.status) || task.status === 'review') continue;
+    const usual = minutes[task.size];
+    const building = task.status === 'building';
+    const left = usual - minutesSpent(events, task.id, building ? now : undefined);
+    if (building && left < 1) overdue.push(task.id);
+    // Rework after changes, or a task running long, still takes a little while.
+    perTask[task.id] = Math.max(left, building ? 1 : Math.min(usual, REWORK_MINUTES));
+  }
+  const working = Object.values(perTask).reduce((sum, m) => sum + m, 0);
+
+  // When each task can be done by, going by what it depends on.
+  const finish = new Map<string, number>();
+  const byId = new Map(plan.tasks.map((t) => [t.id, t]));
+  const finishOf = (id: string, seen: Set<string>): number => {
+    const known = finish.get(id);
+    if (known !== undefined) return known;
+    if (seen.has(id)) return 0; // a cycle: plans are checked for these, but don't hang on one
+    seen.add(id);
+    const own = perTask[id] ?? 0;
+    const after = Math.max(0, ...(byId.get(id)?.dependsOn ?? []).map((d) => finishOf(d, seen)));
+    finish.set(id, own + after);
+    return own + after;
+  };
+  const chain = Math.max(0, ...Object.keys(perTask).map((id) => finishOf(id, new Set())));
+  const wall = Math.round(Math.max(chain, working / parallel));
+  return { perTask, overdue, working: Math.round(working), wall, at: now };
+}
+
+/**
+ * When each milestone should be built, from now: minutes until its tasks, and
+ * the milestones before it, are all done. The first is when the user can
+ * first try something.
+ */
+export function milestoneTimes(
+  plan: Plan,
+  events: Event[],
+  options: { parallel?: number; now?: number } = {},
+): { id: string; title: string; minutes: number }[] {
+  const upTo = new Set<string>();
+  return plan.milestones.map((milestone) => {
+    for (const id of milestone.tasks) upTo.add(id);
+    // Only this milestone's tasks and the ones before it: the rest can wait.
+    const partial: Plan = {
+      ...plan,
+      tasks: plan.tasks.map((t) =>
+        upTo.has(t.id) || !OPEN.includes(t.status) ? t : { ...t, status: 'backlog' as const },
+      ),
+    };
+    const { wall } = timeLeft(partial, events, options);
+    return { id: milestone.id, title: milestone.title, minutes: wall };
+  });
+}
+
+/** A task sent back for changes usually needs a fraction of its first build. */
+const REWORK_MINUTES = 5;
+
+/** "~12 min", "~1½ hours", "under a minute": for a countdown that updates as it goes. */
+export function shortDuration(minutes: number): string {
+  if (minutes < 1) return 'under a minute';
+  if (minutes < 60) return `~${Math.round(minutes)} min`;
+  return humanDuration(minutes).replace('about ', '~');
+}
+
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
@@ -54,9 +151,10 @@ export function humanDuration(minutes: number): string {
 
 /**
  * How long the builder spent on a task: from each start to the next time it
- * stopped (handed over, blocked, or paused), added up.
+ * stopped (handed over, blocked, or paused), added up. With `now`, a run still
+ * going counts up to then.
  */
-export function minutesSpent(events: Event[], taskId: string): number {
+export function minutesSpent(events: Event[], taskId: string, now?: number): number {
   let total = 0;
   let started: number | undefined;
   for (const event of events) {
@@ -72,5 +170,7 @@ export function minutesSpent(events: Event[], taskId: string): number {
       started = undefined;
     }
   }
+  // Still being built: count the run so far too.
+  if (now !== undefined && started !== undefined) total += Math.max(0, now - started);
   return Math.round(total / 60_000);
 }

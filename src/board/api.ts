@@ -17,6 +17,8 @@ export interface ProjectSnapshot {
   buildLeft: string | null;
   /** Commands tasks are waiting on the user's OK to run, by task id. */
   permissions: Record<string, { command: string; why: string }>;
+  /** The task whose app is running for the user to try (Try it, /try), if any. */
+  trying: { taskId: string; url: string } | null;
 }
 
 /** One saved version of the scope, as the History list shows it. */
@@ -30,6 +32,8 @@ export interface ScopeVersion {
 export interface ActionResponse {
   ok: boolean;
   message: string;
+  /** Where the app runs, after Try it. */
+  url?: string;
 }
 
 /** Header every write must carry; see the CSRF note in server.ts. */

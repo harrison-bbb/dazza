@@ -19,6 +19,12 @@ describe('Config', () => {
     expect(mode).toBe(0o600);
   });
 
+  it('says each tip once', async () => {
+    expect(await project.config.firstTime('background')).toBe(true);
+    expect(await project.config.firstTime('background')).toBe(false);
+    expect(await project.config.firstTime('build-ahead')).toBe(true);
+  });
+
   it('round-trips the latest limits', async () => {
     const limits = {
       checkedAt: '2026-09-27T10:00:00.000Z',

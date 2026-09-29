@@ -36,10 +36,15 @@ export const Settings = z.object({
    * for the user to approve it (`/build-ahead off` waits). Unset means on.
    */
   buildAhead: z.boolean().optional(),
+  /** One-off tips already shown, so each is said once (e.g. 'background' on leaving mid-build). */
+  tipsShown: z.array(z.string()).optional(),
   /** The user chose not to connect Slack or Telegram during onboarding; don't ask again. */
   messagingSkipped: z.boolean().optional(),
 });
 export type Settings = z.infer<typeof Settings>;
+
+/** Independent tasks built at once, unless the user chose otherwise (/parallel). */
+export const DEFAULT_PARALLEL = 2;
 
 /**
  * How Dazza reaches its coding agent: Claude Code or Codex, through the user's
@@ -123,6 +128,14 @@ export class Config {
 
   async readSettings(): Promise<Settings> {
     return (await this.read('settings.json', Settings)) ?? {};
+  }
+
+  /** True the first time a tip is asked about, then never again. */
+  async firstTime(tip: string): Promise<boolean> {
+    const shown = (await this.readSettings()).tipsShown ?? [];
+    if (shown.includes(tip)) return false;
+    await this.updateSettings({ tipsShown: [...shown, tip] });
+    return true;
   }
 
   async updateSettings(changes: Settings): Promise<Settings> {

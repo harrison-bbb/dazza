@@ -376,19 +376,34 @@ function finished(
         ? paint.red(`${failed} ${failed === 1 ? 'check' : 'checks'} failing`)
         : `${checks.length} ${checks.length === 1 ? 'check' : 'checks'} passed`),
   ].filter(Boolean);
+  const steps = (handoff?.howToVerify ?? []).slice(0, TRY_STEPS);
   return [
     '',
-    `${marker()} ${paint.bold(`${event.task.id} is ready for your review`)}${details.length ? ` · ${details.join(' · ')}` : ''}`,
+    `${marker()} ${paint.bold(`${event.task.id} is ready for you to try`)} · ${task?.title ?? event.task.title}`,
     ...(handoff ? [indent(renderInline(handoff.summary))] : []),
+    // Trying it comes first: most people judge the work by using it.
+    // Only offer to start it when Dazza can: a library or a CLI tool gets checked, not run.
+    handoff?.runnable === false
+      ? indent(
+          paint.bold(
+            steps.length ? 'How to check it:' : 'How to check it: see its handoff on the board',
+          ),
+        )
+      : indent(`${paint.bold('Try it:')} /try ${event.task.id}, or Try it on the board`),
+    ...steps.map((step, i) => indent(`  ${i + 1}. ${renderInline(step)}`)),
     ...unmet.map((c) => indent(paint.red(`✗ ${c.criterion}: ${c.evidence}`))),
+    ...(details.length ? [indent(paint.dim(details.join(' · ')))] : []),
     // What to do next, without looking anything up.
     indent(
       paint.dim(
-        `/accept ${event.task.id} to merge it · /changes ${event.task.id} <what to change> · /try ${event.task.id} to run it first`,
+        `/accept ${event.task.id} to approve it · /changes ${event.task.id} <what to change>`,
       ),
     ),
   ].join('\n');
 }
+
+/** The handoff's first few steps for trying it; the board has the rest. */
+const TRY_STEPS = 4;
 
 function indent(text: string): string {
   return text

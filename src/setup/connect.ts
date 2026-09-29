@@ -17,6 +17,8 @@ export interface SetupDeps {
   detect(provider: ProviderId): Promise<ProviderStatus>;
   /** The agent CLI's own interactive sign-in. */
   signIn(provider: ProviderId): Promise<void>;
+  /** Install the agent CLI (npm, machine-wide), showing its output. Resolves whether it worked. */
+  install(provider: ProviderId): Promise<boolean>;
   checkApiKey(provider: ProviderId, apiKey: string): Promise<KeyCheck>;
 }
 
@@ -76,13 +78,8 @@ async function connectSubscription(
 ): Promise<Connection | undefined> {
   const help = PROVIDER_HELP[provider];
   const cli = provider === 'codex' ? 'Codex' : 'Claude Code';
-  let status = await deps.detect(provider);
-  if (!status.installed) {
-    ui.say(
-      `Dazza drives ${cli}, which isn’t installed yet. Install it (${help.install}), then run dazza again.`,
-    );
-    return undefined;
-  }
+  let status = await ensureInstalled(ui, deps, provider);
+  if (!status?.installed) return undefined;
 
   if (!status.loggedIn) {
     const signIn = await ui.select(`You’re not signed in to ${cli}. Sign in now?`, [
@@ -109,13 +106,7 @@ async function connectApiKey(
 ): Promise<Connection | undefined> {
   const source = KEY_SOURCES[provider];
   // The key is for the agent CLI, so check it's there before asking for one.
-  if (!(await deps.detect(provider)).installed) {
-    const name = provider === 'codex' ? 'Codex' : 'Claude Code';
-    ui.say(
-      `Dazza drives ${name}, which isn’t installed yet. Install it (${PROVIDER_HELP[provider].install}), then run dazza again.`,
-    );
-    return undefined;
-  }
+  if (!(await ensureInstalled(ui, deps, provider))) return undefined;
   ui.say(`Paste ${source.label}. Create one at ${source.url}`);
   for (let attempt = 1; attempt <= KEY_ATTEMPTS; attempt++) {
     const apiKey = (await ui.readLine({ prompt: 'API key: ', mask: true }))?.trim();
@@ -134,3 +125,85 @@ async function connectApiKey(
   }
   return undefined;
 }
+
+/**
+ * Starting up with a saved connection: make sure it still works, fixing what
+ * it can on the spot (installing the CLI, signing back in) rather than sending
+ * the user away. Resolves whether Dazza can go ahead.
+ */
+export async function ensureReady(
+  ui: SetupUI,
+  deps: SetupDeps,
+  connection: Connection,
+): Promise<ProviderStatus | undefined> {
+  const { provider } = connection;
+  const status = await ensureInstalled(ui, deps, provider);
+  if (!status?.installed) return undefined;
+  if (connection.method !== 'subscription' || status.loggedIn) return status;
+  const cli = provider === 'codex' ? 'Codex' : 'Claude Code';
+  const signIn = await ui.select(`Your ${cli} sign-in has expired. Sign in again now?`, [
+    { label: 'Sign in', hint: 'opens your browser', value: true },
+    { label: 'Not now', value: false },
+  ]);
+  if (!signIn) {
+    ui.say(`OK. Run ${PROVIDER_HELP[provider].signIn} to sign in, then start Dazza again.`);
+    return undefined;
+  }
+  await deps.signIn(provider);
+  const after = await deps.detect(provider);
+  if (after.installed && after.loggedIn) return after;
+  ui.say('That didn’t complete. Run dazza again when you’re ready to sign in.');
+  return undefined;
+}
+
+/**
+ * Dazza drives Claude Code or Codex, so it has to be installed. Offer to do it
+ * here rather than send the user off to a web page: it's one npm command,
+ * shown as it runs, and only on their yes. Resolves what's installed, checked.
+ */
+async function ensureInstalled(
+  ui: SetupUI,
+  deps: SetupDeps,
+  provider: ProviderId,
+): Promise<ProviderStatus | undefined> {
+  const found = await deps.detect(provider);
+  if (found.installed) return found;
+  const cli = provider === 'codex' ? 'Codex' : 'Claude Code';
+  const command = INSTALL_COMMANDS[provider];
+  const install = await ui.select(
+    `Dazza drives ${cli}, which isn’t installed yet. Install it now?`,
+    [
+      { label: 'Install it', hint: command, value: true },
+      { label: 'Not now', value: false },
+    ],
+  );
+  if (!install) {
+    ui.say(
+      `OK. Install it with ${command} (or see ${PROVIDER_HELP[provider].install}), then run dazza again.`,
+    );
+    return undefined;
+  }
+  // npm saying it worked isn't enough: check the CLI is really there now.
+  const status = (await deps.install(provider)) ? await deps.detect(provider) : undefined;
+  if (!status?.installed) {
+    ui.say(
+      `That didn’t install. If npm said EACCES or permission denied, it can’t write to its global folder: ` +
+        `https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally explains the fix. ` +
+        `Or install ${cli} another way (${PROVIDER_HELP[provider].install}), then run dazza again.`,
+    );
+    return undefined;
+  }
+  ui.say(`${cli} is installed.`);
+  return status;
+}
+
+/** The npm package for each agent CLI. */
+export const INSTALL_PACKAGES: Record<ProviderId, string> = {
+  claude: '@anthropic-ai/claude-code',
+  codex: '@openai/codex',
+};
+
+const INSTALL_COMMANDS: Record<ProviderId, string> = {
+  claude: `npm install -g ${INSTALL_PACKAGES.claude}`,
+  codex: `npm install -g ${INSTALL_PACKAGES.codex}`,
+};

@@ -8,6 +8,16 @@ import pkg from '../../package.json' with { type: 'json' };
  * server or the browser driver.
  */
 
+// Dazza uses Node 22's APIs. An older Node fails in confusing ways later, so say it now.
+const NODE_MAJOR = Number(process.versions.node.split('.')[0]);
+if (NODE_MAJOR < 22) {
+  console.error(
+    `Dazza needs Node.js 22 or later, and this is ${process.version}. ` +
+      'Install the current LTS from https://nodejs.org (or with your version manager, e.g. nvm install 22), then run dazza again.',
+  );
+  process.exit(1);
+}
+
 const program = new Command()
   .name('dazza')
   .description('Stop operating your coding agent. Start managing it.')

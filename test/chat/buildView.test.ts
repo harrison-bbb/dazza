@@ -94,8 +94,44 @@ describe('renderBuildEvent', () => {
 
   it('summarises a handover from the handoff', () => {
     const out = renderBuildEvent({ type: 'task_finished', task, outcome: 'review' }, plan, '/p');
-    expect(out).toContain('T1 is ready for your review · 4 files changed · 2 checks passed');
-    expect(out).toContain('Set it up.');
+    const lines = stripAnsi(out ?? '').split('\n');
+    // Title and summary, then how to try it, then the technical facts, then what to do.
+    expect(lines.slice(1, 4)).toEqual([
+      '● T1 is ready for you to try · Setup',
+      '  Set it up.',
+      '  Try it: /try T1, or Try it on the board',
+    ]);
+    expect(out).toContain('4 files changed · 2 checks passed');
+    expect(out?.indexOf('Try it')).toBeLessThan(out?.indexOf('files changed') ?? 0);
+    expect(out).toContain('/accept T1 to approve it');
+
+    const withSteps = {
+      ...plan,
+      tasks: plan.tasks.map((t) =>
+        t.handoff
+          ? { ...t, handoff: { ...t.handoff, howToVerify: ['Open the app', 'Click Save'] } }
+          : t,
+      ),
+    };
+    const steps = stripAnsi(
+      renderBuildEvent({ type: 'task_finished', task, outcome: 'review' }, withSteps, '/p') ?? '',
+    );
+    expect(steps).toContain(
+      'Try it: /try T1, or Try it on the board\n    1. Open the app\n    2. Click Save',
+    );
+
+    // Work Dazza can't start (a library, a CLI tool) gets checked, not tried.
+    const library = {
+      ...withSteps,
+      tasks: withSteps.tasks.map((t) =>
+        t.handoff ? { ...t, handoff: { ...t.handoff, runnable: false } } : t,
+      ),
+    };
+    const check = stripAnsi(
+      renderBuildEvent({ type: 'task_finished', task, outcome: 'review' }, library, '/p') ?? '',
+    );
+    expect(check).toContain('How to check it:\n    1. Open the app');
+    expect(check).not.toContain('/try');
   });
 });
 

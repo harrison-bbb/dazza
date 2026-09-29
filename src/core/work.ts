@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { Git, taskBranch } from '../git/git.js';
+import { detectLauncher } from '../preview/app.js';
 import type { ActionResult } from './actions.js';
 import { keepDependencies, seedDependencies } from './deps.js';
 import { checkChanges } from './hygiene.js';
@@ -298,6 +299,7 @@ export async function submitTask(
     baseBranch: build.baseBranch,
     commit,
     filesChanged: await tree.filesChanged(build.startCommit, commit),
+    runnable: (await detectLauncher(build.dir ?? store.root)) !== undefined,
     submittedAt: now.toISOString(),
   };
   const handedOver = await store.updatePlan((plan): [Plan | undefined, boolean] => {

@@ -94,13 +94,21 @@ export function notificationMessage(note: Notification, where: Where): Rendered 
       return {
         text: `${note.taskId} is ready for review: ${note.title}`,
         blocks: [
-          section(`*Ready for review · ${note.taskId}*\n${escapeText(note.title)}`),
+          section(`*Ready for you to try · ${note.taskId}*\n${escapeText(note.title)}`),
           ...(note.summary ? [markdown(note.summary)] : []),
+          ...(note.howToTry.length > 0
+            ? [
+                markdown(
+                  `${note.runnable === false ? '**How to check it**' : `**How to try it** (on your computer: \`/try ${note.taskId}\`, or Try it on the board)`}\n${note.howToTry.map((step, i) => `${i + 1}. ${step}`).join('\n')}`,
+                ),
+              ]
+            : []),
           context([
             where.project,
             ...note.facts,
             note.images.length > 0 && screenshotsInThread(note.images.length),
           ]),
+          ...(note.progress ? [context([`⏱ ${note.progress}`])] : []),
           {
             type: 'actions',
             block_id: DECISION_BLOCK,

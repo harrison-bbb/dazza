@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatSession } from '../../src/chat/session.js';
 import { stripAnsi } from '../../src/chat/style.js';
 import { setStatus } from '../../src/core/actions.js';
@@ -13,6 +13,8 @@ describe('ChatSession', () => {
   const project = useTempProject();
   let provider: FakeProvider;
   let said: string[];
+  /** The build's status line, as the terminal would draw it each time it changed. */
+  let buildStatuses: string[];
   let session: ChatSession;
 
   beforeEach(async () => {
@@ -24,6 +26,7 @@ describe('ChatSession', () => {
     });
     provider = new FakeProvider();
     said = [];
+    buildStatuses = [];
     const mcp = { command: 'node', args: [] };
     session = new ChatSession({
       store: project.store,
@@ -38,10 +41,18 @@ describe('ChatSession', () => {
       }),
       workerMcp: mcp,
       boardUrl: 'http://localhost:4777',
-      output: { say: (t) => said.push(t), print: (t) => said.push(t), status: () => {} },
+      output: {
+        say: (t) => said.push(t),
+        print: (t) => said.push(t),
+        status: (key, text) => {
+          if (key === 'build' && text !== undefined)
+            buildStatuses.push(typeof text === 'function' ? text() : text);
+        },
+      },
     });
   });
 
+  const currentTaskOf = (prompt: string) => /Build (T\d+)/.exec(prompt)?.[1] ?? '';
   const chatPrompts = () =>
     provider.runs.filter((r) => !r.autonomous).map((r) => r.prompt.split('\n\n').at(-1));
 
@@ -71,11 +82,75 @@ describe('ChatSession', () => {
 
     expect(chatPrompts()).toEqual(['how is it going?']); // answered mid-build
     expect(session.isBuilding).toBe(true);
+    // A task with no size gets no made-up countdown.
+    await vi.waitFor(() => expect(buildStatuses).toContain('Building T1'), { timeout: 10_000 });
 
     releaseBuild();
     await session.idle();
     expect((await project.store.readPlan())?.tasks[0]?.status).toBe('review');
-    expect(said.some((t) => t.includes('T1 is ready for your review'))).toBe(true);
+    expect(said.some((t) => t.includes('T1 is ready for you to try'))).toBe(true);
+  });
+
+  it('counts down a sized task in the status line while it builds', async () => {
+    await project.store.writePlan({
+      ...makePlan([makeTask({ id: 'T1', size: 'M' }), makeTask({ id: 'T2', size: 'S' })]),
+      approvedAt: '2026-09-27T10:00:00Z',
+    });
+    await project.config.updateSettings({ parallelTasks: 1 });
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    provider.onRun = async (options: AgentRunOptions) => {
+      if (!options.autonomous) return;
+      await held;
+      await submitTask(project.store, currentTaskOf(options.prompt), workReport);
+    };
+    session.startBuild();
+    await vi.waitFor(
+      () => expect(buildStatuses).toContain('Building T1 · ~20 min left · all built in ~30 min'),
+      { timeout: 10_000 },
+    );
+    release();
+    await session.idle();
+  });
+
+  it('keeps a task’s retry in the status line while another task works beside it', async () => {
+    await project.store.writePlan({
+      ...makePlan([makeTask({ id: 'T1', size: 'M' }), makeTask({ id: 'T2', size: 'M' })]),
+      approvedAt: '2026-09-27T10:00:00Z',
+    });
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let t2Worked: () => void = () => {};
+    const t2Done = new Promise<void>((resolve) => {
+      t2Worked = resolve;
+    });
+    provider.run = async function* (options: AgentRunOptions) {
+      if (!options.autonomous) return;
+      const id = currentTaskOf(options.prompt);
+      if (id === 'T1') {
+        yield { type: 'retry', attempt: 1, maxRetries: 3, reason: 'overloaded' } as AgentEvent;
+        await held;
+      } else {
+        await t2Done;
+        yield { type: 'text', text: 'Working on T2' } as AgentEvent;
+      }
+      await submitTask(project.store, id, workReport);
+      yield { type: 'finished', ok: true, output: '', sessionId: id, durationMs: 1 } as AgentEvent;
+    };
+    session.startBuild();
+    await vi.waitFor(() => expect(buildStatuses.some((t) => /retry|again/i.test(t))).toBe(true), {
+      timeout: 10_000,
+    });
+    t2Worked();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    // T2's progress didn't wipe out T1's retry.
+    expect(buildStatuses.at(-1)).toMatch(/retry|again/i);
+    release();
+    await session.idle();
   });
 
   it('stops a build cleanly, pausing the task', async () => {

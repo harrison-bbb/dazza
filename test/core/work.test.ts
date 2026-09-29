@@ -374,6 +374,14 @@ describe('building tasks', () => {
     expect(activity.at(-1)?.text).toContain('Reused the installed packages');
   });
 
+  it('notes at handoff whether Dazza can start the work for the user to try', async () => {
+    await git.init();
+    await buildTask('T1', { 'index.js': 'module.exports = 1' }); // a library: nothing to start
+    expect((await task('T1')).handoff?.runnable).toBe(false);
+    await buildTask('T3', { 'package.json': '{"scripts":{"dev":"node server.js"}}' }); // an app
+    expect((await task('T3')).handoff?.runnable).toBe(true);
+  });
+
   it('never copies packages git would commit', async () => {
     await git.init();
     await write('package-lock.json', '{"lockfileVersion": 3}'); // and no .gitignore

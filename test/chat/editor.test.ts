@@ -6,7 +6,8 @@ import {
   type MenuSource,
   reduce,
 } from '../../src/chat/editor.js';
-import { layout, userMessage, wrap } from '../../src/chat/terminal.js';
+import { stripAnsi } from '../../src/chat/style.js';
+import { clipVisible, layout, userMessage, wrap } from '../../src/chat/terminal.js';
 
 const commands = ['/dashboard', '/help', '/model', '/usage'];
 const menu: MenuSource = (text) =>
@@ -204,5 +205,15 @@ describe('userMessage', () => {
       '› the quick brown fox\n  jumps over the lazy\n  dog',
     );
     expect(userMessage('first\nsecond', 40)).toBe('› first\n  second');
+  });
+});
+
+describe('clipVisible', () => {
+  it('cuts to the visible width, keeping colour codes and resetting at the cut', () => {
+    const coloured = `\x1b[2mBuilding T3\x1b[22m · ~12 min left`;
+    expect(clipVisible(coloured, 100)).toBe(coloured);
+    const cut = clipVisible(coloured, 10);
+    expect(cut).toBe('\x1b[2mBuilding …\x1b[0m');
+    expect(stripAnsi(cut)).toHaveLength(10);
   });
 });

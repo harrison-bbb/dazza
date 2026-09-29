@@ -274,9 +274,12 @@ export function telegramText(note: Notification): string {
       ].join('\n\n');
     case 'review':
       return [
-        `📋 ${note.taskId} is ready for your review: ${note.title}`,
+        `📋 ${note.taskId} is ready for you to try: ${note.title}`,
         note.summary,
+        note.howToTry.length > 0 &&
+          `${note.runnable === false ? 'How to check it' : `How to try it (on your computer: /try ${note.taskId}, or Try it on the board)`}:\n${note.howToTry.map((step, i) => `${i + 1}. ${step}`).join('\n')}`,
         note.facts.join(' · '),
+        note.progress && `⏱ ${note.progress}`,
       ]
         .filter(Boolean)
         .join('\n\n');

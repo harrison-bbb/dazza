@@ -1,5 +1,5 @@
 import { basename } from 'node:path';
-import { humanDuration, minutesLeft } from '../core/estimates.js';
+import { humanDuration, minutesLeft, type TimeLeft } from '../core/estimates.js';
 import { currentMilestone } from '../core/milestones.js';
 import { currentTask, nextTask, progress } from '../core/plan.js';
 import type { Plan, Task } from '../core/schema.js';
@@ -15,6 +15,10 @@ export interface GreetingContext {
   canContinue?: boolean;
   /** For Slack or Telegram: no terminal commands, and the board is on their computer. */
   remote?: boolean;
+  /** The build's time left (see projectEstimate); without it, a rough one from task sizes. */
+  left?: TimeLeft;
+  /** Tasks start on top of work in review (/build-ahead). */
+  ahead?: boolean;
 }
 
 /** What to tell the user when they open `dazza`, based on where the project is at. */
@@ -54,10 +58,10 @@ function greetingFor(plan: Plan | undefined, context: GreetingContext): string {
   }
 
   const current = currentTask(plan);
-  const next = current ? undefined : nextTask(plan);
+  const next = current ? undefined : nextTask(plan, [], context.ahead ?? false);
   const withStatus = (status: Task['status']) => plan.tasks.filter((t) => t.status === status);
   const stage = currentMilestone(plan);
-  const left = minutesLeft(plan);
+  const left = context.left?.wall ?? minutesLeft(plan);
   return [
     `${closed}/${total} tasks closed${left ? ` (${humanDuration(left)} of building left)` : ''}.`,
     stage &&
@@ -87,8 +91,14 @@ function waiting(tasks: Task[], what: string): string | undefined {
 export const NO_PLAN = 'No plan yet. Tell me what you want to build and I’ll scope it with you.';
 
 /** The task list shown after the plan is saved, so the user can see what they're approving. */
-export function planCard(plan: Plan, wasApproved: boolean, boardUrl: string): string {
-  const left = minutesLeft(plan);
+export function planCard(
+  plan: Plan,
+  wasApproved: boolean,
+  boardUrl: string,
+  /** Calibrated times (see timeLeft and milestoneTimes); without them, rough ones from sizes. */
+  times?: { wall: number; milestones: { id: string; title: string; minutes: number }[] },
+): string {
+  const left = times?.wall ?? minutesLeft(plan);
   const title = [
     plan.problems.length > 0
       ? 'Draft plan, still being finished'
@@ -111,8 +121,20 @@ export function planCard(plan: Plan, wasApproved: boolean, boardUrl: string): st
   ]);
   const placed = new Set(plan.milestones.flatMap((m) => m.tasks));
   const loose = plan.tasks.filter((t) => !placed.has(t.id)).map(line);
+  // When there's first something to try: what makes a long plan feel short.
+  const first = times?.milestones[0];
+  const soonest =
+    first && plan.milestones.length > 1 && first.minutes > 0
+      ? `  First thing you can try: ${first.id} ${first.title}, ${humanDuration(first.minutes)} after you start`
+      : undefined;
   const footer = paint.dim(`  Review it at ${boardUrl} · approve there, here, or with /approve`);
-  return [`${paint.green('✔')} ${paint.bold(title)}`, ...grouped, ...loose, footer].join('\n');
+  return [
+    `${paint.green('✔')} ${paint.bold(title)}`,
+    ...(soonest ? [soonest] : []),
+    ...grouped,
+    ...loose,
+    footer,
+  ].join('\n');
 }
 
 /** A short present-tense label for a tool call, shown next to the spinner. */

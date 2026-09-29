@@ -14,6 +14,7 @@ import { mergeAtTheComputer, phoneMayMerge } from '../core/phoneMerge.js';
 import { reportRequest } from '../core/report.js';
 import { StateError, Store } from '../core/store.js';
 import { newerDazza, updateNotice } from '../core/updates.js';
+import { gitInstall, hasGit } from '../git/install.js';
 import type {
   Channel,
   ChannelHandlers,
@@ -29,15 +30,22 @@ import {
   notificationFor,
 } from '../notify/notification.js';
 import { createProvider, PROVIDER_HELP, providerFor } from '../providers/index.js';
-import type { AgentProvider } from '../providers/types.js';
+import type { AgentProvider, ProviderStatus } from '../providers/types.js';
 import { checkApiKey } from '../setup/apiKeys.js';
-import { connect } from '../setup/connect.js';
+import {
+  connect,
+  ensureReady,
+  INSTALL_PACKAGES,
+  type SetupDeps,
+  type SetupUI,
+} from '../setup/connect.js';
 import { connectSlack } from '../setup/slack.js';
 import { connectTelegram } from '../setup/telegram.js';
 import { SlackBridge } from '../slack/bridge.js';
 import { TelegramBridge } from '../telegram/bridge.js';
 import { debounce } from '../util/debounce.js';
 import { shownPath } from '../util/paths.js';
+import { runInteractive } from '../util/process.js';
 import { errorMessage } from '../util/text.js';
 import { fileMenu, listProjectFiles, pasteClipboardImage, pointedAt } from './attachments.js';
 import {
@@ -49,6 +57,7 @@ import {
 import { BRAND, logo, sessionInfo } from './banner.js';
 import { type CommandContext, commandMenu, parseCommand, suggest } from './commands.js';
 import { greeting, NO_PLAN } from './describe.js';
+import { projectEstimate } from './progress.js';
 import { ChatSession } from './session.js';
 import { runShell } from './shell.js';
 import { paint, stripAnsi } from './style.js';
@@ -105,19 +114,17 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
   }
 
   const provider = createProvider(connection);
-  const status = await provider.detect();
-  if (!status.installed || (connection.method === 'subscription' && !status.loggedIn)) {
-    const help = PROVIDER_HELP[provider.id];
-    say(
-      paint.red(
-        status.installed
-          ? `Your ${provider.name} sign-in has expired. Run ${help.signIn} to sign in, then start Dazza again.`
-          : `Dazza needs ${provider.name} installed (${help.install}). Run \`dazza doctor\` for details.`,
-      ),
-    );
+  // Nobody to answer (the background build, or input that isn't a terminal): say what's wrong.
+  const status =
+    options.background || !process.stdin.isTTY
+      ? await readyInBackground(provider, connection)
+      : await ensureReady(setupUI(terminal), setupDeps(terminal), connection);
+  if (!status?.installed) {
     process.exitCode = 1;
     return;
   }
+
+  if (!options.background) await offerGit(terminal, process.stdin.isTTY === true);
 
   const store = new Store(projectRoot);
   // So the greeting doesn't claim a build is running when the Dazza running it died.
@@ -160,6 +167,7 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
   const canContinue = !hasConversation && (await store.hasPreviousConversation(provider.id));
   say(
     greeting(await store.readPlan(), {
+      ...(await projectEstimate(store, config)),
       hasConversation,
       canContinue,
       // A folder with no code yet gets the new-project greeting.
@@ -205,7 +213,9 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
         waitingForLimit = false;
         notify(info(`▶ Your limit has reset. Back on ${event.task.id}: ${event.task.title}.`));
       }
-      notificationFor(event, store)
+      config
+        .readSettings()
+        .then((settings) => notificationFor(event, store, settings.parallelTasks))
         .then((note) => note && notify(note))
         .catch(() => {}); // a notification is a nicety; the terminal shows the event anyway
     },
@@ -229,7 +239,12 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
   const remoteCommand = async (command: RemoteCommand): Promise<string> => {
     switch (command) {
       case 'status':
-        return stripAnsi(greeting(await store.readPlan(), { remote: true }));
+        return stripAnsi(
+          greeting(await store.readPlan(), {
+            ...(await projectEstimate(store, config)),
+            remote: true,
+          }),
+        );
       case 'build':
         return stripAnsi(await startBuild(session, provider, config, store));
       case 'stop':
@@ -394,6 +409,7 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
         { label: 'Yes', value: true },
         { label: 'No', value: false },
       ])) === true,
+    select: (question, choices) => terminal.select(question, choices),
     status: (text) => terminal.setStatus('chat', text),
     link: async (channel) => {
       if (await setUpChannel(channel, terminal, config)) {
@@ -525,10 +541,9 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
 
   process.off('SIGHUP', onHangup);
   // Leaving with work under way and /background on: hand it over rather than stop it.
+  const wasOnTheJob = session.isOnTheJob;
   const handOff =
-    !options.background &&
-    session.isOnTheJob &&
-    (await config.readSettings()).backgroundBuild === true;
+    !options.background && wasOnTheJob && (await config.readSettings()).backgroundBuild === true;
   await session.stopBuild();
   await session.stopChat();
   unwatchFile(planFile);
@@ -541,6 +556,18 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
         'Still building, in the background. `dazza stop` (or "stop" from your phone) stops it; opening `dazza` here takes it back.',
       );
     }
+  } else if (
+    wasOnTheJob &&
+    !options.background &&
+    !hungUp &&
+    (await config.firstTime('background'))
+  ) {
+    // The moment the setting matters: say it exists, once, as they leave.
+    say(
+      paint.dim(
+        'To keep building after you close Dazza next time, turn it on in /settings (Keep building after you close Dazza).',
+      ),
+    );
   }
 }
 
@@ -577,20 +604,82 @@ async function startBuild(
   return 'Building. I’ll message you as tasks are ready.';
 }
 
+/** The terminal, as setup needs it. */
+function setupUI(terminal: Terminal): SetupUI {
+  return {
+    say,
+    select: (question, choices) => terminal.select(question, choices),
+    readLine: (options) => terminal.readLine(options),
+  };
+}
+
+/** What setup does on this machine: detect, sign in, install, check keys. */
+function setupDeps(terminal: Terminal): SetupDeps {
+  return {
+    detect: (id) => providerFor(id).detect(),
+    signIn: (id) => terminal.handOver(() => providerFor(id).signIn()),
+    install: (id) =>
+      terminal.handOver(async () => {
+        const code = await runInteractive('npm', ['install', '-g', INSTALL_PACKAGES[id]]).catch(
+          () => 1,
+        );
+        return code === 0;
+      }),
+    checkApiKey: (id, key) => checkApiKey(id, key),
+  };
+}
+
+/**
+ * Building needs git. Planning doesn't, so a missing git is said up front,
+ * with the install offered where one command does it, and Dazza carries on.
+ */
+async function offerGit(terminal: Terminal, canAsk: boolean): Promise<void> {
+  if (await hasGit()) return;
+  const { how, run } = gitInstall();
+  if (!run || !canAsk) {
+    say(`Heads up: building needs git, which isn’t installed. ${how} Planning works without it.`);
+    return;
+  }
+  const install = await terminal.select(
+    'Heads up: building needs git, which isn’t installed. Install it now?',
+    [
+      { label: 'Install it', hint: run.label, value: true },
+      { label: 'Later', hint: 'planning works without it', value: false },
+    ],
+  );
+  if (!install) {
+    say(paint.dim(how));
+    return;
+  }
+  const code = await terminal
+    .handOver(() => runInteractive(run.command, run.args))
+    .catch(() => undefined);
+  say(
+    code === 0 && (await hasGit())
+      ? 'git is installed.'
+      : paint.dim(`When git’s installed, restart Dazza to build. ${how}`),
+  );
+}
+
+/** In the background nobody can answer a question: say what's wrong, and stop. */
+async function readyInBackground(
+  provider: AgentProvider,
+  connection: Connection,
+): Promise<ProviderStatus | undefined> {
+  const status = await provider.detect();
+  if (status.installed && (connection.method !== 'subscription' || status.loggedIn)) return status;
+  const help = PROVIDER_HELP[provider.id];
+  say(
+    status.installed
+      ? `Your ${provider.name} sign-in has expired. Run ${help.signIn} to sign in, then start Dazza again.`
+      : `Dazza needs ${provider.name} installed (${help.install}).`,
+  );
+  return undefined;
+}
+
 /** First launch, or after /logout: pick how Dazza connects, and remember it. */
 async function firstConnect(terminal: Terminal, config: Config): Promise<Connection | undefined> {
-  const connection = await connect(
-    {
-      say,
-      select: (question, choices) => terminal.select(question, choices),
-      readLine: (options) => terminal.readLine(options),
-    },
-    {
-      detect: (id) => providerFor(id).detect(),
-      signIn: (id) => terminal.handOver(() => providerFor(id).signIn()),
-      checkApiKey: (id, key) => checkApiKey(id, key),
-    },
-  );
+  const connection = await connect(setupUI(terminal), setupDeps(terminal));
   if (connection) {
     await config.writeConnection(connection);
     // First run: offer a way to hear from Dazza when away, once.

@@ -7,7 +7,14 @@ describe('desktop notifications', () => {
     const notifier = new DesktopNotifier('/work/notes-app', async (title, body) => {
       shown.push([title, body]);
     });
-    await notifier.notify({ kind: 'review', taskId: 'T3', title: 'Editor', facts: [], images: [] });
+    await notifier.notify({
+      kind: 'review',
+      howToTry: [],
+      taskId: 'T3',
+      title: 'Editor',
+      facts: [],
+      images: [],
+    });
     await notifier.notify({
       kind: 'blocked',
       taskId: 'T5',

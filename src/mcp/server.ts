@@ -11,6 +11,7 @@ import {
   REQUESTABLE_STATUSES,
   setStatus,
 } from '../core/actions.js';
+import { Config, DEFAULT_PARALLEL } from '../core/config.js';
 import {
   addSubtask,
   addTask,
@@ -20,12 +21,12 @@ import {
   type SubtaskChanges,
   TaskChanges,
 } from '../core/edits.js';
-import { humanDuration, minutesLeft, sizeMinutes } from '../core/estimates.js';
+import { humanDuration, milestoneTimes, timeLeft } from '../core/estimates.js';
 import { answerPermission, requestPermission } from '../core/permissions.js';
 import { mergeAtTheComputer, phoneMayMerge } from '../core/phoneMerge.js';
 import { carryOverProgress } from '../core/plan.js';
 import { REPORT_SECTIONS } from '../core/report.js';
-import { missingSections, reviewPlan } from '../core/review.js';
+import { firstMilestoneAdvice, missingSections, reviewPlan } from '../core/review.js';
 import { MediaPath, Milestone, Plan, SCHEMA_VERSION, Task } from '../core/schema.js';
 import { changeLogEntries, keepChangeLog, withChangeLog } from '../core/scope.js';
 import { Store } from '../core/store.js';
@@ -227,18 +228,21 @@ async function buildingTime(store: Store): Promise<string> {
   const plan = await store.readPlan();
   if (!plan) return '';
   const events = await store.readEvents();
-  const sizes = sizeMinutes(plan, events);
-  const minutes = (ids: string[]) =>
-    plan.tasks
-      .filter((t) => ids.includes(t.id) && ['planned', 'building', 'blocked'].includes(t.status))
-      .reduce((sum, t) => sum + (t.size ? sizes[t.size] : 0), 0);
-  const lines = plan.milestones.map(
-    (m) => `- ${m.id} ${m.title}: ${humanDuration(minutes(m.tasks))}`,
+  const parallel = (await new Config().readSettings()).parallelTasks ?? DEFAULT_PARALLEL;
+  const { wall } = timeLeft(plan, events, { parallel });
+  const lines = milestoneTimes(plan, events, { parallel }).map((m) =>
+    m.minutes > 0
+      ? `- ${m.id} ${m.title}: built ${humanDuration(m.minutes)} from now`
+      : `- ${m.id} ${m.title}: built`,
   );
+  const advice = firstMilestoneAdvice(plan, parallel);
   return [
-    `Building time left, by Dazza’s numbers: ${humanDuration(minutesLeft(plan, events))} in all.`,
+    wall > 0
+      ? `Building time left, by Dazza’s numbers: ${humanDuration(wall)} (up to ${parallel} tasks build at once).`
+      : 'Everything planned is built.',
     ...lines,
     'If you mention time, quote these; don’t give your own estimate.',
+    ...(advice ? [advice] : []),
   ].join('\n');
 }
 
