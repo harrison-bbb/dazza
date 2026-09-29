@@ -160,6 +160,10 @@ describe('building tasks', () => {
       "export const run = () => { throw new Error('Not implemented'); };",
     );
     await writeFile(join(dir, 'copy.js'), "export const about = 'Lorem ipsum dolor sit amet';");
+    await writeFile(
+      join(dir, 'nav.js'),
+      "export const addTrade = { label: 'Add trade', title: 'Coming soon' };",
+    );
     // Not unfinished: a to-do app's own words, and plans in a README.
     await writeFile(join(dir, 'board.js'), "export const COLUMNS = ['TODO', 'DOING', 'DONE'];");
     await writeFile(join(dir, 'NOTES.md'), '- TODO: dark mode, later');
@@ -169,12 +173,14 @@ describe('building tasks', () => {
     expect(refused.message).toContain('sync.js still has a TODO');
     expect(refused.message).toContain('export.ts still has a stub that isn’t implemented');
     expect(refused.message).toContain('copy.js still has placeholder text (lorem ipsum)');
+    expect(refused.message).toContain('nav.js still has something marked “coming soon”');
     expect(refused.message).not.toContain('board.js');
     expect(refused.message).not.toContain('NOTES.md');
 
     await writeFile(join(dir, 'sync.js'), 'export function sync() {\n  return retry(3);\n}');
     await writeFile(join(dir, 'export.ts'), 'export const run = () => exportCsv();');
     await writeFile(join(dir, 'copy.js'), "export const about = 'Track every walk in one place.';");
+    await rm(join(dir, 'nav.js'));
     expect(await submitTask(project.store, 'T1', report)).toMatchObject({ ok: true });
   });
 

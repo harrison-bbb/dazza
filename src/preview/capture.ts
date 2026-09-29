@@ -53,6 +53,22 @@ const CLEAN_CSS = `
 `;
 
 /**
+ * Dev-server badges (Next.js's "N" in the corner) aren't part of the app, and
+ * make a screenshot look unfinished. They live in a shadow root page CSS can't
+ * reach, so a style goes in there, unless the badge is showing an error: that
+ * the builder needs to see.
+ */
+const HIDE_DEV_BADGES = `document.querySelectorAll('nextjs-portal').forEach((portal) => {
+  const root = portal.shadowRoot;
+  if (!root) return;
+  const badge = root.querySelector('[data-next-badge]');
+  if (badge && badge.getAttribute('data-error') === 'true') return;
+  const style = document.createElement('style');
+  style.textContent = '#devtools-indicator, [data-next-badge-root] { display: none !important; }';
+  root.appendChild(style);
+})`;
+
+/**
  * Takes clean, readable screenshots with the Chrome (or Chromium/Edge) the user
  * already has. One browser is shared across captures and closed with `close()`.
  */
@@ -75,6 +91,7 @@ export class Camera {
           await page.goto(options.url, { waitUntil: 'load', timeout: LOAD_TIMEOUT_MS });
         });
       await page.addStyleTag({ content: CLEAN_CSS });
+      await page.evaluate(HIDE_DEV_BADGES).catch(() => undefined);
       // Evaluated in the page; strings because this module has no DOM types.
       await page.evaluate('document.fonts.ready');
       await page.waitForTimeout(SETTLE_MS);

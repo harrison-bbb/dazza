@@ -54,6 +54,11 @@ const UNFINISHED: { name: string; pattern: RegExp; fix: string }[] = [
     fix: 'Implement it, or leave the feature out and say so in your handoff',
   },
   {
+    name: 'something marked “coming soon”',
+    pattern: /\bcoming soon\b/i,
+    fix: 'Leave out what isn’t built yet: a button or page that does nothing looks broken. The task that builds it adds it',
+  },
+  {
     name: 'placeholder text (lorem ipsum)',
     pattern: /lorem ipsum/i,
     fix: 'Use real-looking content: copy that fits the product, or realistic sample data',
