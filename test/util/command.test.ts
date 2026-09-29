@@ -92,6 +92,20 @@ describe('resolveCommand', () => {
     expect(launch).toEqual({ command: `${NPM_BIN}\\npm.cmd`, args: ['install'], shell: true });
   });
 
+  it('quotes a shell fallback in Program Files, where Node installs npm', () => {
+    const nodejs = 'C:\\Program Files\\nodejs';
+    const launch = resolveCommand('npm', ['run', 'dev'], {
+      ...windows({ [`${nodejs}\\npm.cmd`]: '@ECHO off\n"%NODE_EXE%" %*' }),
+      env: { Path: nodejs, PATHEXT: '.CMD' },
+    });
+    // Not C:\Program, which is what cmd.exe tried to run.
+    expect(launch).toEqual({
+      command: `"${nodejs}\\npm.cmd"`,
+      args: ['run', 'dev'],
+      shell: true,
+    });
+  });
+
   it('leaves a missing program as it is, so it reads as not installed', () => {
     expect(resolveCommand('codex', ['--version'], windows({}))).toEqual({
       command: 'codex',

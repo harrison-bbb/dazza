@@ -142,3 +142,25 @@ describe('procStart', () => {
     expect(procStart('', 1_790_000_000)).toBeUndefined();
   });
 });
+
+// The real cmd.exe: a wrapper Dazza can't unwrap, in a folder with a space, as
+// npm is in C:\Program Files\nodejs. It used to fail with "'C:\Program' is not recognized".
+describe.runIf(process.platform === 'win32')('a .cmd in a folder with a space', () => {
+  it('runs through cmd.exe with its path intact', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dazza program files '));
+    try {
+      await writeFile(join(dir, 'fakenpm.cmd'), '@ECHO off\r\necho ran %1 %2\r\n');
+      // Windows spells it Path; one key, whatever its case, so nothing is doubled up.
+      const [key = 'Path', path = ''] =
+        Object.entries(process.env).find(([k]) => k.toUpperCase() === 'PATH') ?? [];
+      const result = await execCommand('fakenpm', ['run', 'dev'], {
+        ...process.env,
+        [key]: `${dir};${path}`,
+      });
+      expect(result?.stderr ?? '').not.toContain('is not recognized');
+      expect(result?.stdout.trim()).toBe('ran run dev');
+    } finally {
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    }
+  });
+});

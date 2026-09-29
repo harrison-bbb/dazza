@@ -55,7 +55,8 @@ export function resolveCommand(
         : { command: options.nodePath ?? process.execPath, args: [target, ...args] };
     }
   }
-  return { command: found, args: [...args], shell: true };
+  // cmd.exe splits an unquoted C:\Program Files\nodejs\npm.cmd at the space.
+  return { command: cmdQuote(found), args: args.map(cmdQuote), shell: true };
 }
 
 /** The file `name` runs as on Windows: the first PATH match, trying PATHEXT's extensions. */
@@ -118,4 +119,9 @@ function readTextFile(path: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** A word as cmd.exe reads it: quoted when it has spaces or characters cmd treats specially. */
+function cmdQuote(word: string): string {
+  return /[\s&()^|<>"]/.test(word) ? `"${word.replace(/"/g, '""')}"` : word;
 }
