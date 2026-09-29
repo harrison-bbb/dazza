@@ -358,6 +358,44 @@ describe('building tasks', () => {
     expect(existsSync(join(project.root, 'T2.js'))).toBe(true);
   });
 
+  it('starts a task with the packages already installed, when git ignores them', async () => {
+    await git.init();
+    await write('.gitignore', 'node_modules/\n');
+    await write('package-lock.json', '{"lockfileVersion": 3}');
+    await git.commitAll('Project');
+    await mkdir(join(project.root, 'node_modules', 'left-pad'), { recursive: true });
+    await write('node_modules/left-pad/index.js', 'pad');
+
+    const build = await startTask(project.store, git, await task('T1'));
+    expect(existsSync(join(build.dir as string, 'node_modules', 'left-pad', 'index.js'))).toBe(
+      true,
+    );
+    const activity = await project.store.readActivity('T1');
+    expect(activity.at(-1)?.text).toContain('Reused the installed packages');
+  });
+
+  it('never copies packages git would commit', async () => {
+    await git.init();
+    await write('package-lock.json', '{"lockfileVersion": 3}'); // and no .gitignore
+    await git.commitAll('Project');
+    await mkdir(join(project.root, 'node_modules', 'left-pad'), { recursive: true });
+    const build = await startTask(project.store, git, await task('T1'));
+    expect(existsSync(join(build.dir as string, 'node_modules'))).toBe(false);
+  });
+
+  it('starts over what was built on a task that’s started over', async () => {
+    await git.init();
+    await buildTask('T1'); // in review
+    await buildTask('T2'); // built ahead, on T1's work
+    await buildTask('T3'); // doesn't depend on T1: its branch has none of T1's work
+    const redone = await redoTask(project.store, git, 'T1');
+    expect(redone.message).toContain('T2 was built on it, so it starts over too');
+    const status = (id: string) =>
+      project.store.readPlan().then((p) => p?.tasks.find((t) => t.id === id)?.status);
+    expect(await status('T2')).toBe('planned');
+    expect(await project.store.readTaskBuild('T2')).toBeUndefined();
+  });
+
   it('won’t land work built on a task that was then cancelled', async () => {
     await git.init();
     await buildTask('T1'); // in review, not landed

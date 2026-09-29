@@ -2,6 +2,8 @@
 
 ## 0.1.5
 
+- **Faster builds.** Each task used to reinstall every dependency in its fresh checkout, which for an Electron or Next app was most of a small task's time. Now it starts with the packages already installed, copied from your checkout or an earlier task with the same lockfile (an instant clone on a Mac), and a finished task's packages are kept for the next.
+- **Building doesn't stop for your review.** When a task is waiting for you, the tasks that need it start on top of its work. It all still lands only once you've approved it, and starting a task over starts over what was built on it. `/build-ahead off` waits for approval, as before.
 - **Keep building with the terminal closed, if you want.** `/background on` lets a build carry on after you close the terminal (it's off by default). Stop it with `dazza stop` from any terminal, or "stop" from your phone. Opening `dazza` in the project takes it back. It also stops once the plan is built or after 12 quiet hours, and tells your phone why. On a Mac it keeps the computer awake while it builds.
 - **`/phone-merge off`:** approving from Slack or Telegram no longer merges. Work is merged only from the terminal or the board, so someone who gets into your Slack or Telegram can't merge code. On by default.
 - **Your tokens are in the keychain.** Slack and Telegram tokens and API keys move out of Dazza's config files into the macOS Keychain, your Linux keyring, or (on Windows) encryption tied to your sign-in. Ones saved before move over on their own. `dazza doctor` says where they're kept.

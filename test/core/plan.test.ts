@@ -32,6 +32,28 @@ describe('nextTask', () => {
     expect(nextTask(plan)?.id).toBe('T3');
   });
 
+  it('builds ahead on work waiting for review, when asked to', () => {
+    const handoff = {
+      summary: 'Built it.',
+      howToVerify: ['Open it'],
+      criteria: [],
+      checks: [],
+      screenshots: [],
+      submittedAt: '2026-09-28T10:00:00Z',
+    };
+    const inReview = makeTask({ id: 'T1', status: 'review', handoff });
+    const plan = makePlan([
+      makeTask({ id: 'T1', status: 'review', handoff: { ...handoff, commit: 'abc123' } }),
+      makeTask({ id: 'T2', dependsOn: ['T1'] }),
+    ]);
+    expect(nextTask(plan)).toBeUndefined();
+    expect(nextTask(plan, [], true)?.id).toBe('T2');
+    // Not before there's work to build on.
+    expect(
+      nextTask(makePlan([inReview, makeTask({ id: 'T2', dependsOn: ['T1'] })]), [], true),
+    ).toBeUndefined();
+  });
+
   it('never picks backlog work', () => {
     expect(nextTask(makePlan([makeTask({ id: 'T1', status: 'backlog' })]))).toBeUndefined();
   });

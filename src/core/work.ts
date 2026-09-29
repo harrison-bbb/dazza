@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { Git, taskBranch } from '../git/git.js';
 import type { ActionResult } from './actions.js';
+import { keepDependencies, seedDependencies } from './deps.js';
 import { checkChanges } from './hygiene.js';
 import { findItem, withStatus } from './plan.js';
 import {
@@ -172,6 +173,7 @@ async function openWorktree(store: Store, git: Git, task: Task): Promise<TaskBui
       );
     }
   }
+  await reuseDependencies(store, tree, dir, task.id);
   return { branch, baseBranch, dir, startCommit: await tree.head(), seenEvents: 0 };
 }
 
@@ -444,7 +446,7 @@ export async function landApprovedWork(store: Store, git: Git): Promise<Landing>
       result.landed.push(task.id);
       progress = true;
       const build = await store.readTaskBuild(task.id);
-      if (build?.dir) await git.removeWorktree(build.dir);
+      if (build?.dir) await retireWorktree(store, git, build.dir);
     }
   }
   return result;
@@ -541,12 +543,42 @@ export async function recoverInterruptedWork(store: Store, now = new Date()): Pr
 }
 
 /** Remove worktrees of cancelled tasks. Landed tasks' are removed as they land. */
+/**
+ * A fresh worktree has nothing installed. Copy in dependencies installed from
+ * the same lockfile, so the builder doesn't spend minutes reinstalling them.
+ * Only where git ignores node_modules, so the copy can never be committed.
+ */
+async function reuseDependencies(store: Store, tree: Git, dir: string, taskId: string) {
+  // With the slash: a `node_modules/` rule only matches directories.
+  if (!(await tree.isIgnored('node_modules/'))) return;
+  const others = Object.values(await store.readTaskBuilds())
+    .map((b) => b.dir)
+    .filter((d): d is string => d !== undefined && d !== dir && existsSync(d));
+  const from = await seedDependencies(dir, [store.root, ...others.reverse()], store.depsCacheDir);
+  if (!from) return;
+  await store
+    .appendActivity({
+      at: new Date().toISOString(),
+      taskId,
+      kind: 'status',
+      text: 'Reused the installed packages: no reinstall needed unless they change',
+    })
+    .catch(() => {});
+}
+
+/** Remove a task's worktree, keeping its installed dependencies for the next one. */
+async function retireWorktree(store: Store, git: Git, dir: string): Promise<void> {
+  await keepDependencies(dir, store.depsCacheDir).catch(() => undefined);
+  await git.removeWorktree(dir);
+}
+
 export async function tidyWorktrees(store: Store, git: Git): Promise<void> {
   const plan = await store.readPlan();
   const builds = await store.readTaskBuilds();
   for (const task of plan?.tasks ?? []) {
     const dir = builds[task.id]?.dir;
-    if (task.status === 'cancelled' && dir && existsSync(dir)) await git.removeWorktree(dir);
+    if (task.status === 'cancelled' && dir && existsSync(dir))
+      await retireWorktree(store, git, dir);
   }
 }
 
@@ -578,9 +610,21 @@ export async function redoTask(
   }
   if (task.status === 'cancelled') return { ok: false, message: `${taskId} is cancelled.` };
 
+  // Tasks built on top of this one (while it waited for review) carry the work
+  // being thrown away, so they start over too.
+  const built = await builtOn(store, git, plan, taskId);
+  const busy = built.find((t) => t.status === 'building');
+  if (busy) {
+    return {
+      ok: false,
+      message: `${busy.id} is being built on ${taskId}’s work. /stop first, then start ${taskId} over.`,
+    };
+  }
+  for (const later of built) await redoTask(store, git, later.id, '', now);
+
   const build = await store.readTaskBuild(taskId);
   if (build) {
-    if (build.dir) await git.removeWorktree(build.dir);
+    if (build.dir) await retireWorktree(store, git, build.dir);
     await git.deleteBranch(build.branch);
     await store.removeTaskBuild(taskId);
   }
@@ -623,10 +667,31 @@ export async function redoTask(
       message: `Starting over. ${note.trim()}`,
     });
   }
+  const also =
+    built.length > 0
+      ? ` ${built.map((t) => t.id).join(', ')} ${built.length === 1 ? 'was' : 'were'} built on it, so ${built.length === 1 ? 'it starts' : 'they start'} over too.`
+      : '';
   return {
     ok: true,
-    message: `Threw away ${taskId}’s work. It’s back in the queue and starts from scratch${note.trim() ? ', with your note' : ''}.`,
+    message: `Threw away ${taskId}’s work. It’s back in the queue and starts from scratch${note.trim() ? ', with your note' : ''}.${also}`,
   };
+}
+
+/** Open tasks whose work includes `taskId`'s: they were built on top of it. */
+async function builtOn(store: Store, git: Git, plan: Plan, taskId: string): Promise<Task[]> {
+  const build = await store.readTaskBuild(taskId);
+  const tip = build && (await git.revParse(build.branch));
+  // Its first commit: a branch holding any of its work holds that one.
+  const first = build && tip && (await git.firstCommitAfter(build.startCommit, tip));
+  if (!first) return [];
+  const found: Task[] = [];
+  for (const other of plan.tasks) {
+    if (other.id === taskId || other.status === 'closed' || other.status === 'cancelled') continue;
+    const theirs = await store.readTaskBuild(other.id);
+    const head = theirs && (await git.revParse(theirs.branch));
+    if (head && (await git.isAncestor(first, head))) found.push(other);
+  }
+  return found;
 }
 
 function withoutHandoff(task: Task): Task {

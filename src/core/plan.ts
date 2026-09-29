@@ -2,13 +2,28 @@ import { FINAL_STATUSES, type Plan, type Subtask, type Task, type TaskStatus } f
 
 /**
  * The next task a worker should pick up: the first `planned` task, in plan order,
- * whose dependencies are all closed. Returns `undefined` when nothing is ready.
+ * whose dependencies are all done. Returns `undefined` when nothing is ready.
+ *
+ * Done means approved, or, with `aheadOfReview`, built and waiting for the
+ * user's review: the next task builds on top of that work rather than sitting
+ * idle until the user gets to it. It still lands only after what it builds on.
  */
-export function nextTask(plan: Plan, skip: readonly string[] = []): Task | undefined {
-  const closed = new Set(plan.tasks.filter((t) => t.status === 'closed').map((t) => t.id));
+export function nextTask(
+  plan: Plan,
+  skip: readonly string[] = [],
+  aheadOfReview = false,
+): Task | undefined {
+  const done = new Set(
+    plan.tasks
+      .filter(
+        (t) =>
+          t.status === 'closed' ||
+          (aheadOfReview && t.status === 'review' && t.handoff?.commit !== undefined),
+      )
+      .map((t) => t.id),
+  );
   return plan.tasks.find(
-    (t) =>
-      t.status === 'planned' && !skip.includes(t.id) && t.dependsOn.every((d) => closed.has(d)),
+    (t) => t.status === 'planned' && !skip.includes(t.id) && t.dependsOn.every((d) => done.has(d)),
   );
 }
 

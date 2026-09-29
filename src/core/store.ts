@@ -119,8 +119,16 @@ export class Store {
    * project's tools (test runners, linters, watchers) never pick it up.
    */
   worktreeDir(taskId: string): string {
-    const project = `${basename(this.root)}-${createHash('sha256').update(this.root).digest('hex').slice(0, 8)}`;
-    return join(dataDir(), 'worktrees', project, taskId);
+    return join(dataDir(), 'worktrees', this.projectKey(), taskId);
+  }
+
+  /** Where finished worktrees' installed dependencies wait to be reused (see core/deps.ts). */
+  get depsCacheDir(): string {
+    return join(dataDir(), 'deps', this.projectKey());
+  }
+
+  private projectKey(): string {
+    return `${basename(this.root)}-${createHash('sha256').update(this.root).digest('hex').slice(0, 8)}`;
   }
 
   /** Held by whichever Dazza process is building this project. */

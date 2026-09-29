@@ -138,6 +138,29 @@ export const COMMANDS: Command[] = [
     },
   },
   {
+    name: 'build-ahead',
+    args: '[on|off]',
+    description:
+      'Start the next tasks while earlier work waits for your review (on unless you switch it off)',
+    async run({ config, say }, args) {
+      const choice = args.trim().toLowerCase();
+      if (choice === 'on' || choice === 'off') {
+        await config.updateSettings({ buildAhead: choice === 'on' });
+        return say(
+          choice === 'on'
+            ? 'On. When a task is waiting for your review, the tasks that need it start on top of its work, so building doesn’t stop until you get to it. If you send it back or start it over, what was built on it follows.'
+            : 'Off. Tasks wait until the work they need is approved.',
+        );
+      }
+      const on = (await config.readSettings()).buildAhead !== false;
+      say(
+        on
+          ? 'Building ahead is on: the next tasks start on top of work waiting for your review. /build-ahead off waits for approval instead.'
+          : 'Building ahead is off: tasks wait until the work they need is approved. /build-ahead on keeps building.',
+      );
+    },
+  },
+  {
     name: 'phone-merge',
     args: '[on|off]',
     description:
@@ -439,7 +462,10 @@ export function commandMenu(text: string): MenuItem[] {
 
 /** /help's sections, in the README's order. Anything unlisted goes under Setup. */
 const HELP_GROUPS: [string, string[]][] = [
-  ['The work', ['build', 'stop', 'status', 'tasks', 'next', 'parallel', 'background']],
+  [
+    'The work',
+    ['build', 'stop', 'status', 'tasks', 'next', 'parallel', 'build-ahead', 'background'],
+  ],
   ['Reviewing', ['review', 'try', 'accept', 'changes', 'diff', 'allow', 'deny', 'redo', 'cancel']],
   [
     'The project',

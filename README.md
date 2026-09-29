@@ -88,6 +88,7 @@ Just type to talk to Dazza, about anything in the project. Type `/` for commands
 | `/status` | Where the project is at |
 | `/tasks` | Every task, by milestone, with status and size |
 | `/next T7` | Build T7 next (it still waits for what it depends on) |
+| `/build-ahead on\|off` | Start the next tasks on top of work waiting for your review, so building doesn't stop until you get to it (on by default). Sending that work back or starting it over carries through |
 | `/background on\|off` | Keep building after you close the terminal (off by default). `dazza stop`, or "stop" from your phone, stops it; opening `dazza` takes it back |
 | `/parallel 1–3` | How many independent tasks to build at once (default 2) |
 

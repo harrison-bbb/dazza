@@ -174,10 +174,9 @@ async function* buildTasks(options: BuilderOptions): AsyncGenerator<BuildEvent> 
   await landApprovedWork(store, git);
   await tidyWorktrees(store, git);
 
-  const limit = Math.min(
-    MAX_PARALLEL,
-    Math.max(1, (await config.readSettings()).parallelTasks ?? DEFAULT_PARALLEL),
-  );
+  const settings = await config.readSettings();
+  const limit = Math.min(MAX_PARALLEL, Math.max(1, settings.parallelTasks ?? DEFAULT_PARALLEL));
+  const ahead = settings.buildAhead !== false;
   // Independent tasks build side by side, each in its own worktree. Their
   // events are passed on as they come; git setup happens one task at a time.
   const running = new Map<string, Promise<void>>();
@@ -211,9 +210,9 @@ async function* buildTasks(options: BuilderOptions): AsyncGenerator<BuildEvent> 
           }
         } else {
           for (
-            let task = nextTask(plan, [...running.keys()]);
+            let task = nextTask(plan, [...running.keys()], ahead);
             task && running.size < limit;
-            task = nextTask(plan, [...running.keys()])
+            task = nextTask(plan, [...running.keys()], ahead)
           ) {
             const id = task.id;
             const work = buildOne(
@@ -617,7 +616,7 @@ export function taskBrief(
     .filter((t) => task.dependsOn.includes(t.id) && t.handoff)
     .map(
       (t) =>
-        `### ${t.id}: ${t.title}\n${t.handoff?.summary}${t.handoff?.details ? `\n${t.handoff.details}` : ''}`,
+        `### ${t.id}: ${t.title}${t.status === 'review' ? ' (built, waiting for the user’s review: it may still change)' : ''}\n${t.handoff?.summary}${t.handoff?.details ? `\n${t.handoff.details}` : ''}`,
     );
   // Work that belongs to other tasks, so this one stays in its lane.
   const later = plan.tasks

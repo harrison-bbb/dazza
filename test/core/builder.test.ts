@@ -26,6 +26,8 @@ describe('build loop', () => {
       ]),
       approvedAt: '2026-09-27T10:00:00Z',
     });
+    // Most of these are about one task at a time: building ahead has its own test.
+    await project.config.updateSettings({ buildAhead: false });
   });
 
   const run = async (provider: FakeProvider, signal?: AbortSignal) => {
@@ -75,6 +77,23 @@ describe('build loop', () => {
     expect(t1).toMatchObject({ autonomous: true, cwd: project.store.worktreeDir('T1') });
     expect(provider.runs[0]?.allowedTools).toContain('mcp__dazza__submit');
     expect(provider.runs[0]?.allowedTools).not.toContain('mcp__dazza__save_plan');
+  });
+
+  it('builds ahead on work waiting for review, so building doesn’t stop for it', async () => {
+    await project.config.updateSettings({ buildAhead: true });
+    const provider = new FakeProvider();
+    provider.onRun = async (options) => {
+      const id = currentTask(options);
+      await writeFile(join(options.cwd, `${id}.js`), id);
+      await submitTask(project.store, id, report);
+    };
+    await run(provider);
+
+    // T2 depends on T1, which is in review: it's built anyway, on top of T1.
+    expect(await statuses()).toEqual(['T1:review', 'T2:review', 'T3:review']);
+    const t2 = provider.runs.find((r) => currentTask(r) === 'T2');
+    expect(t2?.prompt).toContain('waiting for the user’s review: it may still change');
+    expect(existsSync(join(project.store.worktreeDir('T2'), 'T1.js'))).toBe(true);
   });
 
   it('builds independent tasks side by side, up to the limit', async () => {
@@ -303,7 +322,9 @@ describe('taskBrief', () => {
       makeTask({ id: 'T4', title: 'Month close' }),
     ]);
     const brief = taskBrief(plan, task, undefined, [], false);
-    expect(brief).toContain('## What this builds on\n### T1: Sign-in\nMagic links via Auth.js');
+    expect(brief).toContain(
+      '## What this builds on\n### T1: Sign-in (built, waiting for the user’s review: it may still change)\nMagic links via Auth.js',
+    );
     expect(brief).toContain('## Coming in other tasks (leave these alone)\n- T4 Month close');
     expect(brief).not.toContain('- T3 Leaderboard');
   });

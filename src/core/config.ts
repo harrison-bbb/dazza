@@ -31,6 +31,11 @@ export const Settings = z.object({
    * user's Slack or Telegram can't. Unset means on.
    */
   phoneMerge: z.boolean().optional(),
+  /**
+   * Start tasks on top of work that's waiting for review, instead of waiting
+   * for the user to approve it (`/build-ahead off` waits). Unset means on.
+   */
+  buildAhead: z.boolean().optional(),
   /** The user chose not to connect Slack or Telegram during onboarding; don't ask again. */
   messagingSkipped: z.boolean().optional(),
 });

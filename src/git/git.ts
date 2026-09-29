@@ -201,6 +201,23 @@ export class Git {
     return names ? names.split('\n').length : 0;
   }
 
+  /** Whether git ignores `path` here (so nothing in it can be committed). */
+  async isIgnored(path: string): Promise<boolean> {
+    return (await this.run(['check-ignore', '-q', path])).ok;
+  }
+
+  /** The commit a ref points at, or undefined when there's no such ref. */
+  async revParse(ref: string): Promise<string | undefined> {
+    const result = await this.run(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+    return result.ok && result.out ? result.out : undefined;
+  }
+
+  /** The oldest commit after `from` on the way to `to`, if there is one. */
+  async firstCommitAfter(from: string, to: string): Promise<string | undefined> {
+    const result = await this.run(['rev-list', '--reverse', '--first-parent', `${from}..${to}`]);
+    return result.ok ? result.out.split('\n')[0] || undefined : undefined;
+  }
+
   /** Whether `ancestor` is already part of `descendant`'s history. */
   async isAncestor(ancestor: string, descendant: string): Promise<boolean> {
     return (await this.run(['merge-base', '--is-ancestor', ancestor, descendant])).ok;

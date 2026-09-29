@@ -239,7 +239,8 @@ export class ChatSession {
   async resumeIfReady(): Promise<string | undefined> {
     if (!this.keepBuilding || this.building) return undefined;
     const plan = await this.options.store.readPlan();
-    const task = plan?.approvedAt ? nextTask(plan) : undefined;
+    const ahead = (await this.options.config.readSettings()).buildAhead !== false;
+    const task = plan?.approvedAt ? nextTask(plan, [], ahead) : undefined;
     if (!task) return undefined;
     this.startBuild();
     return task.id;
