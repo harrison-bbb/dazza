@@ -37,6 +37,30 @@ const LOCAL_ONLY: { name: string; pattern: RegExp }[] = [
 const SCAFFOLD =
   /(^|\/)(public\/(next|vercel|file|globe|window|vite)\.svg|src\/assets\/(react|vue)\.svg|src\/logo\.svg)$/;
 
+/**
+ * Signs of unfinished work, in lines the task added. A comment marker only
+ * (a to-do app's `status: 'TODO'` is fine), and only in code: a README may
+ * well talk about what's next.
+ */
+const UNFINISHED: { name: string; pattern: RegExp; fix: string }[] = [
+  {
+    name: 'a TODO',
+    pattern: /(\/\/|#|\/\*|^\s*\*|<!--|\{\/\*)\s*(TODO|FIXME|XXX)\b/,
+    fix: 'Finish it. If it’s real follow-up work, take the comment out and say so in your handoff’s details',
+  },
+  {
+    name: 'a stub that isn’t implemented',
+    pattern: /throw new Error\(\s*['"`]not (yet )?implemented/i,
+    fix: 'Implement it, or leave the feature out and say so in your handoff',
+  },
+  {
+    name: 'placeholder text (lorem ipsum)',
+    pattern: /lorem ipsum/i,
+    fix: 'Use real-looking content: copy that fits the product, or realistic sample data',
+  },
+];
+const PROSE = /\.(md|mdx|txt|rst)$/i;
+
 /** Bigger than this is almost never source code. */
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
@@ -72,6 +96,10 @@ export async function checkChanges(tree: Git, from: string): Promise<string[]> {
         `${path} contains ${secret.name}. Read it from the environment instead, and never commit it.`,
       );
     }
+    const unfinished = PROSE.test(path)
+      ? undefined
+      : UNFINISHED.find((rule) => rule.pattern.test(line));
+    if (unfinished) problems.push(`${path} still has ${unfinished.name}. ${unfinished.fix}.`);
   }
   return [...new Set(problems)];
 }

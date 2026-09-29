@@ -13,6 +13,7 @@ export const SCOPE_SECTIONS = [
   'Users',
   'Goals',
   'User flows',
+  'Design direction',
   'In scope',
   'Out of scope',
   'Tech stack',
@@ -47,6 +48,8 @@ export function reviewPlan(scope: string, tasks: Task[], milestones: Milestone[]
   if (missing.length > 0) {
     problems.push(`The scope is missing sections: ${missing.map((s) => `## ${s}`).join(', ')}.`);
   }
+  const design = thinDesign(scope);
+  if (design) problems.push(design);
 
   // Finished work keeps whatever it was planned with.
   for (const task of tasks.filter((t) => t.status !== 'closed' && t.status !== 'cancelled')) {
@@ -94,6 +97,42 @@ export function reviewPlan(scope: string, tasks: Task[], milestones: Milestone[]
         `…and ${problems.length - MAX_REPORTED} more like these.`,
       ]
     : problems;
+}
+
+/**
+ * A design direction too thin to build from: builders fall back on generic
+ * defaults, which is how apps end up looking generated. One for work with no
+ * screen can be a line saying so.
+ */
+function thinDesign(scope: string): string | undefined {
+  const body = sectionBody(scope, 'Design direction');
+  if (body === undefined) return undefined; // reported as missing
+  if (/\bno (visual |user |graphical )?(interface|ui|screens?)\b/i.test(body)) return undefined;
+  const colours = body.match(/#[0-9a-f]{3,8}\b/gi)?.length ?? 0;
+  if (body.length >= MIN_DESIGN_DIRECTION && colours >= MIN_DESIGN_COLOURS) return undefined;
+  return (
+    'The design direction is too thin to build from: give the feel (and a product it’s like), colour tokens with hex values, ' +
+    'the type scale, spacing and radius, how components look, the layout, and what to avoid. For work with no screen, say so in a line.'
+  );
+}
+
+/** Enough for the feel, the tokens, type, space, components, layout and what to avoid. */
+const MIN_DESIGN_DIRECTION = 400;
+/** Background, surface, text, muted, accent at least. */
+const MIN_DESIGN_COLOURS = 4;
+
+/** The text under a `## heading`, up to the next one; undefined if there's no such section. */
+function sectionBody(scope: string, heading: string): string | undefined {
+  const lines = scope.split('\n');
+  const start = lines.findIndex(
+    (line) => /^##\s+/.test(line) && normalise(line.replace(/^##\s+/, '')) === normalise(heading),
+  );
+  if (start < 0) return undefined;
+  const end = lines.findIndex((line, i) => i > start && /^##\s+/.test(line));
+  return lines
+    .slice(start + 1, end < 0 ? undefined : end)
+    .join('\n')
+    .trim();
 }
 
 /** Required scope sections the scope doesn't have. */

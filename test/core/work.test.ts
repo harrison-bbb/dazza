@@ -150,6 +150,34 @@ describe('building tasks', () => {
     expect((await task('T1')).handoff).toMatchObject({ summary: 'You can sign in.', details });
   });
 
+  it('won’t hand over unfinished work: TODOs, stubs, lorem ipsum', async () => {
+    await git.init();
+    const build = await startTask(project.store, git, await task('T1'));
+    const dir = build.dir as string;
+    await writeFile(join(dir, 'sync.js'), 'export function sync() {\n  // TODO: handle errors\n}');
+    await writeFile(
+      join(dir, 'export.ts'),
+      "export const run = () => { throw new Error('Not implemented'); };",
+    );
+    await writeFile(join(dir, 'copy.js'), "export const about = 'Lorem ipsum dolor sit amet';");
+    // Not unfinished: a to-do app's own words, and plans in a README.
+    await writeFile(join(dir, 'board.js'), "export const COLUMNS = ['TODO', 'DOING', 'DONE'];");
+    await writeFile(join(dir, 'NOTES.md'), '- TODO: dark mode, later');
+
+    const refused = await submitTask(project.store, 'T1', report);
+    expect(refused.ok).toBe(false);
+    expect(refused.message).toContain('sync.js still has a TODO');
+    expect(refused.message).toContain('export.ts still has a stub that isn’t implemented');
+    expect(refused.message).toContain('copy.js still has placeholder text (lorem ipsum)');
+    expect(refused.message).not.toContain('board.js');
+    expect(refused.message).not.toContain('NOTES.md');
+
+    await writeFile(join(dir, 'sync.js'), 'export function sync() {\n  return retry(3);\n}');
+    await writeFile(join(dir, 'export.ts'), 'export const run = () => exportCsv();');
+    await writeFile(join(dir, 'copy.js'), "export const about = 'Track every walk in one place.';");
+    expect(await submitTask(project.store, 'T1', report)).toMatchObject({ ok: true });
+  });
+
   it('won’t hand over template leftovers nothing uses', async () => {
     await git.init();
     const build = await startTask(project.store, git, await task('T1'));

@@ -17,6 +17,17 @@ export function makePlan(tasks: Task[]): Plan {
 }
 
 /** A scope with every section the manager is asked for. */
+/** A design direction a builder could follow without guessing. */
+export const DESIGN = [
+  '- **Feel:** calm and quick, like Things: a list you check a few times a day.',
+  '- **Colour:** background #fafaf9, surface #ffffff, border #e7e5e4, text #1c1917, muted #78716c, accent #16a34a; danger #dc2626. Light only.',
+  '- **Type:** system font stack; 13/15/18/24; regular and semibold.',
+  '- **Space and shape:** 4px grid, 8px radius, borders not shadows.',
+  '- **Components:** quiet buttons, one primary per screen; inline edit; an empty state with one action.',
+  '- **Layout:** one column, 640px wide, full width on phones.',
+  '- **Avoid:** gradients, emoji, cards inside cards.',
+].join('\n');
+
 export const SCOPE = [
   '# Todo app',
   ...[
@@ -24,6 +35,7 @@ export const SCOPE = [
     'Users',
     'Goals',
     'User flows',
+    'Design direction',
     'In scope',
     'Out of scope',
     'Tech stack',
@@ -32,7 +44,7 @@ export const SCOPE = [
     'Decisions & assumptions',
     'Risks & open questions',
     'What I’ll need from you',
-  ].map((section) => `\n## ${section}\nDetails.`),
+  ].map((section) => `\n## ${section}\n${section === 'Design direction' ? DESIGN : 'Details.'}`),
 ].join('\n');
 
 /** A task written to the standard save_plan asks for. */

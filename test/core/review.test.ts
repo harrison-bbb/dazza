@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { firstMilestoneAdvice, reviewPlan } from '../../src/core/review.js';
 import type { Milestone, Plan, Task } from '../../src/core/schema.js';
-import { makeTask, plannedTask, SCOPE } from '../fixtures.js';
+import { DESIGN, makeTask, plannedTask, SCOPE } from '../fixtures.js';
 
 describe('reviewPlan', () => {
   it('passes a plan written to the standard', () => {
@@ -28,6 +28,21 @@ describe('reviewPlan', () => {
       expect.stringContaining('T2: add acceptance criteria'),
       expect.stringContaining('T2.1: the description is too short'),
     ]);
+  });
+
+  it('wants a design direction a builder can follow, or a line saying there’s no screen', () => {
+    const withDesign = (body: string) => SCOPE.replace(DESIGN, body);
+    const task = [plannedTask({ id: 'T1' })];
+    expect(reviewPlan(withDesign('Clean and modern.'), task)).toEqual([
+      expect.stringContaining('The design direction is too thin to build from'),
+    ]);
+    expect(reviewPlan(SCOPE, task)).toEqual([]);
+    expect(
+      reviewPlan(
+        withDesign('No user interface: it’s a JSON API. Errors are RFC 7807 problem details.'),
+        task,
+      ),
+    ).toEqual([]);
   });
 
   it('asks bigger plans for milestones that cover the planned work', () => {

@@ -2,6 +2,7 @@
 
 ## 0.1.5
 
+- **Built like a senior engineer and a designer would, even from one line.** A short request is treated as a brief to fill out properly (every screen's empty, loading and error states, validation, phones, keyboard access, realistic data), not a thin build and not a quiz. Every plan with a screen now has a design direction (feel, colour tokens, type, spacing, components, what to avoid) that you see in the play-back, set up as code in the first task. Builders follow a UI standard that rules out the generic AI look, and review their own screenshots like a designer before handing over. Dazza refuses handoffs with TODO comments, unimplemented stubs or lorem ipsum.
 - **Plans sized to what you asked for.** Dazza plans the smallest version that does the job, and offers anything bigger as a later stage instead of building it in. It aims for a first stage you can open and try within about an hour, and T1 ends with the app starting and showing something. The plan card says when that is.
 - **You always know how long's left.** While it builds, the status line counts down the task and the whole build (`Building T3 · ~12 min left · all built in ~40 min`), calibrated to how long tasks take on your project and to tasks building side by side. `/status` and your phone say it too.
 - **Reviews start with trying it.** Work in review leads with what it does and how to try it, then screenshots, with file counts last. The board has a **Try it** button that starts the work on your computer and opens it, as `/try` does.
