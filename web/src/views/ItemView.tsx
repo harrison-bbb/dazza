@@ -209,6 +209,9 @@ export function ItemView({
                   {task.acceptanceCriteria.map((criterion, i) => {
                     // The builder's own account of each criterion, from the handoff.
                     const report = criterionReport(task, criterion, i);
+                    // The scope check wasn't convinced by the evidence: look here first.
+                    const doubted =
+                      task.status === 'review' && task.handoff?.doubts?.includes(criterion);
                     return (
                       <li key={criterion} className="flex gap-3 leading-6">
                         <Checkbox checked={task.status === 'closed' || Boolean(report?.met)} />
@@ -223,6 +226,11 @@ export function ItemView({
                             >
                               {report.met ? '' : 'Not met: '}
                               <InlineText>{report.evidence}</InlineText>
+                            </span>
+                          )}
+                          {doubted && report?.met && (
+                            <span className="mt-0.5 block text-[12px] leading-5 text-amber">
+                              Unproven: the evidence doesn’t clearly show this. Check it first.
                             </span>
                           )}
                         </span>

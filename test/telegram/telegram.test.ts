@@ -291,6 +291,29 @@ describe('TelegramBridge', () => {
 describe('notificationFor', () => {
   const project = useTempProject();
 
+  it('says when criteria look unproven', async () => {
+    const task = makeTask({
+      id: 'T3',
+      title: 'Editor',
+      status: 'review',
+      handoff: {
+        summary: 'Built the editor.',
+        howToVerify: ['Open the app'],
+        criteria: [],
+        checks: [],
+        screenshots: [],
+        doubts: ['Saves notes', 'Undo works'],
+        submittedAt: '2026-09-27T10:00:00Z',
+      },
+    });
+    await project.store.writePlan(makePlan([task]));
+    const note = await notificationFor(
+      { type: 'task_finished', task, outcome: 'review' },
+      project.store,
+    );
+    expect(note?.kind === 'review' && note.facts[0]).toBe('2 criteria look unproven');
+  });
+
   it('announces work ready for review with its summary', async () => {
     const task = makeTask({
       id: 'T3',
@@ -318,6 +341,7 @@ describe('notificationFor', () => {
     expect(text).toContain('/try T3');
     expect(text).toContain('1. Open the app\n2. Click New note and type something');
     expect(text).toContain('5 files changed · 1 check passed');
+    expect(text).not.toContain('unproven');
     expect(text).toContain('⏱ 1 of 2 built · about 20 min of building to go');
     // Try it first, the technical facts after.
     expect(text?.indexOf('How to try it')).toBeLessThan(text?.indexOf('files changed') ?? 0);

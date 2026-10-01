@@ -27,8 +27,9 @@ export async function taskModel(options: {
   const link = await config.readJev();
   if (!link) return { model: chosen, build };
 
+  // By the user or by the scope check: either way, the last model wasn't enough.
   const sentBack = (await store.readEvents()).filter(
-    (e) => e.taskId === task.id && e.type === 'task_rejected',
+    (e) => e.taskId === task.id && (e.type === 'task_rejected' || e.type === 'sent_back'),
   ).length;
   if (build.route && build.route.sentBack === sentBack) {
     return { model: build.route.model ?? chosen, build };

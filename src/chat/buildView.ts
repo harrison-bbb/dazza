@@ -392,6 +392,10 @@ function finished(
       : indent(`${paint.bold('Try it:')} /try ${event.task.id}, or Try it on the board`),
     ...steps.map((step, i) => indent(`  ${i + 1}. ${renderInline(step)}`)),
     ...unmet.map((c) => indent(paint.red(`✗ ${c.criterion}: ${c.evidence}`))),
+    // The scope check wasn't convinced: worth checking before the rest.
+    ...(handoff?.doubts ?? []).map((criterion) =>
+      indent(paint.amber(`? ${criterion}: the evidence doesn’t clearly show it. Check it first.`)),
+    ),
     ...(details.length ? [indent(paint.dim(details.join(' · ')))] : []),
     // What to do next, without looking anything up.
     indent(

@@ -104,6 +104,19 @@ describe('renderBuildEvent', () => {
     expect(out).toContain('4 files changed · 2 checks passed');
     expect(out?.indexOf('Try it')).toBeLessThan(out?.indexOf('files changed') ?? 0);
     expect(out).toContain('/accept T1 to approve it');
+    expect(out).not.toContain('Check it first');
+
+    const doubted = {
+      ...plan,
+      tasks: plan.tasks.map((t) =>
+        t.id === 'T1' && t.handoff ? { ...t, handoff: { ...t.handoff, doubts: ['It works'] } } : t,
+      ),
+    };
+    expect(
+      stripAnsi(
+        renderBuildEvent({ type: 'task_finished', task, outcome: 'review' }, doubted, '/p') ?? '',
+      ),
+    ).toContain('? It works: the evidence doesn’t clearly show it. Check it first.');
 
     const withSteps = {
       ...plan,

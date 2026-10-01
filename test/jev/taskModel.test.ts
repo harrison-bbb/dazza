@@ -102,6 +102,21 @@ describe('taskModel', () => {
     expect(again.build.route).toEqual({ model: 'sonnet', sentBack: 2 });
   });
 
+  it('counts work the scope check sent back, too', async () => {
+    jevAnswers(() => Response.json(answers(0.95, 0.05, 0)));
+    await project.config.writeJev({ provider: 'typesafe', apiKey: 'k' });
+    const first = await choose();
+    for (const type of ['sent_back', 'sent_back'] as const) {
+      await project.store.appendEvent({
+        at: new Date().toISOString(),
+        type,
+        taskId: 'T1',
+        message: 'Sent back',
+      });
+    }
+    expect((await choose(undefined, first.build)).model).toBe('sonnet');
+  });
+
   it('builds with the usual model when Jev fails, and says why on the task', async () => {
     jevAnswers(() => new Response('{}', { status: 401 }));
     await project.config.writeJev({ provider: 'typesafe', apiKey: 'bad' });

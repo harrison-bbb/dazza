@@ -136,6 +136,34 @@ describe('building tasks', () => {
     expect((await task('T1')).handoff?.criteria).toEqual(report.criteria);
   });
 
+  it('lets the scope check send work back, or mark what to check first', async () => {
+    await git.init();
+    const build = await startTask(project.store, git, await task('T1'));
+    await writeFile(join(build.dir as string, 'T1.js'), 'T1');
+    const seen: string[][] = [];
+
+    const refused = await submitTask(
+      project.store,
+      'T1',
+      report,
+      new Date(),
+      async (_t, _r, files) => {
+        seen.push(files);
+        return { sendBack: 'Not handed over yet: show it works.' };
+      },
+    );
+    expect(refused).toEqual({ ok: false, message: 'Not handed over yet: show it works.' });
+    expect(seen).toEqual([['T1.js']]);
+    expect((await task('T1')).status).toBe('building');
+    expect(await new Git(build.dir as string).filesChanged(build.startCommit, 'HEAD')).toBe(0);
+
+    const handed = await submitTask(project.store, 'T1', report, new Date(), async () => ({
+      doubts: ['The thing is done'],
+    }));
+    expect(handed.ok).toBe(true);
+    expect((await task('T1')).handoff?.doubts).toEqual(['The thing is done']);
+  });
+
   it('keeps the summary plain and short, with the technical detail apart', async () => {
     await git.init();
     await startTask(project.store, git, await task('T1'));

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { Git, taskBranch } from '../git/git.js';
+import type { ScopeCheck } from '../jev/scopeCheck.js';
 import { detectLauncher } from '../preview/app.js';
 import type { ActionResult } from './actions.js';
 import { keepDependencies, seedDependencies } from './deps.js';
@@ -240,6 +241,8 @@ export async function submitTask(
   taskId: string,
   report: WorkReport,
   now = new Date(),
+  /** Jev's scope check, when it's connected: may send the work back, or mark criteria to check. */
+  checkScope?: ScopeCheck,
 ): Promise<ActionResult> {
   const parsed = WorkReport.safeParse(report);
   if (!parsed.success) return { ok: false, message: z.prettifyError(parsed.error) };
@@ -274,7 +277,8 @@ export async function submitTask(
     };
   }
   // Most users judge UI work by looking at it, not by reading a diff.
-  const visual = (await tree.stagedFiles(build.startCommit)).filter((f) => UI_FILE.test(f.path));
+  const staged = await tree.stagedFiles(build.startCommit);
+  const visual = staged.filter((f) => UI_FILE.test(f.path));
   if (
     visual.length > 0 &&
     parsed.data.screenshots.length === 0 &&
@@ -290,10 +294,20 @@ export async function submitTask(
         'Take screenshots of the finished screens with the screenshot tool and attach them. If you really can’t, say why in noScreenshots.',
     };
   }
+  // Last, as it's the only check that costs anything: the rest are free and come first.
+  const verdict = await checkScope?.(
+    current.task,
+    parsed.data,
+    staged.map((f) => f.path),
+  );
+  if (verdict?.sendBack) return { ok: false, message: verdict.sendBack };
+  const doubts = verdict && 'doubts' in verdict ? verdict.doubts : [];
+
   const commit = (await tree.commitAll(`${taskId}: ${current.task.title}`)) ?? (await tree.head());
   const { notes: _, noScreenshots: __, ...details } = parsed.data;
   const handoff: Handoff = {
     ...details,
+    ...(doubts.length > 0 && { doubts }),
     branch: build.branch,
     ...(build.dir && { worktree: build.dir }),
     baseBranch: build.baseBranch,
