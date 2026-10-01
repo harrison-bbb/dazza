@@ -183,6 +183,8 @@ export const EventType = z.enum([
   'comment',
   /** Dazza's guard stopped something the builder tried, or let it through with the user's OK. */
   'guarded',
+  /** Jev routing picked the model a task is built with. */
+  'routed',
 ]);
 
 export const Actor = z.enum(['user', 'dazza']);

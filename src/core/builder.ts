@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Git } from '../git/git.js';
+import { taskModel } from '../jev/taskModel.js';
 import { MCP_SERVER_NAME, WORKER_TOOLS } from '../mcp/server.js';
 import workerPrompt from '../prompts/worker.md';
 import type { AgentError, AgentEvent, AgentProvider, McpServerConfig } from '../providers/types.js';
@@ -472,7 +473,9 @@ async function* runWorker(
     }, timing.stallMs);
   };
 
-  const { model } = await config.readSettings();
+  const routed = await taskModel({ store, config, provider, task, build, signal: run.signal });
+  const { model } = routed;
+  build = routed.build;
   let started = false;
   let finalText = '';
   let error: AgentError | undefined;

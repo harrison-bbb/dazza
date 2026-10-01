@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { connectJev, editJev, type JevUI, jevOn } from '../../src/chat/jev.js';
+import { connectJev, editJev, type JevUI } from '../../src/chat/jev.js';
 import type { JevLink } from '../../src/core/config.js';
+import { jevOn } from '../../src/jev/features.js';
 import { useTempProject } from '../helpers.js';
 
 /** A terminal that picks and types from scripts: undefined is Esc. */
