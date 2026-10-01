@@ -224,8 +224,9 @@ function errorKind(status: number): JevError['kind'] {
 }
 
 /**
- * What went wrong, from the status and TypeSafe's own message when it gives
- * one. Never the request: it carries the key.
+ * What went wrong, from the status and the provider's own message when it
+ * gives one. Never the request: it carries the key. Each nests it its own way:
+ * TypeSafe in `detail.message`, OpenRouter in `error.message`, Vercel in `message`.
  */
 async function describe(response: Response): Promise<string> {
   let detail = '';
@@ -233,13 +234,11 @@ async function describe(response: Response): Promise<string> {
     const body: unknown = await response.json();
     if (typeof body === 'object' && body !== null) {
       const b = body as Record<string, unknown>;
-      const nested = typeof b.error === 'object' && b.error !== null ? b.error : undefined;
-      const found = [
-        b.message,
-        b.detail,
-        b.error,
-        (nested as Record<string, unknown>)?.message,
-      ].find((v) => typeof v === 'string');
+      const inner = (value: unknown) =>
+        typeof value === 'object' && value !== null
+          ? (value as Record<string, unknown>).message
+          : value;
+      const found = [b.message, inner(b.detail), inner(b.error)].find((v) => typeof v === 'string');
       if (typeof found === 'string') detail = found.slice(0, 200);
     }
   } catch {
@@ -247,7 +246,7 @@ async function describe(response: Response): Promise<string> {
   }
   const base =
     response.status === 401 || response.status === 403
-      ? 'Jev didn’t accept the TypeSafe key'
+      ? 'Jev didn’t accept the key'
       : `Jev answered ${response.status}`;
   return detail ? `${base}: ${detail}` : `${base}.`;
 }

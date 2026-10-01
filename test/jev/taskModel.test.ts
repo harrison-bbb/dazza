@@ -124,7 +124,7 @@ describe('taskModel', () => {
     expect((await choose()).model).toBe('sonnet');
     const said = (await project.store.readEvents()).find((e) => e.type === 'routed');
     expect(said?.message).toBe(
-      'Jev couldn’t say (Jev didn’t accept the TypeSafe key.), so building with Sonnet 5.5 as usual.',
+      'Jev couldn’t say (Jev didn’t accept the key.), so building with Sonnet 5.5 as usual.',
     );
   });
 

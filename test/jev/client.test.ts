@@ -91,9 +91,39 @@ describe('JevClient', () => {
     const result = await client(fetchImpl).ask('x', questions);
     expect(result).toEqual({
       ok: false,
-      error: { kind: 'auth', message: 'Jev didn’t accept the TypeSafe key: Invalid API key' },
+      error: { kind: 'auth', message: 'Jev didn’t accept the key: Invalid API key' },
     });
     expect(JSON.stringify(result)).not.toContain('ts-secret-key');
+  });
+
+  it('reads each provider’s own way of saying the key was refused', async () => {
+    // Recorded from each provider with a made-up key.
+    const replies = [
+      [
+        {
+          detail: {
+            error_type: 'authentication_error',
+            message: 'Cannot authenticate with the server.',
+          },
+        },
+        'Cannot authenticate with the server.',
+      ],
+      [
+        { error: { message: 'Missing Authentication header', code: 401 } },
+        'Missing Authentication header',
+      ],
+      [
+        { message: 'Authentication failed', error_type: 'authentication_error' },
+        'Authentication failed',
+      ],
+    ] as const;
+    for (const [body, said] of replies) {
+      const result = await client(replying(json(body, 401)).fetchImpl).ask('x', questions);
+      expect(result).toEqual({
+        ok: false,
+        error: { kind: 'auth', message: `Jev didn’t accept the key: ${said}` },
+      });
+    }
   });
 
   it('retries once when busy, then gives up', async () => {
