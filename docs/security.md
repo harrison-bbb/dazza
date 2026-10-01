@@ -110,8 +110,15 @@ A message from the linked account is treated exactly like one typed into the ter
 | Anthropic or OpenAI, through the agent CLI | Prompts, project state snapshots, the code the agent reads, and tool output. This is the same as using Claude Code or Codex directly |
 | Telegram (if linked) | Notifications, replies, task summaries and screenshots |
 | Slack (if linked) | The same as Telegram, plus the project status shown on the app's Home tab |
+| Jev, through TypeSafe, OpenRouter or Vercel AI Gateway (if connected) | Model routing: each task's title, description, acceptance criteria, size and subtask titles. Scope check: the task's title and description, and the builder's report (summary, technical notes, what it says about each criterion and its evidence, check results, and the names of changed files). Never code, comments, the scope document or screenshots |
 
 Dazza itself has no server and no telemetry. It sends nothing anywhere else.
+
+### Jev
+
+Jev is a classifier from TypeSafe that Dazza can use for two small decisions (`/jev`): which model each task needs, and whether a builder's evidence shows its work is done. It's off until you connect it with a key of your own, and each part can be switched off by itself. Requests go straight from Dazza to the provider you chose, with your key, and are billed to you there. The provider's own data policy covers what it keeps; through OpenRouter or Vercel, so does TypeSafe's.
+
+Jev only ever narrows what happens. Routing never picks a model above the one you chose with `/model`, and keeps it for anything touching money, credentials, auth or production. The scope check can send work back to the builder (twice at most) or mark it for you to check, but never approves anything. When Jev can't be reached, Dazza does exactly what it would have done without it.
 
 ## Reporting a vulnerability
 

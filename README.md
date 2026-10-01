@@ -120,6 +120,7 @@ Just type to talk to Dazza, about anything in the project. Type `/` for commands
 | Setup | |
 |---|---|
 | `/settings` | How Dazza works, in one list: pick one to change it (below) |
+| `/jev` | Optional: connect Jev (a fast classifier, through TypeSafe, OpenRouter or Vercel) so each task gets the model it needs and weak handoffs go back to the builder. Each part switches on and off by itself |
 | `/model`, `/usage` | Switch models; see your plan's limits or API spend |
 | `/mcp [on\|off]` | The MCP servers you have in Claude Code or Codex. Dazza's chat can use them (builders can't) |
 | `/slack`, `/telegram` | Connect (or check) Slack or Telegram. `-disconnect` to unlink |

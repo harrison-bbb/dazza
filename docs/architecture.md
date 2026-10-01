@@ -49,6 +49,7 @@ Everything the user sees (the terminal, the board, messaging) is a view over the
 | `src/core/actions.ts` | What the user can do (approve, close, request changes, cancel, move). The terminal, board and messaging all call these |
 | `src/mcp/` | The stdio MCP server agents use to talk to Dazza |
 | `src/providers/` | The `AgentProvider` interface and the Claude Code and Codex adapters. See [providers.md](providers.md) |
+| `src/jev/` | Jev, an optional classifier: its client, the providers it's called through, model routing and the scope check |
 | `src/git/` | A thin wrapper over the git CLI |
 | `src/board/` | The local board server: JSON API, SSE, static files |
 | `web/` | The board UI (React, Vite, Tailwind), built into `dist/web` |
@@ -134,6 +135,8 @@ Tasks are listed in priority order: the builder takes the first one whose depend
 **Undoing.** Every scope version is kept in `.dazza/scope-history/`; restoring one writes it as a new version and logs it. `redoTask` in `work.ts` throws a task's work away (worktree, branch, build record, handoff) and queues it again from scratch.
 
 **Plan checks.** `save_plan` runs the plan past `reviewPlan`. A plan missing detail is still saved, as a draft with its `problems` listed. The manager fixes those items one by one (`update_item`, `add_subtask`, `update_scope`), each fix re-runs the check, and the plan can't be approved until nothing's left. That's far cheaper than rewriting the whole plan.
+
+**Scope check.** With Jev connected (`/jev`), the last handoff check asks Jev whether the builder's evidence for each criterion it says is met actually shows it (`src/jev/scopeCheck.ts`). If one is unlikely to be met, the handoff is refused with the criteria named, and the builder checks them and submits again. That happens at most twice a round, where a round runs from the user's last request for changes. After that, what's still doubtful goes to review marked unproven (`doubts` on the handoff). It's the only check that costs anything, so it runs after the free ones.
 
 **Handoff checks.** Before the commit, `src/core/hygiene.ts` checks the changes like a reviewer: secrets, files that belong only on the developer's machine, very large files, and a project template's placeholder files that nothing references. The worker must fix them and submit again. The handoff also reports on every acceptance criterion, with evidence, and Dazza refuses one that skips any. It also refuses a handoff that changes UI files (components, pages, styles; not tests) without screenshots, unless the worker says why it couldn't take them (`noScreenshots`).
 
