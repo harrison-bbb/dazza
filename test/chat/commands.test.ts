@@ -111,6 +111,8 @@ describe('running commands', () => {
     /** Answers to pick from lists, in order: the label to choose (undefined is Esc). */
     const picks: (string | undefined)[] = [];
     const asked: string[] = [];
+    /** Lines to type when asked, in order (undefined is Esc). */
+    const lines: (string | undefined)[] = [];
     let reconnects = 0;
     const provider = new FakeProvider(undefined, models);
     let exited = false;
@@ -140,6 +142,8 @@ describe('running commands', () => {
           ? undefined
           : choices.find((c) => c.label.startsWith(label))?.value;
       },
+      readLine: async () => lines.shift(),
+      checkJevKey: async (link) => (link.apiKey === 'good-key' ? 'valid' : 'invalid'),
       status: () => {},
       link: async (channel) => {
         linked.push(channel);
@@ -159,6 +163,7 @@ describe('running commands', () => {
       provider,
       picks,
       asked,
+      lines,
       reconnects: () => reconnects,
       exited: () => exited,
       linked: () => linked,
@@ -169,6 +174,16 @@ describe('running commands', () => {
     if (!command) throw new Error(`no command for ${line}`);
     return command.run(ctx, args);
   };
+
+  it('/jev asks for a key the first time, then switches features one by one', async () => {
+    const { ctx, said, picks, lines } = context();
+    picks.push('OpenRouter', 'Model routing', undefined);
+    lines.push('good-key');
+    await run(ctx, '/jev settings');
+    expect(await project.config.readJev()).toEqual({ provider: 'openrouter', apiKey: 'good-key' });
+    expect((await project.config.readSettings()).jev).toEqual({ modelRouting: false });
+    expect(said.at(-1)).toContain('Jev: through OpenRouter · Model routing: Off');
+  });
 
   it('/model lists models, marks the current one, and switches', async () => {
     const { ctx, said } = context();

@@ -1,7 +1,14 @@
 import { approvePlan } from '../core/actions.js';
-import { type Config, type Connection, DEFAULT_PARALLEL, type Limits } from '../core/config.js';
+import {
+  type Config,
+  type Connection,
+  DEFAULT_PARALLEL,
+  type JevLink,
+  type Limits,
+} from '../core/config.js';
 import { clock } from '../core/errors.js';
 import type { Store } from '../core/store.js';
+import type { JevKeyCheck } from '../jev/providers.js';
 import type { ChannelId } from '../notify/channel.js';
 import { PROVIDER_HELP } from '../providers/index.js';
 import type { AgentProvider, ModelOption, ProviderId } from '../providers/types.js';
@@ -9,6 +16,7 @@ import { openInBrowser } from '../util/open.js';
 import { BRAND } from './banner.js';
 import { greeting, NO_PLAN } from './describe.js';
 import type { MenuItem } from './editor.js';
+import { editJev } from './jev.js';
 import { projectEstimate } from './progress.js';
 import { editSettings } from './settings.js';
 import { paint } from './style.js';
@@ -46,6 +54,10 @@ export interface CommandContext {
     question: string,
     choices: { label: string; hint?: string; value: T }[],
   ): Promise<T | undefined>;
+  /** Ask for a line of text, masked for a key; undefined if they back out. */
+  readLine(options: { prompt: string; mask?: boolean }): Promise<string | undefined>;
+  /** Check a Jev key with the provider it's for. */
+  checkJevKey(link: JevLink): Promise<JevKeyCheck>;
   /** Show (or clear) an activity in the status line while a command works. */
   status(text: string | undefined): void;
   /** Walk through linking Slack or a Telegram bot. */
@@ -152,6 +164,19 @@ export const COMMANDS: Command[] = [
       const changed = await editSettings(config, select, async (setting) => {
         if (setting.after === 'reconnect') await reconnect();
       });
+      say(
+        changed.length > 0
+          ? `${paint.green('✔')} ${changed.join(' · ')}`
+          : paint.dim('Nothing changed.'),
+      );
+    },
+  },
+  {
+    name: 'jev',
+    args: '[settings]',
+    description: 'Jev: a model for each task, and finished work checked against its scope',
+    async run({ config, say, select, readLine, checkJevKey }) {
+      const changed = await editJev(config, { say, select, readLine }, checkJevKey);
       say(
         changed.length > 0
           ? `${paint.green('✔')} ${changed.join(' · ')}`
@@ -490,7 +515,10 @@ const HELP_GROUPS: [string, string[]][] = [
     'The project',
     ['approve', 'scope', 'dashboard', 'report', 'continue', 'new', 'compact', 'context'],
   ],
-  ['Setup', ['settings', 'model', 'mcp', 'usage', 'slack', 'telegram', 'logout', 'help', 'exit']],
+  [
+    'Setup',
+    ['settings', 'jev', 'model', 'mcp', 'usage', 'slack', 'telegram', 'logout', 'help', 'exit'],
+  ],
 ];
 /** In the menu as you type, but not worth a row in /help. */
 const SETTING_SHORTCUTS = '/build-ahead, /background, /parallel, /notify, /phone-merge';

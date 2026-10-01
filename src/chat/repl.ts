@@ -15,6 +15,7 @@ import { reportRequest } from '../core/report.js';
 import { StateError, Store } from '../core/store.js';
 import { newerDazza, updateNotice } from '../core/updates.js';
 import { gitInstall, hasGit } from '../git/install.js';
+import { checkJevKey } from '../jev/providers.js';
 import type {
   Channel,
   ChannelHandlers,
@@ -410,6 +411,8 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
         { label: 'No', value: false },
       ])) === true,
     select: (question, choices) => terminal.select(question, choices),
+    readLine: (options) => terminal.readLine(options),
+    checkJevKey: (link) => checkJevKey(link),
     status: (text) => terminal.setStatus('chat', text),
     link: async (channel) => {
       if (await setUpChannel(channel, terminal, config)) {

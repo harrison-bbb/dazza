@@ -11,6 +11,7 @@ Per-user config lives in `~/.config/dazza` (or `$XDG_CONFIG_HOME/dazza`, or `$DA
 | `connection.json` | Which agent Dazza uses, and the API key if you connected with one |
 | `telegram.json` | Your Telegram bot token and chat id |
 | `slack.json` | Your Slack bot token and app-level token, and the linked user (with the Slack integration) |
+| `jev.json` | Where Dazza calls Jev (TypeSafe, OpenRouter or Vercel AI Gateway) and the API key for it, if you connected Jev with `/jev` |
 | `settings.json` | Preferences, e.g. the model. No secrets |
 | `limits.json` | The latest subscription usage reading. No secrets |
 
