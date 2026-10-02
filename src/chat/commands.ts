@@ -8,6 +8,7 @@ import {
   type Limits,
 } from '../core/config.js';
 import { clock } from '../core/errors.js';
+import type { Plan, Task } from '../core/schema.js';
 import type { Store } from '../core/store.js';
 import type { JevKeyCheck } from '../jev/providers.js';
 import type { ChannelId } from '../notify/channel.js';
@@ -511,13 +512,97 @@ export function suggest(name: string): Command | undefined {
   return COMMANDS.find((c) => c.name.startsWith(name.slice(0, 2)));
 }
 
-/** The live menu under the input: commands matching what's typed after "/". */
-export function commandMenu(text: string): MenuItem[] {
-  if (!text.startsWith('/') || text.includes(' ')) return [];
+/** What the menu knows about the project, to offer what fits it now. */
+export interface MenuContext {
+  plan?: Plan | undefined;
+  /** Tasks waiting on the user's OK for a command. */
+  permissions?: Record<string, unknown> | undefined;
+  building?: boolean | undefined;
+}
+
+/**
+ * The live menu under the input: commands matching what's typed after "/",
+ * the ones that fit where the project is first; then, once a command that
+ * takes a task is typed, the tasks it can take.
+ */
+export function commandMenu(text: string, context: MenuContext = {}): MenuItem[] {
+  if (!text.startsWith('/')) return [];
+  const withArg = /^\/([\w-]+) (\S*)$/.exec(text);
+  if (withArg) return taskMenu(withArg[1]?.toLowerCase() ?? '', withArg[2] ?? '', context);
+  if (text.includes(' ')) return [];
   const typed = text.slice(1).toLowerCase();
-  return COMMANDS.filter((c) =>
+  const matching = COMMANDS.filter((c) =>
     [c.name, ...(c.aliases ?? [])].some((n) => n.startsWith(typed)),
-  ).map((c) => ({ value: `/${c.name}`, hint: c.description }));
+  );
+  const first = relevantCommands(context);
+  const rank = (c: Command) => {
+    const i = first.indexOf(c.name);
+    return i < 0 ? first.length : i;
+  };
+  return matching
+    .map((c, i) => ({ c, i }))
+    .sort((a, b) => rank(a.c) - rank(b.c) || a.i - b.i)
+    .map(({ c }) => ({ value: `/${c.name}`, hint: c.description }));
+}
+
+/** The commands that fit where the project is, most useful first. */
+function relevantCommands({ plan, permissions = {}, building }: MenuContext): string[] {
+  if (!plan) return [];
+  if (!plan.approvedAt) return ['approve', 'scope', 'tasks'];
+  const has = (status: Task['status']) => plan.tasks.some((t) => t.status === status);
+  return [
+    ...(Object.keys(permissions).length > 0 ? ['allow', 'deny'] : []),
+    ...(has('review') ? ['review', 'try', 'accept', 'changes'] : []),
+    ...(has('blocked') ? ['review'] : []),
+    ...(building ? ['stop', 'status'] : has('planned') ? ['build'] : []),
+  ];
+}
+
+/** Which tasks each command can take, and whether more is typed after the task. */
+const TASK_ARGS: Record<
+  string,
+  { fits: (task: Task, permissions: Record<string, unknown>) => boolean; more?: boolean }
+> = {
+  accept: { fits: (t) => t.status === 'review' },
+  changes: { fits: (t) => t.status === 'review', more: true },
+  try: { fits: (t) => ['review', 'building', 'blocked'].includes(t.status) },
+  diff: { fits: (t) => ['review', 'building', 'blocked', 'closed'].includes(t.status) },
+  allow: { fits: (t, p) => p[t.id] !== undefined },
+  deny: { fits: (t, p) => p[t.id] !== undefined },
+  next: { fits: (t) => t.status === 'planned' || t.status === 'backlog' },
+  redo: { fits: (t) => ['review', 'building', 'blocked', 'closed'].includes(t.status), more: true },
+  cancel: { fits: (t) => t.status !== 'closed' && t.status !== 'cancelled' },
+};
+
+const STATUS_WORDS: Record<Task['status'], string> = {
+  review: 'in review',
+  building: 'building',
+  blocked: 'waiting on you',
+  planned: 'planned',
+  backlog: 'backlog',
+  closed: 'closed',
+  cancelled: 'cancelled',
+};
+
+/** "/accept " offers the tasks in review; "/allow " the ones asking to run a command. */
+function taskMenu(
+  name: string,
+  typed: string,
+  { plan, permissions = {} }: MenuContext,
+): MenuItem[] {
+  const command = COMMANDS.find((c) => c.name === name || c.aliases?.includes(name));
+  const args = command && TASK_ARGS[command.name];
+  if (!command || !args || !plan) return [];
+  const query = typed.toLowerCase();
+  return plan.tasks
+    .filter((t) => args.fits(t, permissions))
+    .filter((t) => t.id.toLowerCase().startsWith(query))
+    .map((t) => ({
+      value: `/${command.name} ${t.id}`,
+      label: t.id,
+      hint: `${t.title} · ${STATUS_WORDS[t.status]}`,
+      ...(args.more && { insert: true }),
+    }));
 }
 
 /** Keys that do something at the prompt, for `?` and /help. */

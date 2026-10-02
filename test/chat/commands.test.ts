@@ -12,6 +12,7 @@ import {
 } from '../../src/chat/commands.js';
 import { stripAnsi } from '../../src/chat/style.js';
 import { FakeProvider } from '../fakes.js';
+import { makePlan, makeTask } from '../fixtures.js';
 import { useTempProject } from '../helpers.js';
 
 const models = [
@@ -40,6 +41,56 @@ describe('parsing and completion', () => {
     expect(commandMenu('/bo').map((m) => m.value)).toEqual(['/dashboard']);
     expect(commandMenu('/model 2')).toEqual([]);
     expect(commandMenu('hello')).toEqual([]);
+  });
+
+  describe('with the project in view', () => {
+    const plan = {
+      ...makePlan([
+        makeTask({ id: 'T1', title: 'Setup', status: 'closed' }),
+        makeTask({ id: 'T2', title: 'Calendar', status: 'review' }),
+        makeTask({ id: 'T3', title: 'Checkout', status: 'blocked' }),
+        makeTask({ id: 'T4', title: 'Receipts', status: 'planned' }),
+        makeTask({ id: 'T12', title: 'Search', status: 'review' }),
+      ]),
+      approvedAt: '2026-09-27T10:00:00Z',
+    };
+    const permissions = { T3: { command: 'psql', why: 'x' } };
+
+    it('offers the tasks a command can take', () => {
+      const ids = (text: string) => commandMenu(text, { plan, permissions }).map((m) => m.label);
+      expect(ids('/accept ')).toEqual(['T2', 'T12']);
+      expect(ids('/accept t1')).toEqual(['T12']);
+      expect(ids('/allow ')).toEqual(['T3']);
+      expect(ids('/next ')).toEqual(['T4']);
+      expect(ids('/cancel ')).toEqual(['T2', 'T3', 'T4', 'T12']);
+      expect(ids('/model ')).toEqual([]);
+      expect(commandMenu('/accept ', {})).toEqual([]);
+    });
+
+    it('runs a command on the task picked, or leaves room for what to change', () => {
+      const [accept] = commandMenu('/accept ', { plan });
+      expect(accept).toMatchObject({ value: '/accept T2', hint: 'Calendar · in review' });
+      expect(accept?.insert).toBeUndefined();
+      expect(commandMenu('/changes ', { plan })[0]).toMatchObject({
+        value: '/changes T2',
+        insert: true,
+      });
+    });
+
+    it('puts the commands that fit first', () => {
+      const first = (context: Parameters<typeof commandMenu>[1]) =>
+        commandMenu('/', context)
+          .slice(0, 4)
+          .map((m) => m.value);
+      expect(first({ plan, permissions })).toEqual(['/allow', '/deny', '/review', '/try']);
+      expect(first({ plan: { ...plan, approvedAt: null } })).toEqual([
+        '/approve',
+        '/scope',
+        '/tasks',
+        '/dashboard',
+      ]);
+      expect(first({})[0]).toBe('/dashboard');
+    });
   });
 
   it('lines /help’s descriptions up, wrapping under their column', () => {

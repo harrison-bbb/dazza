@@ -522,7 +522,11 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
       prompt: PROMPT,
       menu: (text) =>
         text.startsWith('/')
-          ? commandMenu(text)
+          ? commandMenu(text, {
+              plan: latestPlan,
+              permissions: pending,
+              building: session.isOnTheJob,
+            })
           : text === '?'
             ? shortcutMenu()
             : mentionMenu(text),
