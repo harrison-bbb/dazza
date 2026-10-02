@@ -55,7 +55,7 @@ import {
   stopInBackground,
   waitInBackground,
 } from './background.js';
-import { BRAND, logo, sessionInfo } from './banner.js';
+import { BRAND, logo, sessionInfo, shortPath, supportsHyperlinks } from './banner.js';
 import {
   type CommandContext,
   commandMenu,
@@ -114,8 +114,10 @@ export async function startChat(projectRoot: string, options: ChatOptions = {}):
 
 async function chat(projectRoot: string, terminal: Terminal, options: ChatOptions): Promise<void> {
   write = (text) => terminal.print(text);
-  console.log(`\n${logo()}\n`);
   const config = new Config();
+  // The big logo the first time; after that, the name goes on the header line.
+  const firstLaunch = await config.firstTime('logo').catch(() => false);
+  console.log(firstLaunch ? `\n${logo()}\n` : '');
   // Asked now, shown with the banner: it runs alongside the checks below.
   const update = newerDazza(config);
   const connection =
@@ -161,8 +163,10 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
     `${sessionInfo({
       version: pkg.version,
       agent: [provider.name, plan, model && `model: ${model}`].filter(Boolean).join(' · '),
-      cwd: projectRoot.replace(homedir(), '~'),
+      cwd: shortPath(projectRoot, homedir()),
       board: board.url,
+      compact: !firstLaunch,
+      hyperlinks: supportsHyperlinks(),
     })}`,
   );
   const newer = await update;

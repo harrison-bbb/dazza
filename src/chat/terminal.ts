@@ -9,7 +9,7 @@ import {
   type MenuSource,
   reduce,
 } from './editor.js';
-import { paint } from './style.js';
+import { paint, stripAnsi } from './style.js';
 
 /** What the status line says: fixed, or worked out afresh at each redraw. */
 export type StatusText = string | (() => string);
@@ -637,8 +637,7 @@ export function clipVisible(text: string, max: number): string {
 }
 
 function visibleLength(text: string): number {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping ANSI escape codes.
-  return text.replace(/\x1b\[[0-9;]*m/g, '').length;
+  return stripAnsi(text).length;
 }
 
 /**

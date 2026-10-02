@@ -46,8 +46,13 @@ function shortUrl(url: string): string {
 
 /** Plain text for places that can't show colour, e.g. Telegram. */
 export function stripAnsi(text: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching ANSI escape codes.
-  return text.replace(/\x1b\[[0-9;]*m/g, '');
+  return (
+    text
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: matching OSC 8 links.
+      .replace(/\x1b\]8;;[^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: matching ANSI escape codes.
+      .replace(/\x1b\[[0-9;]*m/g, '')
+  );
 }
 
 /**

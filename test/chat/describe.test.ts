@@ -31,7 +31,7 @@ describe('greeting', () => {
     const plan = approved(
       makePlan([makeTask({ id: 'T1', status: 'closed' }), makeTask({ id: 'T2', title: 'Auth' })]),
     );
-    expect(greeting(plan)).toBe('1/2 tasks closed. Next up: T2 Auth. Run /build to start.');
+    expect(greeting(plan)).toBe('1/2 tasks closed\nNext up: T2 Auth. Run /build to start.');
   });
 
   it('says what’s waiting on the user', () => {
@@ -43,9 +43,37 @@ describe('greeting', () => {
         makeTask({ id: 'T4', status: 'building', title: 'Tags' }),
       ]),
     );
-    expect(greeting(plan)).toBe(
-      '0/4 tasks closed. Building T4 Tags. T1 Editor is waiting for your review. 2 tasks are blocked on you (T2, T3). /review to go through them.',
+    expect(stripAnsi(greeting(plan))).toBe(
+      [
+        '0/4 tasks closed',
+        '◐ Building T4 Tags',
+        '◉ T1 Editor is waiting for your review',
+        '⊘ T2 Task T2 needs you',
+        '⊘ T3 Task T3 needs you',
+        '/review to go through them.',
+      ].join('\n'),
     );
+  });
+
+  it('quotes what a blocked task is asking, and sums up when many are waiting', () => {
+    const plan = approved(
+      makePlan([
+        makeTask({ id: 'T1', status: 'blocked', title: 'Checkout' }),
+        ...['T2', 'T3', 'T4', 'T5'].map((id) => makeTask({ id, status: 'review' })),
+      ]),
+    );
+    const events = [
+      {
+        at: '2026-10-02T09:00:00.000Z',
+        type: 'comment' as const,
+        actor: 'dazza' as const,
+        taskId: 'T1',
+        message: 'Test or live Stripe account?',
+      },
+    ];
+    const text = stripAnsi(greeting(plan, { events }));
+    expect(text).toContain('⊘ T1 Checkout needs you: Test or live Stripe account?');
+    expect(text).toContain('◉ 4 tasks are waiting for your review (T2, T3, T4, T5)');
   });
 
   it('says which milestone it’s working towards, and how much building is left', () => {
@@ -59,7 +87,7 @@ describe('greeting', () => {
       milestones: [{ id: 'M1', title: 'Sign in', goal: 'Log in', tasks: ['T1', 'T2'] }],
     };
     expect(greeting(plan)).toBe(
-      '1/2 tasks closed (about 40 minutes of building left). Working towards M1 Sign in (1/2). Next up: T2 Auth. Run /build to start.',
+      '1/2 tasks closed · about 40 minutes of building left · working towards M1 Sign in (1/2)\nNext up: T2 Auth. Run /build to start.',
     );
   });
 
