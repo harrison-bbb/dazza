@@ -354,4 +354,38 @@ describe('ChatSession', () => {
     expect(drafts).toEqual(['  wor', '  bye', undefined]);
     expect(said).toEqual([]); // not printed a second time
   });
+
+  it('renders Markdown as it streams: lists, code and a table at the end', async () => {
+    const printed: string[] = [];
+    const reply = '## Plan\n- one\n```\ncode\n```\n| a | b |\n| cc | d |';
+    const events: AgentEvent[] = [
+      { type: 'started', sessionId: 's', model: 'fake' },
+      { type: 'text_delta', text: reply },
+      { type: 'text', text: reply },
+      { type: 'finished', ok: true, output: '', sessionId: 's', durationMs: 1 },
+    ];
+    const chat = new ChatSession({
+      store: project.store,
+      config: project.config,
+      provider: new FakeProvider(events),
+      manager: new Manager({
+        store: project.store,
+        config: project.config,
+        provider: new FakeProvider(events),
+        projectRoot: project.root,
+        mcpServer: { command: 'node', args: [] },
+      }),
+      workerMcp: { command: 'node', args: [] },
+      boardUrl: 'http://localhost:4777',
+      output: {
+        say: () => {},
+        print: (text) => printed.push(stripAnsi(text)),
+        status: () => {},
+        draft: () => {},
+      },
+    });
+    chat.send('hi');
+    await chat.idle();
+    expect(printed).toEqual(['\n● Plan', '  • one', '  │ code', '  a   b', '  cc  d', '']);
+  });
 });

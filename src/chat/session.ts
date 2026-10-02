@@ -18,7 +18,14 @@ import type { Usage } from './commands.js';
 import { describeTool, planCard } from './describe.js';
 import { buildStatus } from './progress.js';
 import { describeShellRuns, type ShellRun } from './shell.js';
-import { paint, renderInline, stripAnsi } from './style.js';
+import {
+  codeLine,
+  MarkdownLines,
+  paint,
+  renderInline,
+  renderMarkdown,
+  stripAnsi,
+} from './style.js';
 import type { StatusText } from './terminal.js';
 
 /** Where the session's output goes. The terminal in practice; a recorder in tests. */
@@ -80,6 +87,7 @@ class StreamedText {
   private text = '';
   private printed = 0;
   private lines = 0;
+  private markdown = new MarkdownLines();
 
   constructor(private readonly output: SessionOutput) {}
 
@@ -93,13 +101,14 @@ class StreamedText {
       this.printed += end + 1;
     }
     const rest = this.text.slice(this.printed);
-    this.output.draft?.(rest ? this.format(rest) : undefined);
+    this.output.draft?.(rest ? this.draftOf(rest) : undefined);
   }
 
   /** The message is complete: its last line, then a blank line, as a whole reply ends. */
   end(): void {
     const rest = this.text.slice(this.printed);
     if (rest) this.printLine(rest);
+    for (const line of this.markdown.flush()) this.show(line);
     this.output.draft?.(undefined);
     this.output.print('');
     this.started = false;
@@ -107,17 +116,28 @@ class StreamedText {
     this.text = '';
     this.printed = 0;
     this.lines = 0;
+    this.markdown = new MarkdownLines();
   }
 
+  /** A finished line of Markdown: shown as it renders (a table waits for its last row). */
   private printLine(line: string): void {
+    for (const rendered of this.markdown.push(line)) this.show(rendered);
+  }
+
+  private show(rendered: string): void {
     // A reply opens with a blank line and its marker, like everything Dazza says.
-    this.output.print(this.lines === 0 ? `\n${this.format(line)}` : this.format(line));
+    this.output.print(this.lines === 0 ? `\n${this.place(rendered)}` : this.place(rendered));
     this.lines++;
   }
 
-  private format(line: string): string {
-    if (this.lines === 0) return `${paint.hex(BRAND, '●')} ${this.label}${renderInline(line)}`;
-    return line ? `  ${renderInline(line)}` : '';
+  private place(rendered: string): string {
+    if (this.lines === 0) return `${paint.hex(BRAND, '●')} ${this.label}${rendered}`;
+    return rendered ? `  ${rendered}` : '';
+  }
+
+  /** The line still being written: inline styling only, until it's whole. */
+  private draftOf(line: string): string {
+    return this.place(this.markdown.inCode ? codeLine(line) : renderInline(line));
   }
 }
 
@@ -378,7 +398,7 @@ export class ChatSession {
           // Amid a build's output, a reply needs a name on it to be seen.
           const label = this.isBuilding && reply.length === 1 ? replyLabel() : '';
           showStep(steps.flush());
-          output.say(label + renderInline(event.text));
+          output.say(label + renderMarkdown(event.text));
         } else if (event.type === 'tool_use') {
           rewrotePlan ||= event.tool === McpTools.savePlan;
           if (event.tool === McpTools.savePlan) {

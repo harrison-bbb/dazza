@@ -7,7 +7,7 @@ import { McpTools } from '../mcp/server.js';
 import type { AgentEvent, Compacted } from '../providers/types.js';
 import { shownPath } from '../util/paths.js';
 import { BRAND } from './banner.js';
-import { paint, renderInline } from './style.js';
+import { paint, renderInline, renderMarkdown } from './style.js';
 
 /** Dazza's own tools: shown once they succeed, since a failed call is usually retried. */
 const REPORTED_ON_SUCCESS = new Set<string>([
@@ -187,7 +187,7 @@ function agentLine(
   if (event.type === 'compacted') return compactedLine(event);
   if (event.type === 'text') {
     const text = event.text.trim();
-    return text ? indent(renderInline(text)) : undefined;
+    return text ? indent(renderMarkdown(text)) : undefined;
   }
   if (event.type !== 'tool_use') return undefined;
   return toolLine(event.tool, event.input, plan, root);
