@@ -234,6 +234,15 @@ export class ChatSession {
 
   send(message: string, origin: MessageOrigin = 'terminal'): void {
     this.queue.push({ text: message, origin });
+    // Mid-reply: say it's been heard and will be answered next, as Claude Code does.
+    if (this.chat && origin === 'terminal') {
+      const waiting = this.queue.length;
+      this.options.output.print(
+        paint.dim(
+          `  Queued${waiting > 1 ? ` (${waiting} waiting)` : ''}: I’ll answer once I’ve finished this reply. Esc stops the reply and drops what’s queued.`,
+        ),
+      );
+    }
     if (!this.chat) {
       const controller = new AbortController();
       this.chat = { controller, done: this.drain(controller.signal) };

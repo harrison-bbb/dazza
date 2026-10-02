@@ -80,6 +80,16 @@ describe('work commands', () => {
     expect(said[0]).toContain('Which Stripe account?');
   });
 
+  it('/review marks criteria the scope check wasn’t convinced by', async () => {
+    const withDoubts = plan();
+    const t2 = withDoubts.tasks[1];
+    if (t2?.handoff) t2.handoff = { ...t2.handoff, doubts: ['Saves'] };
+    await project.store.writePlan(withDoubts);
+    const { ctx, said } = context();
+    await run(ctx, '/review');
+    expect(said[0]).toContain('? Saves: the evidence doesn’t clearly show it. Check it first.');
+  });
+
   it('/changes sends work back with a note; /next reorders; ids are case-insensitive', async () => {
     await project.store.writePlan(plan());
     const { ctx, said } = context();

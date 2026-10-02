@@ -389,3 +389,40 @@ describe('ChatSession', () => {
     expect(printed).toEqual(['\n● Plan', '  • one', '  │ code', '  a   b', '  cc  d', '']);
   });
 });
+
+describe('messages sent mid-reply', () => {
+  const project = useTempProject();
+
+  it('says they’re queued, and answers them in turn', async () => {
+    const printed: string[] = [];
+    const provider = new FakeProvider();
+    const chat = new ChatSession({
+      store: project.store,
+      config: project.config,
+      provider,
+      manager: new Manager({
+        store: project.store,
+        config: project.config,
+        provider,
+        projectRoot: project.root,
+        mcpServer: { command: 'node', args: [] },
+      }),
+      workerMcp: { command: 'node', args: [] },
+      boardUrl: 'http://localhost:4777',
+      output: { say: () => {}, print: (text) => printed.push(stripAnsi(text)), status: () => {} },
+    });
+    chat.send('first');
+    chat.send('second');
+    chat.send('third');
+    await chat.idle();
+    expect(printed.filter((p) => p.includes('Queued'))).toEqual([
+      '  Queued: I’ll answer once I’ve finished this reply. Esc stops the reply and drops what’s queued.',
+      '  Queued (2 waiting): I’ll answer once I’ve finished this reply. Esc stops the reply and drops what’s queued.',
+    ]);
+    expect(provider.runs.map((r) => r.prompt)).toEqual([
+      expect.stringContaining('first'),
+      expect.stringContaining('second'),
+      expect.stringContaining('third'),
+    ]);
+  });
+});

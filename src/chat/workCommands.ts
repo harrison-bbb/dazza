@@ -273,6 +273,10 @@ export async function inbox(store: Store): Promise<string> {
         h && `  ${h.summary}`,
         h?.criteria.length &&
           `  ${unmet.length ? paint.red(`${unmet.length} of ${h.criteria.length} criteria not met`) : `All ${h.criteria.length} criteria met`}${h.checks.length ? ` · checks: ${h.checks.map((c) => `${c.name} ${c.passed ? '✔' : '✗'}`).join(', ')}` : ''}`,
+        // The scope check wasn't convinced: worth a look before the rest.
+        ...(h?.doubts ?? []).map((criterion) =>
+          paint.amber(`  ? ${criterion}: the evidence doesn’t clearly show it. Check it first.`),
+        ),
         h?.howToVerify.length && `  Check it: ${h.howToVerify.join(' → ')}`,
         paint.dim(
           `  /accept ${task.id} · /changes ${task.id} <what to change> · /diff ${task.id} · /try ${task.id}`,

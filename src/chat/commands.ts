@@ -1,3 +1,4 @@
+import { stdout } from 'node:process';
 import { approvePlan } from '../core/actions.js';
 import {
   type Config,
@@ -20,6 +21,7 @@ import { editJev } from './jev.js';
 import { projectEstimate } from './progress.js';
 import { editSettings } from './settings.js';
 import { paint } from './style.js';
+import { wrap } from './terminal.js';
 import { WORK_COMMANDS } from './workCommands.js';
 
 /** What a command can reach. Kept small so commands are easy to test. */
@@ -286,16 +288,27 @@ export const COMMANDS: Command[] = [
   },
   {
     name: 'model',
-    args: '[name or number]',
-    description: 'Show the models you can use, or switch model',
-    async run({ provider, config, say, status }, args) {
+    args: '[name]',
+    description: 'Pick the model, or switch straight to one by name',
+    async run({ provider, config, say, status, select }, args) {
       status('Checking your models');
       const models = await provider.listModels().finally(() => status(undefined));
       const current = (await config.readSettings()).model ?? models[0]?.id;
 
       if (!args) {
-        say(modelList(models, current));
-        return;
+        const picked = await select(
+          'Which model? Esc keeps the one you have',
+          models.map((m) => ({
+            label: m.id === current ? `${m.name} (now)` : m.name,
+            hint: m.description,
+            value: m,
+          })),
+        );
+        if (!picked || picked.id === current) return say(paint.dim('Kept the model you have.'));
+        await config.updateSettings({ model: picked.id });
+        return say(
+          `${paint.green('✔')} Switched to ${paint.bold(picked.name)}. Dazza uses it from your next message.`,
+        );
       }
       const choice = pickModel(models, args);
       if (!choice) {
@@ -563,10 +576,26 @@ const HELP_HIDDEN = new Set([
   'phone-merge',
 ]);
 
-export function helpText(): string {
+/** Where /help's descriptions start, so they line up. */
+const HELP_COLUMN = 26;
+
+export function helpText(width = (stdout.columns || 80) - 1): string {
+  // Each row sits under Dazza's marker (two columns) and is indented two more.
+  const room = Math.max(24, width - 4 - HELP_COLUMN);
+  const under = (text: string) =>
+    wrap(text, room)
+      .split('\n')
+      .map((line) => `  ${' '.repeat(HELP_COLUMN)}${paint.dim(line)}`);
   const row = (c: Command) => {
     const usage = `/${c.name}${c.args ? ` ${c.args}` : ''}`;
-    return `  ${paint.hex(BRAND, usage.padEnd(26))}${paint.dim(c.description)}`;
+    const [first = '', ...rest] = under(c.description);
+    // A long usage (/changes <task> <what to change>) gets a line of its own.
+    if (usage.length >= HELP_COLUMN - 1) {
+      return [`  ${paint.hex(BRAND, usage)}`, first, ...rest].join('\n');
+    }
+    return [`  ${paint.hex(BRAND, usage.padEnd(HELP_COLUMN))}${first.trimStart()}`, ...rest].join(
+      '\n',
+    );
   };
   const listed = new Set(HELP_GROUPS.flatMap(([, names]) => names));
   const sections = HELP_GROUPS.map(([title, names]) => {
@@ -578,24 +607,15 @@ export function helpText(): string {
       paint.bold(title),
       ...commands.flatMap((c) =>
         c.name === 'settings'
-          ? [row(c), `  ${' '.repeat(26)}${paint.dim(`Or straight to one: ${SETTING_SHORTCUTS}`)}`]
+          ? [row(c), ...under(`Or straight to one: ${SETTING_SHORTCUTS}`)]
           : [row(c)],
       ),
     ].join('\n');
   });
   const tips = paint.dim(
-    'Start a line with ! to run a shell command yourself, and @ to point me at a file. Ctrl+V pastes a screenshot. \\ then Enter (or Option+Enter) starts a new line. Esc stops my reply.',
+    '@ points me at a file, ! runs a shell command yourself. ? lists the keyboard shortcuts.',
   );
   return `Just type to talk to me. Or use a command:\n${tips}\n\n${sections.join('\n\n')}`;
-}
-
-export function modelList(models: ModelOption[], current: string | undefined): string {
-  const width = Math.max(...models.map((m) => m.name.length));
-  const rows = models.map((m, i) => {
-    const marker = m.id === current ? paint.green('●') : ' ';
-    return `${marker} ${paint.dim(String(i + 1).padStart(2))}  ${m.name.padEnd(width)}  ${paint.dim(m.description)}`;
-  });
-  return `Models you can use:\n${rows.join('\n')}\n${paint.dim('Switch with /model <number or name>, e.g. /model 2')}`;
 }
 
 /** Match by list number, id ("sonnet") or display name ("Sonnet 5"). */

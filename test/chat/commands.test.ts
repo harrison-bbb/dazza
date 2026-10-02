@@ -42,6 +42,19 @@ describe('parsing and completion', () => {
     expect(commandMenu('hello')).toEqual([]);
   });
 
+  it('lines /help’s descriptions up, wrapping under their column', () => {
+    const lines = stripAnsi(helpText(80)).split('\n');
+    const changes = lines.findIndex((l) => l.trim().startsWith('/changes <task>'));
+    // A usage too long for its column gets a line of its own; the description goes under.
+    expect(lines[changes]?.trim()).toBe('/changes <task> <what to change>');
+    expect(lines[changes + 1]).toMatch(/^ {28}Send work in review back/);
+    for (const line of lines.filter((l) => l.startsWith('  '))) {
+      expect(line.length).toBeLessThanOrEqual(78); // say() adds two: 80 in all
+    }
+    const wrapped = lines.findIndex((l) => l.includes('/settings')) + 1;
+    expect(lines[wrapped]).toMatch(/^ {28}\S/);
+  });
+
   it('lists every command in /help, grouped, with the rest mentioned by their parent', () => {
     const help = stripAnsi(helpText());
     for (const command of COMMANDS) expect(help).toContain(`/${command.name}`);
@@ -185,10 +198,17 @@ describe('running commands', () => {
     expect(said.at(-1)).toContain('Jev: through OpenRouter · Model routing: Off');
   });
 
-  it('/model lists models, marks the current one, and switches', async () => {
-    const { ctx, said } = context();
+  it('/model picks from a list with the current one marked, or switches by name', async () => {
+    const { ctx, said, picks, asked } = context();
+    picks.push('Opus 5.5');
     await run(ctx, '/model');
-    expect(said[0]).toContain('Default (recommended)');
+    expect(asked[0]).toContain('Which model?');
+    expect(await project.config.readSettings()).toEqual({ model: 'opus' });
+    picks.push(undefined);
+    await run(ctx, '/model');
+    expect(said[1]).toContain('Kept the model you have');
+    said.length = 0;
+    said.push('');
 
     await run(ctx, '/model sonnet');
     expect(await project.config.readSettings()).toEqual({ model: 'sonnet' });
