@@ -507,6 +507,36 @@ export function commandMenu(text: string): MenuItem[] {
   ).map((c) => ({ value: `/${c.name}`, hint: c.description }));
 }
 
+/** Keys that do something at the prompt, for `?` and /help. */
+export const SHORTCUTS: [string, string][] = [
+  ['Enter', 'send · \\ then Enter, Option+Enter or Ctrl+J for a new line'],
+  ['Esc', 'stop my reply'],
+  ['↑ ↓', 'earlier messages · Ctrl+R to search them'],
+  ['Tab', 'complete a command, a task or a file'],
+  ['/  @  !', 'commands · point me at a file · run a shell command yourself'],
+  ['Ctrl+V', 'paste a screenshot'],
+  ['Option+← →', 'move a word at a time · Option+Backspace deletes one'],
+  ['Ctrl+A E U K W', 'start, end, delete to start, to end, the word before'],
+  ['Ctrl+O', 'show every step builders take, or just the highlights'],
+  ['Ctrl+L', 'clear the screen'],
+  ['Ctrl-C twice', 'leave'],
+];
+
+/** `?` on an empty prompt: the shortcuts, as a menu to glance at. Enter prints them. */
+export function shortcutMenu(): MenuItem[] {
+  return SHORTCUTS.map(([keys, what]) => ({ value: '?', label: keys, hint: what }));
+}
+
+export function shortcutsText(): string {
+  const width = Math.max(...SHORTCUTS.map(([keys]) => keys.length)) + 3;
+  return [
+    'Shortcuts:',
+    ...SHORTCUTS.map(
+      ([keys, what]) => `  ${paint.hex(BRAND, keys.padEnd(width))}${paint.dim(what)}`,
+    ),
+  ].join('\n');
+}
+
 /** /help's sections, in the README's order. Anything unlisted goes under Setup. */
 const HELP_GROUPS: [string, string[]][] = [
   ['The work', ['build', 'stop', 'status', 'tasks', 'next']],

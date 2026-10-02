@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { describeTool, greeting, NO_PLAN, planCard } from '../../src/chat/describe.js';
+import { describeTool, farewell, greeting, NO_PLAN, planCard } from '../../src/chat/describe.js';
+import { stripAnsi } from '../../src/chat/style.js';
 import type { Plan } from '../../src/core/schema.js';
 import { makePlan, makeTask } from '../fixtures.js';
 
@@ -122,5 +123,25 @@ describe('planCard', () => {
 
   it('flags a revised approved plan for re-approval', () => {
     expect(planCard(plan, true, 'http://localhost:4777')).toContain('needs your re-approval');
+  });
+});
+
+describe('farewell', () => {
+  it('says what’s waiting, and how to pick the conversation back up', () => {
+    const plan = makePlan([
+      makeTask({ id: 'T2', title: 'Calendar', status: 'review' }),
+      makeTask({ id: 'T4', title: 'Checkout', status: 'blocked' }),
+    ]);
+    expect(stripAnsi(farewell(plan, { conversation: true }))).toBe(
+      [
+        'Waiting for your review: T2 Calendar.',
+        'Waiting on your answer: T4 Checkout.',
+        '`dazza --continue` picks this conversation back up.',
+      ].join('\n'),
+    );
+  });
+
+  it('says nothing when there’s nothing to say', () => {
+    expect(farewell(undefined, { conversation: false })).toBe('');
   });
 });

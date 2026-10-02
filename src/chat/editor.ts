@@ -33,6 +33,11 @@ export interface EditorState {
   menuIndex: number;
   /** Long pastes, shown as placeholders like "[Pasted text #1 · 42 lines]" until submitted. */
   pastes: readonly string[];
+  /**
+   * Ctrl+R: searching earlier messages. `index` is the match shown (history's
+   * length when there's none), `draft` what was typed before searching.
+   */
+  search?: { query: string; index: number; draft: string } | undefined;
 }
 
 export type Outcome =
@@ -56,6 +61,7 @@ export function initialState(history: readonly string[] = []): EditorState {
 export type MenuSource = (text: string) => MenuItem[];
 
 export function reduce(state: EditorState, key: Key, menuFor: MenuSource): Outcome {
+  if (state.search) return searching(state, state.search, key);
   const menu = menuFor(state.text);
   const selected = menu[Math.min(state.menuIndex, menu.length - 1)];
   const edit = (next: Partial<EditorState>): Outcome => ({
@@ -83,9 +89,29 @@ export function reduce(state: EditorState, key: Key, menuFor: MenuSource): Outco
         const before = state.text.slice(0, state.cursor).replace(/\S+\s*$/, '');
         return setText(before + state.text.slice(state.cursor), before.length);
       }
+      case 'left':
+        return edit({ cursor: wordLeft(state.text, state.cursor) });
+      case 'right':
+        return edit({ cursor: wordRight(state.text, state.cursor) });
+      case 'r':
+        return edit({
+          search: { query: '', index: state.history.length, draft: state.text },
+        });
       default:
         return edit({});
     }
+  }
+
+  // Option (Alt) with an arrow, or b and f as in a shell: a word at a time.
+  if (key.meta && (key.name === 'left' || key.name === 'b')) {
+    return edit({ cursor: wordLeft(state.text, state.cursor) });
+  }
+  if (key.meta && (key.name === 'right' || key.name === 'f')) {
+    return edit({ cursor: wordRight(state.text, state.cursor) });
+  }
+  if (key.meta && key.name === 'backspace') {
+    const at = wordLeft(state.text, state.cursor);
+    return setText(state.text.slice(0, at) + state.text.slice(state.cursor), at);
   }
 
   const newline = () =>
@@ -178,6 +204,64 @@ export function reduce(state: EditorState, key: Key, menuFor: MenuSource): Outco
     state.text.slice(0, state.cursor) + typed + state.text.slice(state.cursor),
     state.cursor + typed.length,
   );
+}
+
+/** Where the word before the cursor starts. */
+function wordLeft(text: string, cursor: number): number {
+  return text.slice(0, cursor).replace(/\w+\W*$|\W+$/, '').length;
+}
+
+/** Where the word after the cursor ends. */
+function wordRight(text: string, cursor: number): number {
+  const rest = /^\W*\w+|^\W+/.exec(text.slice(cursor));
+  return cursor + (rest?.[0].length ?? 0);
+}
+
+/**
+ * Ctrl+R: type to find the latest earlier message containing it; Ctrl+R
+ * again for the one before. Enter, Tab or an arrow keeps it to edit or send;
+ * Esc or Ctrl+C goes back to what was typed.
+ */
+function searching(
+  state: EditorState,
+  search: NonNullable<EditorState['search']>,
+  key: Key,
+): Outcome {
+  const find = (query: string, before: number) => {
+    const q = query.toLowerCase();
+    for (let i = Math.min(before, state.history.length) - 1; i >= 0; i--) {
+      if (q && state.history[i]?.toLowerCase().includes(q)) return i;
+    }
+    return state.history.length;
+  };
+  const show = (query: string, index: number): Outcome => {
+    const text = index < state.history.length ? (state.history[index] ?? '') : search.draft;
+    return {
+      type: 'edit',
+      state: { ...state, text, cursor: text.length, search: { ...search, query, index } },
+    };
+  };
+  if ((key.ctrl && key.name === 'c') || key.name === 'escape') {
+    return {
+      type: 'edit',
+      state: { ...state, text: search.draft, cursor: search.draft.length, search: undefined },
+    };
+  }
+  if (key.ctrl && key.name === 'r') return show(search.query, find(search.query, search.index));
+  if (key.name === 'backspace') {
+    const query = search.query.slice(0, -1);
+    return show(query, find(query, state.history.length));
+  }
+  const typed = key.ctrl || key.name === 'return' || key.name === 'tab' ? '' : printable(key);
+  if (typed) {
+    const query = search.query + typed;
+    return show(query, find(query, state.history.length));
+  }
+  // Anything else keeps what was found, ready to edit or send.
+  return {
+    type: 'edit',
+    state: { ...state, search: undefined, historyIndex: state.history.length, menuIndex: 0 },
+  };
 }
 
 /** The cursor a line up or down, at the same column where it can be; undefined at the edge. */

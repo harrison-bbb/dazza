@@ -166,3 +166,26 @@ function pathOf(input: unknown): string | undefined {
   if (typeof input !== 'object' || input === null || !('file_path' in input)) return undefined;
   return typeof input.file_path === 'string' ? input.file_path : undefined;
 }
+
+/**
+ * What to say on the way out, as Codex does: what's still waiting on the user,
+ * and how to pick the conversation back up.
+ */
+export function farewell(
+  plan: Plan | undefined,
+  { conversation }: { conversation: boolean },
+): string {
+  const lines: string[] = [];
+  if (plan) {
+    const review = plan.tasks.filter((t) => t.status === 'review');
+    const blocked = plan.tasks.filter((t) => t.status === 'blocked');
+    if (review.length > 0) {
+      lines.push(`Waiting for your review: ${review.map((t) => `${t.id} ${t.title}`).join(', ')}.`);
+    }
+    if (blocked.length > 0) {
+      lines.push(`Waiting on your answer: ${blocked.map((t) => `${t.id} ${t.title}`).join(', ')}.`);
+    }
+  }
+  if (conversation) lines.push(paint.dim('`dazza --continue` picks this conversation back up.'));
+  return lines.join('\n');
+}

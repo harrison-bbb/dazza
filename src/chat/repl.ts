@@ -56,8 +56,16 @@ import {
   waitInBackground,
 } from './background.js';
 import { BRAND, logo, sessionInfo } from './banner.js';
-import { type CommandContext, commandMenu, parseCommand, suggest } from './commands.js';
-import { greeting, NO_PLAN } from './describe.js';
+import {
+  type CommandContext,
+  commandMenu,
+  parseCommand,
+  shortcutMenu,
+  shortcutsText,
+  suggest,
+} from './commands.js';
+import { farewell, greeting, NO_PLAN } from './describe.js';
+import { footerText, modelLabel } from './footer.js';
 import { offerJev } from './jev.js';
 import { projectEstimate } from './progress.js';
 import { ChatSession } from './session.js';
@@ -74,6 +82,8 @@ const PROMPT = `${paint.hex(BRAND, '›')} `;
 const PLAN_POLL_MS = 500;
 /** Let a burst of plan writes settle before reacting to them. */
 const PLAN_SETTLE_MS = 300;
+/** A second Ctrl-C within this long leaves, as in Claude Code. */
+const EXIT_WINDOW_MS = 2_000;
 
 /** `dazza`: the conversation with your developer. */
 export interface ChatOptions {
@@ -341,6 +351,9 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
 
   // The plan changes from everywhere: this chat, the board, Slack, the build itself.
   const startPlan = await store.readPlan();
+  /** The latest plan and permission requests, for the footer and menus (which can't wait on disk). */
+  let latestPlan = startPlan;
+  let pending = await store.readPendingPermissions();
   let approved = Boolean(startPlan?.approvedAt);
   let complete = Boolean(startPlan && isComplete(startPlan));
   // Milestones reached before this session were announced then.
@@ -350,6 +363,9 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
   const onPlanChange = debounce(async () => {
     const plan = await store.readPlan().catch(() => undefined);
     if (!plan) return;
+    latestPlan = plan;
+    pending = await store.readPendingPermissions().catch(() => pending);
+    terminal.setFooter(footer);
     // Approved in the chat: Dazza's reply already says what's next.
     if (plan.approvedAt && !approved && !session.isBuilding && !session.isChatting) {
       say(`Plan approved. Run ${paint.bold('/build')} when you want me to start.`);
@@ -436,6 +452,25 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
     },
   };
 
+  // The line under the prompt. The model's name needs the agent CLI, so it fills in once known.
+  let modelName: string | undefined;
+  const footer = () =>
+    footerText({
+      model: modelName,
+      context: session.context,
+      plan: latestPlan,
+      permissions: pending,
+    });
+  const refreshModel = async () => {
+    const models = await provider.listModels().catch(() => []);
+    const chosen = (await config.readSettings()).model;
+    const current = models.find((m) => m.id === chosen) ?? models[0];
+    modelName = current && modelLabel(current);
+    terminal.setFooter(footer);
+  };
+  terminal.setFooter(footer);
+  if (!options.background) void refreshModel();
+
   // @ offers the project's files; listed once now, and again every few minutes.
   let files: string[] = await listProjectFiles(projectRoot);
   const refreshFiles = setInterval(() => {
@@ -480,10 +515,18 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
   };
   process.once('SIGHUP', onHangup);
 
+  /** When Ctrl-C was last pressed at an empty prompt: a second one soon after leaves. */
+  let lastCancel = 0;
   while (!exiting) {
     const input = await terminal.readLine({
       prompt: PROMPT,
-      menu: (text) => (text.startsWith('/') ? commandMenu(text) : mentionMenu(text)),
+      menu: (text) =>
+        text.startsWith('/')
+          ? commandMenu(text)
+          : text === '?'
+            ? shortcutMenu()
+            : mentionMenu(text),
+      footer: true,
       history,
       pasteImage: async () => {
         const saved = await pasteClipboardImage(join(store.dir, 'media', 'pasted'));
@@ -496,14 +539,25 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
     });
     if (input === undefined) {
       if (hungUp) break;
-      // Piped input ran out: let queued work finish. In a terminal, Ctrl-C stops
-      // whatever is running first, and only exits once nothing is.
-      if (!terminal.interactive) await session.idle();
-      else if (session.isBuilding) {
-        await session.stopBuild();
-        continue;
-      } else if (session.isChatting) {
+      // Piped input ran out: let queued work finish.
+      if (!terminal.interactive) {
+        await session.idle();
+        break;
+      }
+      // Ctrl-C mid-reply stops the reply, as Esc does.
+      if (session.isChatting) {
         await session.stopChat();
+        continue;
+      }
+      // At an empty prompt, one Ctrl-C is easily a slip: leaving takes a second.
+      if (Date.now() - lastCancel > EXIT_WINDOW_MS) {
+        lastCancel = Date.now();
+        terminal.flash(
+          session.isOnTheJob
+            ? 'Press Ctrl-C again to leave. The build stops too (/stop stops just the build).'
+            : 'Press Ctrl-C again to leave.',
+          EXIT_WINDOW_MS,
+        );
         continue;
       }
       break;
@@ -515,7 +569,9 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
       await store.appendHistory(line).catch(() => {});
     }
 
-    if (line.startsWith('!') && line.length > 1) {
+    if (line === '?') {
+      say(shortcutsText());
+    } else if (line.startsWith('!') && line.length > 1) {
       // `!` mode: the user's own command, in their own shell; Dazza hears about it next time.
       commandRunning = true;
       const stop = new AbortController();
@@ -535,6 +591,7 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
       commandRunning = true;
       await runCommand(line, context);
       commandRunning = false;
+      if (/^\/(model|logout)\b/.test(line)) void refreshModel();
       await resumeIfReady();
     } else if (line) {
       // Files it was pointed at (@mentions, dragged-in screenshots) go along named.
@@ -572,6 +629,12 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
         'To keep building after you close Dazza next time, turn it on in /settings (Keep building after you close Dazza).',
       ),
     );
+  }
+  if (!options.background && !hungUp) {
+    const goodbye = farewell(await store.readPlan().catch(() => undefined), {
+      conversation: (await store.readManagerSession(provider.id)) !== undefined,
+    });
+    if (goodbye) say(goodbye);
   }
 }
 

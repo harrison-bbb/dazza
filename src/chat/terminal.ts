@@ -35,7 +35,17 @@ export interface ReadOptions {
   onInterrupt?: () => void;
   /** Ctrl+V: an image on the clipboard, as text to insert (its saved path), if there is one. */
   pasteImage?: () => Promise<string | undefined>;
+  /** Show the footer (see setFooter) under the input: the main prompt, not a question. */
+  footer?: boolean;
+  /** Ctrl+<key> shortcuts, e.g. { o: toggle detail }. Ctrl+L (clear) and Ctrl+R (search) are built in. */
+  shortcuts?: Partial<Record<string, () => void>>;
 }
+
+/**
+ * What readLine resolves when wake() interrupted an empty prompt, so the
+ * caller can ask something first and then read again.
+ */
+export const WOKEN = '\u0000woken';
 
 export interface Choice<T> {
   label: string;
@@ -70,6 +80,12 @@ export class Terminal {
   private pasting: string | undefined;
   /** Keys typed while nothing was reading them, e.g. during a command. */
   private readonly typedAhead: Key[] = [];
+  /** The line under the input: model, context, what needs the user. */
+  private footer: (() => string | undefined) | undefined;
+  /** A notice shown in the footer's place for a moment, e.g. "Ctrl-C again to exit". */
+  private notice: { text: string; timer: NodeJS.Timeout } | undefined;
+  /** Interrupts the line being read, if nothing's typed in it. */
+  private wakeRead: (() => boolean) | undefined;
 
   constructor() {
     if (this.interactive) {
@@ -112,6 +128,32 @@ export class Terminal {
       this.statusTimer = undefined;
     }
     this.redrawInput?.();
+  }
+
+  /** What the footer under the main prompt says, worked out at each redraw. */
+  setFooter(footer: (() => string | undefined) | undefined): void {
+    this.footer = footer;
+    this.redrawInput?.();
+  }
+
+  /** Say something under the input for a moment, in the footer's place. */
+  flash(text: string, ms = 2_000): void {
+    if (this.notice) clearTimeout(this.notice.timer);
+    const timer = setTimeout(() => {
+      this.notice = undefined;
+      this.redrawInput?.();
+    }, ms);
+    timer.unref();
+    this.notice = { text, timer };
+    this.redrawInput?.();
+  }
+
+  /**
+   * Interrupt the main prompt to ask something, if the user isn't typing:
+   * readLine resolves WOKEN. False if they are (or nothing's being read).
+   */
+  wake(): boolean {
+    return this.wakeRead?.() ?? false;
   }
 
   /**
@@ -175,24 +217,57 @@ export class Terminal {
     let state = initialState(options.history);
     const menuFor: MenuSource = options.menu ?? (() => []);
     this.interruptible = options.onInterrupt !== undefined;
-    const redraw = (showMenu = true) =>
+    /** Under the input: a notice, or the footer. Searching history shows there instead. */
+    const below = (): string[] => {
+      if (this.notice) return [paint.dim(`  ${this.notice.text}`)];
+      const footer = options.footer ? this.footer?.() : undefined;
+      return footer ? [paint.dim(`  ${footer}`)] : [];
+    };
+    const redraw = (showMenu = true) => {
+      const menu = showMenu && !state.search ? menuFor(state.text) : [];
+      const width = (stdout.columns || 80) - 1;
       this.draw(
         layout(
           options.prompt,
           state,
-          showMenu ? menuFor(state.text) : [],
+          menu,
           options.mask,
           undefined,
           this.aboveInput(),
+          menu.length > 0 ? [] : below().map((line) => clipVisible(line, width)),
         ),
       );
+    };
     this.redrawInput = redraw;
     redraw();
 
     return new Promise((resolve) => {
       const onResize = () => redraw();
       stdout.on('resize', onResize);
+      this.wakeRead = () => {
+        if (state.text || state.search) return false;
+        this.redrawInput = undefined;
+        this.wakeRead = undefined;
+        this.erase();
+        this.onKey = undefined;
+        stdout.off('resize', onResize);
+        resolve(WOKEN);
+        return true;
+      };
       this.onKey = (key) => {
+        // Ctrl+L: a clear screen, as in a shell; the scrollback stays.
+        if (key.ctrl && key.name === 'l') {
+          stdout.write('\x1b[H\x1b[2J');
+          this.drawnCursorRow = 0;
+          redraw();
+          return;
+        }
+        const shortcut = key.ctrl && key.name ? options.shortcuts?.[key.name] : undefined;
+        if (shortcut && !state.search) {
+          shortcut();
+          redraw();
+          return;
+        }
         // Ctrl+V with an image on the clipboard (text pastes arrive as a paste, not Ctrl+V).
         if (key.ctrl && key.name === 'v' && options.pasteImage) {
           void options.pasteImage().then((text) => {
@@ -214,8 +289,11 @@ export class Terminal {
         // "/usage" when "/u" was picked), without the menu or status line.
         if (outcome.type === 'submit') state = { ...state, text: outcome.value };
         this.redrawInput = undefined;
+        this.wakeRead = undefined;
         this.erase();
-        if (options.mask) {
+        if (outcome.type === 'cancel' && !state.text) {
+          // Nothing typed to keep: Ctrl-C at an empty prompt leaves no trace.
+        } else if (options.mask) {
           this.draw(layout(options.prompt, state, [], options.mask));
           stdout.write('\n');
         } else {
@@ -441,6 +519,8 @@ export function layout(
   columns = stdout.columns || 80,
   /** Lines drawn above the input: a reply as it's written, the activity line. */
   status?: string | string[],
+  /** Lines drawn under the input when there's no menu: the footer. */
+  below: string[] = [],
 ): Layout {
   // One column spare so the terminal never auto-wraps behind our back.
   const width = Math.max(10, columns - 1);
@@ -483,8 +563,16 @@ export function layout(
   }
 
   if (menu.length > 0) lines.push(...menuLines(menu, state.menuIndex, width));
+  else if (state.search) lines.push(searchLine(state.search, state.history.length));
+  else lines.push(...below);
   const above = status === undefined ? [] : Array.isArray(status) ? status : [status];
   return { lines: [...above, ...lines], cursorRow: cursorRow + above.length, cursorCol };
+}
+
+/** Under the input while searching history (Ctrl+R). */
+function searchLine(search: NonNullable<EditorState['search']>, historyLength: number): string {
+  const found = search.query && search.index >= historyLength ? '  no match' : '';
+  return `  ${paint.dim('search history:')} ${search.query}${paint.dim(`${found}  ·  Ctrl+R older · Enter keep · Esc cancel`)}`;
 }
 
 function menuLines(menu: MenuItem[], selectedIndex: number, width: number): string[] {
