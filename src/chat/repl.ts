@@ -213,6 +213,7 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
       print: (text) => terminal.print(text),
       status: (key, text) => terminal.setStatus(key, text),
       draft: (text) => terminal.setDraft(text),
+      panel: (lines) => terminal.setPanel(lines),
     },
     onReply: (reply, origin) => {
       if (origin !== 'terminal') void channels.get(origin.channel)?.reply(reply, origin);
@@ -477,6 +478,18 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
   };
   terminal.setFooter(footer);
   if (!options.background) void refreshModel();
+  session.everyStep = (await config.readSettings()).buildSteps === true;
+  /** Ctrl+O: every step builders take, or just the highlights. Kept for next time. */
+  const toggleSteps = () => {
+    session.everyStep = !session.everyStep;
+    void config.updateSettings({ buildSteps: session.everyStep });
+    terminal.flash(
+      session.everyStep
+        ? 'Showing every step builders take. Ctrl+O for just the highlights.'
+        : 'Showing just the highlights. Ctrl+O for every step.',
+      3_000,
+    );
+  };
 
   // @ offers the project's files; listed once now, and again every few minutes.
   let files: string[] = await listProjectFiles(projectRoot);
@@ -596,6 +609,7 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
             ? shortcutMenu()
             : mentionMenu(text),
       footer: true,
+      shortcuts: { o: toggleSteps },
       history,
       pasteImage: async () => {
         const saved = await pasteClipboardImage(join(store.dir, 'media', 'pasted'));
@@ -663,6 +677,9 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
       await runCommand(line, context);
       commandRunning = false;
       if (/^\/(model|logout)\b/.test(line)) void refreshModel();
+      if (/^\/(settings|config)\b/.test(line)) {
+        session.everyStep = (await config.readSettings()).buildSteps === true;
+      }
       await resumeIfReady();
     } else if (line) {
       // Files it was pointed at (@mentions, dragged-in screenshots) go along named.

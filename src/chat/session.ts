@@ -41,6 +41,8 @@ export interface SessionOutput {
   status(key: 'chat' | 'build', text: StatusText | undefined): void;
   /** Show (or clear) the unfinished line of a reply as it streams in. */
   draft?(text: string | undefined): void;
+  /** Show (or clear) a line per building task: what it's doing right now. */
+  panel?(lines: string[] | undefined): void;
 }
 
 export interface SessionOptions {
@@ -196,6 +198,11 @@ export class ChatSession {
   private contextWindow = 200_000;
   /** Tasks being built right now. */
   private readonly inProgress = new Set<string>();
+  /**
+   * Show every step builders take (every read, edit and command) rather than
+   * just the highlights. Ctrl+O switches it; /settings keeps it.
+   */
+  everyStep = false;
 
   constructor(private readonly options: SessionOptions) {}
 
@@ -470,7 +477,12 @@ export class ChatSession {
 
   private async runBuild(signal: AbortSignal): Promise<void> {
     const { store, config, provider, workerMcp, output, onBuildEvent } = this.options;
-    const render = createBuildRenderer(store.root);
+    const render = createBuildRenderer(store.root, () => !this.everyStep);
+    /** What each building task is doing right now, one line each above the status line. */
+    const doing = new Map<string, string>();
+    const showDoing = () => output.panel?.(doing.size > 0 ? [...doing.values()] : undefined);
+    const doingLine = (task: { id: string; title: string }, what: string) =>
+      `  ${paint.dim(task.id)} ${task.title} ${paint.dim(`· ${what}`)}`;
     output.status('build', 'Getting ready to build');
     const building = this.inProgress;
     building.clear();
@@ -530,6 +542,19 @@ export class ChatSession {
         await activity.record(event);
         if (event.type === 'task_started') building.add(event.task.id);
         if (event.type === 'task_finished') building.delete(event.task.id);
+        if (event.type === 'task_started') {
+          doing.set(event.task.id, doingLine(event.task, 'Starting'));
+          showDoing();
+        } else if (event.type === 'task_finished') {
+          doing.delete(event.task.id);
+          showDoing();
+        } else if (event.type === 'agent' && event.event.type === 'tool_use') {
+          doing.set(
+            event.task.id,
+            doingLine(event.task, describeTool(event.event.tool, event.event.input)),
+          );
+          showDoing();
+        }
         if (event.type === 'task_started' || event.type === 'task_finished') {
           held.delete(event.task.id);
           await showProgress();
@@ -570,6 +595,7 @@ export class ChatSession {
     } finally {
       clearInterval(ticker);
       this.building = undefined;
+      output.panel?.(undefined);
       output.status('build', undefined);
       this.options.onBuildEnd?.();
     }

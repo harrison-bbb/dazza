@@ -426,3 +426,50 @@ describe('messages sent mid-reply', () => {
     ]);
   });
 });
+
+describe('building, line by line', () => {
+  const project = useTempProject();
+
+  it('shows what each building task is doing, above the status line, until it finishes', async () => {
+    await project.store.writePlan({
+      ...makePlan([makeTask({ id: 'T1', title: 'Setup' })]),
+      approvedAt: '2026-09-27T10:00:00Z',
+    });
+    process.env.GIT_AUTHOR_NAME = process.env.GIT_COMMITTER_NAME = 'Test';
+    process.env.GIT_AUTHOR_EMAIL = process.env.GIT_COMMITTER_EMAIL = 'test@example.com';
+    const panels: (string[] | undefined)[] = [];
+    const provider = new FakeProvider([
+      { type: 'started', sessionId: 'w', model: 'fake' },
+      { type: 'tool_use', id: 'x', tool: 'Edit', input: { file_path: '/p/src/app.ts' } },
+      { type: 'finished', ok: true, output: '', sessionId: 'w', durationMs: 1 },
+    ]);
+    provider.onRun = async () => {
+      await submitTask(project.store, 'T1', workReport);
+    };
+    const chat = new ChatSession({
+      store: project.store,
+      config: project.config,
+      provider,
+      manager: new Manager({
+        store: project.store,
+        config: project.config,
+        provider,
+        projectRoot: project.root,
+        mcpServer: { command: 'node', args: [] },
+      }),
+      workerMcp: { command: 'node', args: [] },
+      boardUrl: 'http://localhost:4777',
+      output: {
+        say: () => {},
+        print: () => {},
+        status: () => {},
+        panel: (lines) => panels.push(lines?.map(stripAnsi)),
+      },
+    });
+    chat.startBuild();
+    await chat.idle();
+    expect(panels).toContainEqual(['  T1 Setup · Starting']);
+    expect(panels).toContainEqual(['  T1 Setup · Editing app.ts']);
+    expect(panels.at(-1)).toBeUndefined();
+  });
+});

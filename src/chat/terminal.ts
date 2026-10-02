@@ -86,6 +86,8 @@ export class Terminal {
   private notice: { text: string; timer: NodeJS.Timeout } | undefined;
   /** Interrupts the line being read, if nothing's typed in it. */
   private wakeRead: (() => boolean) | undefined;
+  /** Lines above the status line: what each builder is doing right now. */
+  private panel: string[] = [];
 
   constructor() {
     if (this.interactive) {
@@ -130,6 +132,12 @@ export class Terminal {
     this.redrawInput?.();
   }
 
+  /** Show (or clear) lines just above the status line, e.g. one per building task. */
+  setPanel(lines: string[] | undefined): void {
+    this.panel = lines ?? [];
+    this.redrawInput?.();
+  }
+
   /** What the footer under the main prompt says, worked out at each redraw. */
   setFooter(footer: (() => string | undefined) | undefined): void {
     this.footer = footer;
@@ -168,8 +176,10 @@ export class Terminal {
 
   /** What's drawn above the input: a streaming reply's unfinished line, then the status line. */
   private aboveInput(): string[] {
+    const width = (stdout.columns || 80) - 1;
+    const panel = this.panel.map((line) => clipVisible(line, width));
     const status = this.statusLine();
-    return status ? [...this.draftLines(), status] : this.draftLines();
+    return [...this.draftLines(), ...panel, ...(status ? [status] : [])];
   }
 
   /** The draft, wrapped, and only its last few lines if it's long. */

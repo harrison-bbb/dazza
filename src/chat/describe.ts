@@ -157,9 +157,39 @@ export function describeTool(tool: string, input: unknown): string {
     case 'Glob':
     case 'Grep':
       return 'Looking around the codebase';
+    case 'Edit':
+    case 'NotebookEdit':
+      return path ? `Editing ${basename(path)}` : 'Editing';
+    case 'Write':
+      return path ? `Writing ${basename(path)}` : 'Writing a file';
+    case 'Bash':
+    case 'Monitor': {
+      const command = commandOf(input);
+      return command
+        ? `Running ${command.length > 48 ? `${command.slice(0, 47)}…` : command}`
+        : 'Running a command';
+    }
+    case 'WebFetch':
+    case 'WebSearch':
+      return 'Looking something up';
+    case McpTools.updateSubtask:
+      return 'Ticking off a subtask';
+    case McpTools.checkMessages:
+      return 'Checking your messages';
+    case McpTools.block:
+      return 'Asking you something';
+    case McpTools.askPermission:
+      return 'Asking to run a command';
+    case McpTools.submit:
+      return 'Handing it over';
     default:
       return 'Working';
   }
+}
+
+function commandOf(input: unknown): string | undefined {
+  if (typeof input !== 'object' || input === null || !('command' in input)) return undefined;
+  return typeof input.command === 'string' ? input.command.split('\n')[0]?.trim() : undefined;
 }
 
 function pathOf(input: unknown): string | undefined {

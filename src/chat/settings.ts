@@ -55,6 +55,16 @@ export const SETTINGS: SettingDef[] = [
     current: (s) => s.parallelTasks ?? DEFAULT_PARALLEL,
   } satisfies SettingDef<number>,
   {
+    key: 'buildSteps',
+    label: 'Show every build step',
+    about: 'Every file and command builders touch, or just the highlights. Ctrl+O switches.',
+    options: onOff(
+      'every read, edit and command, as it happens',
+      'what started, what’s done, what needs you',
+    ),
+    current: (s) => s.buildSteps === true,
+  } satisfies SettingDef<boolean>,
+  {
     key: 'desktopNotifications',
     label: 'Desktop notifications',
     about: 'A notification on this computer when a task needs you.',
