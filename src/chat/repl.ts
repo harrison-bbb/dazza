@@ -55,15 +55,24 @@ import {
   stopInBackground,
   waitInBackground,
 } from './background.js';
-import { BRAND, logo, sessionInfo } from './banner.js';
-import { type CommandContext, commandMenu, parseCommand, suggest } from './commands.js';
-import { greeting, NO_PLAN } from './describe.js';
+import { BRAND, logo, sessionInfo, shortPath, supportsHyperlinks } from './banner.js';
+import {
+  type CommandContext,
+  commandMenu,
+  parseCommand,
+  shortcutMenu,
+  shortcutsText,
+  suggest,
+} from './commands.js';
+import { decisionsIn } from './decisions.js';
+import { farewell, greeting, NO_PLAN } from './describe.js';
+import { footerText, modelLabel } from './footer.js';
 import { offerJev } from './jev.js';
 import { projectEstimate } from './progress.js';
 import { ChatSession } from './session.js';
 import { runShell } from './shell.js';
-import { paint, stripAnsi } from './style.js';
-import { Terminal } from './terminal.js';
+import { paint, renderInline, stripAnsi } from './style.js';
+import { Terminal, WOKEN } from './terminal.js';
 
 /** Messages with more lines than this (big pastes, usually) aren't kept for ↑. */
 const MAX_RECALLED_LINES = 20;
@@ -74,6 +83,8 @@ const PROMPT = `${paint.hex(BRAND, '›')} `;
 const PLAN_POLL_MS = 500;
 /** Let a burst of plan writes settle before reacting to them. */
 const PLAN_SETTLE_MS = 300;
+/** A second Ctrl-C within this long leaves, as in Claude Code. */
+const EXIT_WINDOW_MS = 2_000;
 
 /** `dazza`: the conversation with your developer. */
 export interface ChatOptions {
@@ -103,8 +114,10 @@ export async function startChat(projectRoot: string, options: ChatOptions = {}):
 
 async function chat(projectRoot: string, terminal: Terminal, options: ChatOptions): Promise<void> {
   write = (text) => terminal.print(text);
-  console.log(`\n${logo()}\n`);
   const config = new Config();
+  // The big logo the first time; after that, the name goes on the header line.
+  const firstLaunch = await config.firstTime('logo').catch(() => false);
+  console.log(firstLaunch ? `\n${logo()}\n` : '');
   // Asked now, shown with the banner: it runs alongside the checks below.
   const update = newerDazza(config);
   const connection =
@@ -150,8 +163,10 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
     `${sessionInfo({
       version: pkg.version,
       agent: [provider.name, plan, model && `model: ${model}`].filter(Boolean).join(' · '),
-      cwd: projectRoot.replace(homedir(), '~'),
+      cwd: shortPath(projectRoot, homedir()),
       board: board.url,
+      compact: !firstLaunch,
+      hyperlinks: supportsHyperlinks(),
     })}`,
   );
   const newer = await update;
@@ -202,11 +217,15 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
       print: (text) => terminal.print(text),
       status: (key, text) => terminal.setStatus(key, text),
       draft: (text) => terminal.setDraft(text),
+      panel: (lines) => terminal.setPanel(lines),
     },
     onReply: (reply, origin) => {
       if (origin !== 'terminal') void channels.get(origin.channel)?.reply(reply, origin);
     },
-    onChatDone: () => void resumeIfReady(),
+    onChatDone: () => {
+      void resumeIfReady();
+      offerSoon();
+    },
     onBuildEvent: (event) => {
       if (event.type === 'task_started') refresh();
       // After waiting out a limit, say when work starts again.
@@ -341,6 +360,11 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
 
   // The plan changes from everywhere: this chat, the board, Slack, the build itself.
   const startPlan = await store.readPlan();
+  /** The latest plan and permission requests, for the footer and menus (which can't wait on disk). */
+  let latestPlan = startPlan;
+  let pending = await store.readPendingPermissions();
+  /** Decisions already put to the user (see offerDecisions); ones from before are in the greeting. */
+  const asked = new Set(decisionsIn(startPlan, pending).map((d) => d.key));
   let approved = Boolean(startPlan?.approvedAt);
   let complete = Boolean(startPlan && isComplete(startPlan));
   // Milestones reached before this session were announced then.
@@ -350,6 +374,10 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
   const onPlanChange = debounce(async () => {
     const plan = await store.readPlan().catch(() => undefined);
     if (!plan) return;
+    latestPlan = plan;
+    pending = await store.readPendingPermissions().catch(() => pending);
+    terminal.setFooter(footer);
+    offerSoon();
     // Approved in the chat: Dazza's reply already says what's next.
     if (plan.approvedAt && !approved && !session.isBuilding && !session.isChatting) {
       say(`Plan approved. Run ${paint.bold('/build')} when you want me to start.`);
@@ -436,6 +464,37 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
     },
   };
 
+  // The line under the prompt. The model's name needs the agent CLI, so it fills in once known.
+  let modelName: string | undefined;
+  const footer = () =>
+    footerText({
+      model: modelName,
+      context: session.context,
+      plan: latestPlan,
+      permissions: pending,
+    });
+  const refreshModel = async () => {
+    const models = await provider.listModels().catch(() => []);
+    const chosen = (await config.readSettings()).model;
+    const current = models.find((m) => m.id === chosen) ?? models[0];
+    modelName = current && modelLabel(current);
+    terminal.setFooter(footer);
+  };
+  terminal.setFooter(footer);
+  if (!options.background) void refreshModel();
+  session.everyStep = (await config.readSettings()).buildSteps === true;
+  /** Ctrl+O: every step builders take, or just the highlights. Kept for next time. */
+  const toggleSteps = () => {
+    session.everyStep = !session.everyStep;
+    void config.updateSettings({ buildSteps: session.everyStep });
+    terminal.flash(
+      session.everyStep
+        ? 'Showing every step builders take. Ctrl+O for just the highlights.'
+        : 'Showing just the highlights. Ctrl+O for every step.',
+      3_000,
+    );
+  };
+
   // @ offers the project's files; listed once now, and again every few minutes.
   let files: string[] = await listProjectFiles(projectRoot);
   const refreshFiles = setInterval(() => {
@@ -480,10 +539,81 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
   };
   process.once('SIGHUP', onHangup);
 
+  /**
+   * Decisions that come up while the user's here (a builder asking to run a
+   * command, work handed over) are put to them as a choice, as Claude Code
+   * asks for permission, when they aren't typing. Each is asked once; ones
+   * waiting from before are in the greeting instead.
+   */
+  function decisionsToOffer() {
+    return decisionsIn(latestPlan, pending).filter((d) => !asked.has(d.key));
+  }
+  function offerSoon() {
+    if (options.background || !terminal.interactive || commandRunning || session.isChatting) return;
+    if (decisionsToOffer().length > 0) terminal.wake();
+  }
+  const offerDecisions = async () => {
+    for (const decision of decisionsToOffer()) {
+      asked.add(decision.key);
+      const { task } = decision;
+      if (decision.kind === 'permission') {
+        const choice = await terminal.select(
+          `${task.id} ${task.title} asks to run: ${decision.command}${decision.why ? `  (${decision.why})` : ''}`,
+          [
+            {
+              label: 'Allow once',
+              hint: 'just this command, for this task',
+              value: 'allow' as const,
+            },
+            {
+              label: 'Don’t allow',
+              hint: 'it finds another way, or asks you',
+              value: 'deny' as const,
+            },
+            {
+              label: 'Decide later',
+              hint: `/allow ${task.id} or /deny ${task.id}`,
+              value: undefined,
+            },
+          ],
+        );
+        if (choice) say((await answerPermission(store, task.id, choice === 'allow')).message);
+      } else {
+        const choice = await terminal.select(`${task.id} ${task.title} is ready for your review`, [
+          { label: 'Try it', hint: 'start it and open it', value: 'try' as const },
+          { label: 'Accept', hint: 'merge it into your branch', value: 'accept' as const },
+          { label: 'Request changes', hint: 'say what to change', value: 'changes' as const },
+          { label: 'Look later', hint: '/review when you’re ready', value: undefined },
+        ]);
+        if (choice === 'try') await runCommand(`/try ${task.id}`, context);
+        if (choice === 'accept') say((await closeTask(store, task.id)).message);
+        if (choice === 'changes') {
+          const note = (await terminal.readLine({ prompt: 'What should change? ' }))?.trim();
+          if (note) say((await requestChanges(store, task.id, note)).message);
+        }
+      }
+    }
+    await resumeIfReady();
+  };
+
+  /** When Ctrl-C was last pressed at an empty prompt: a second one soon after leaves. */
+  let lastCancel = 0;
   while (!exiting) {
+    if (decisionsToOffer().length > 0) await offerDecisions();
     const input = await terminal.readLine({
       prompt: PROMPT,
-      menu: (text) => (text.startsWith('/') ? commandMenu(text) : mentionMenu(text)),
+      menu: (text) =>
+        text.startsWith('/')
+          ? commandMenu(text, {
+              plan: latestPlan,
+              permissions: pending,
+              building: session.isOnTheJob,
+            })
+          : text === '?'
+            ? shortcutMenu()
+            : mentionMenu(text),
+      footer: true,
+      shortcuts: { o: toggleSteps },
       history,
       pasteImage: async () => {
         const saved = await pasteClipboardImage(join(store.dir, 'media', 'pasted'));
@@ -494,16 +624,29 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
         if (session.isChatting) void session.stopChat();
       },
     });
+    // Woken to ask about something that came up: ask, then read again.
+    if (input === WOKEN) continue;
     if (input === undefined) {
       if (hungUp) break;
-      // Piped input ran out: let queued work finish. In a terminal, Ctrl-C stops
-      // whatever is running first, and only exits once nothing is.
-      if (!terminal.interactive) await session.idle();
-      else if (session.isBuilding) {
-        await session.stopBuild();
-        continue;
-      } else if (session.isChatting) {
+      // Piped input ran out: let queued work finish.
+      if (!terminal.interactive) {
+        await session.idle();
+        break;
+      }
+      // Ctrl-C mid-reply stops the reply, as Esc does.
+      if (session.isChatting) {
         await session.stopChat();
+        continue;
+      }
+      // At an empty prompt, one Ctrl-C is easily a slip: leaving takes a second.
+      if (Date.now() - lastCancel > EXIT_WINDOW_MS) {
+        lastCancel = Date.now();
+        terminal.flash(
+          session.isOnTheJob
+            ? 'Press Ctrl-C again to leave. The build stops too (/stop stops just the build).'
+            : 'Press Ctrl-C again to leave.',
+          EXIT_WINDOW_MS,
+        );
         continue;
       }
       break;
@@ -515,7 +658,9 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
       await store.appendHistory(line).catch(() => {});
     }
 
-    if (line.startsWith('!') && line.length > 1) {
+    if (line === '?') {
+      say(shortcutsText());
+    } else if (line.startsWith('!') && line.length > 1) {
       // `!` mode: the user's own command, in their own shell; Dazza hears about it next time.
       commandRunning = true;
       const stop = new AbortController();
@@ -535,6 +680,10 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
       commandRunning = true;
       await runCommand(line, context);
       commandRunning = false;
+      if (/^\/(model|logout)\b/.test(line)) void refreshModel();
+      if (/^\/(settings|config)\b/.test(line)) {
+        session.everyStep = (await config.readSettings()).buildSteps === true;
+      }
       await resumeIfReady();
     } else if (line) {
       // Files it was pointed at (@mentions, dragged-in screenshots) go along named.
@@ -572,6 +721,12 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
         'To keep building after you close Dazza next time, turn it on in /settings (Keep building after you close Dazza).',
       ),
     );
+  }
+  if (!options.background && !hungUp) {
+    const goodbye = farewell(await store.readPlan().catch(() => undefined), {
+      conversation: (await store.readManagerSession(provider.id)) !== undefined,
+    });
+    if (goodbye) say(goodbye);
   }
 }
 
@@ -763,7 +918,7 @@ let write: (text: string) => void = (text) => console.log(text);
 
 /** Print Dazza's words with a little breathing room, indented under a marker. */
 function say(text: string): void {
-  const [first = '', ...rest] = text.trim().split('\n');
+  const [first = '', ...rest] = renderInline(text.trim()).split('\n');
   const body = rest.map((line) => (line.trim() ? `\n  ${line}` : '\n')).join('');
   write(`\n${paint.hex(BRAND, '●')} ${first}${body}\n`);
 }

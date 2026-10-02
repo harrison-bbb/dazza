@@ -183,6 +183,41 @@ describe('createBuildRenderer', () => {
     expect(say('Trying prisma dev instead.')).toContain('Trying prisma dev instead.');
   });
 
+  it('shows just the highlights when asked: a subtask done, a question, the handover', () => {
+    let highlights = true;
+    const render = createBuildRenderer('/p', () => highlights);
+    const use = (id: string, tool: string, input: object) =>
+      render(agent({ type: 'agent', task, event: { type: 'tool_use', id, tool, input } }), plan);
+    const done = (id: string) =>
+      stripAnsi(
+        render(
+          agent({ type: 'agent', task, event: { type: 'tool_result', id, ok: true } }),
+          plan,
+        ) ?? '',
+      );
+    expect(
+      render(
+        agent({ type: 'agent', task, event: { type: 'text', text: 'Reading the router' } }),
+        plan,
+      ),
+    ).toBeUndefined();
+    expect(
+      use('a', 'Edit', { file_path: '/p/a.ts', old_string: 'a', new_string: 'b' }),
+    ).toBeUndefined();
+    expect(use('b', 'Bash', { command: 'npm test' })).toBeUndefined();
+    use('c', 'mcp__dazza__update_subtask', { id: 'T1.1', status: 'building' });
+    expect(done('c')).toBe('');
+    use('d', 'mcp__dazza__update_subtask', { id: 'T1.1', status: 'closed' });
+    expect(done('d')).toContain('✔ T1.1');
+    use('e', 'mcp__dazza__submit', {});
+    expect(done('e')).toContain('Handing over for review');
+    // Ctrl+O: every step again, from the next one.
+    highlights = false;
+    expect(stripAnsi(use('f', 'Bash', { command: 'npm run lint' }) ?? '')).toContain(
+      'Run npm run lint',
+    );
+  });
+
   it("shows Dazza's own actions only once they succeed", () => {
     const render = createBuildRenderer('/p');
     const call = (id: string) =>

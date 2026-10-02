@@ -7,7 +7,7 @@ import { McpTools } from '../mcp/server.js';
 import type { AgentEvent, Compacted } from '../providers/types.js';
 import { shownPath } from '../util/paths.js';
 import { BRAND } from './banner.js';
-import { paint, renderInline } from './style.js';
+import { paint, renderInline, renderMarkdown } from './style.js';
 
 /** Dazza's own tools: shown once they succeed, since a failed call is usually retried. */
 const REPORTED_ON_SUCCESS = new Set<string>([
@@ -32,6 +32,17 @@ const REPORTED_ON_SUCCESS = new Set<string>([
 /** Once a builder has asked the user something, it's waiting; anything it adds is noise. */
 const ASKING = new Set<string>([McpTools.block, McpTools.askPermission]);
 
+/**
+ * With just the highlights showing (the default; Ctrl+O shows every step): a
+ * subtask done, a question for the user, and the work handed over.
+ */
+const HIGHLIGHTS = new Set<string>([
+  McpTools.updateSubtask,
+  McpTools.block,
+  McpTools.askPermission,
+  McpTools.submit,
+]);
+
 export type BuildRenderer = (event: BuildEvent, plan: Plan | undefined) => string | undefined;
 
 /**
@@ -48,7 +59,10 @@ export interface StepTracker {
   flush(): string | undefined;
 }
 
-export function createStepTracker(): StepTracker {
+export function createStepTracker(
+  /** True while only the highlights should show (see HIGHLIGHTS). */
+  highlightsOnly: () => boolean = () => false,
+): StepTracker {
   const pending = new Map<string, { tool: string; input: unknown }>();
   let looked = { files: 0, searches: 0 };
   /** It asked the user something: it's waiting, and anything it adds is noise. */
@@ -67,6 +81,7 @@ export function createStepTracker(): StepTracker {
   return {
     flush,
     step(event, plan, dir) {
+      if (highlightsOnly()) return highlight(event, plan, dir);
       const looking = event.type === 'tool_use' && lookKind(event.tool, event.input);
       if (looking) {
         looked[looking === 'file' ? 'files' : 'searches'] += 1;
@@ -88,20 +103,43 @@ export function createStepTracker(): StepTracker {
       return withLooked(agentLine(event, plan, dir));
     },
   };
+
+  /** Just the highlights: a subtask finished, a question, the handover. */
+  function highlight(event: AgentEvent, plan: Plan | undefined, dir: string) {
+    looked = { files: 0, searches: 0 };
+    if (event.type === 'tool_use' && HIGHLIGHTS.has(event.tool)) {
+      pending.set(event.id, event);
+      return undefined;
+    }
+    if (event.type !== 'tool_result') return undefined;
+    const call = pending.get(event.id);
+    pending.delete(event.id);
+    if (!call || !event.ok || !HIGHLIGHTS.has(call.tool)) return undefined;
+    // A subtask starting is a step; one finished is news.
+    if (call.tool === McpTools.updateSubtask && !/closed/.test(JSON.stringify(call.input))) {
+      return undefined;
+    }
+    if (ASKING.has(call.tool)) asked = true;
+    return toolLine(call.tool, call.input, plan, dir);
+  }
 }
 
 /**
  * Build events as terminal output: each task's steps (see StepTracker), and the
  * build's own news (a task starting, finishing, waiting on a limit).
  */
-export function createBuildRenderer(root: string): BuildRenderer {
+export function createBuildRenderer(
+  root: string,
+  /** True while only the highlights should show; every step otherwise. */
+  highlightsOnly: () => boolean = () => false,
+): BuildRenderer {
   /** Tasks being built, and the worktree each is in, so paths read relative to it. */
   const active = new Map<string, string>();
   const steps = new Map<string, StepTracker>();
   const stepsFor = (taskId: string) => {
     const existing = steps.get(taskId);
     if (existing) return existing;
-    const tracker = createStepTracker();
+    const tracker = createStepTracker(highlightsOnly);
     steps.set(taskId, tracker);
     return tracker;
   };
@@ -187,7 +225,7 @@ function agentLine(
   if (event.type === 'compacted') return compactedLine(event);
   if (event.type === 'text') {
     const text = event.text.trim();
-    return text ? indent(renderInline(text)) : undefined;
+    return text ? indent(renderMarkdown(text)) : undefined;
   }
   if (event.type !== 'tool_use') return undefined;
   return toolLine(event.tool, event.input, plan, root);

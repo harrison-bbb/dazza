@@ -1,12 +1,13 @@
 import { type Config, DEFAULT_PARALLEL } from '../core/config.js';
 import { shortDuration, type TimeLeft, timeLeft } from '../core/estimates.js';
+import type { Event } from '../core/schema.js';
 import type { Store } from '../core/store.js';
 
-/** How the project stands, for anything that says how long's left. */
+/** How the project stands, for anything that says how long's left (and what's being asked). */
 export async function projectEstimate(
   store: Store,
   config: Config,
-): Promise<{ left?: TimeLeft; ahead: boolean }> {
+): Promise<{ left?: TimeLeft; ahead: boolean; events?: Event[] }> {
   const settings = await config.readSettings();
   const plan = await store.readPlan();
   const ahead = settings.buildAhead !== false;
@@ -15,6 +16,7 @@ export async function projectEstimate(
   return {
     left: timeLeft(plan, events, { parallel: settings.parallelTasks ?? DEFAULT_PARALLEL }),
     ahead,
+    events,
   };
 }
 

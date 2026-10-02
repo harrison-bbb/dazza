@@ -18,7 +18,14 @@ import type { Usage } from './commands.js';
 import { describeTool, planCard } from './describe.js';
 import { buildStatus } from './progress.js';
 import { describeShellRuns, type ShellRun } from './shell.js';
-import { paint, renderInline, stripAnsi } from './style.js';
+import {
+  codeLine,
+  MarkdownLines,
+  paint,
+  renderInline,
+  renderMarkdown,
+  stripAnsi,
+} from './style.js';
 import type { StatusText } from './terminal.js';
 
 /** Where the session's output goes. The terminal in practice; a recorder in tests. */
@@ -34,6 +41,8 @@ export interface SessionOutput {
   status(key: 'chat' | 'build', text: StatusText | undefined): void;
   /** Show (or clear) the unfinished line of a reply as it streams in. */
   draft?(text: string | undefined): void;
+  /** Show (or clear) a line per building task: what it's doing right now. */
+  panel?(lines: string[] | undefined): void;
 }
 
 export interface SessionOptions {
@@ -80,6 +89,7 @@ class StreamedText {
   private text = '';
   private printed = 0;
   private lines = 0;
+  private markdown = new MarkdownLines();
 
   constructor(private readonly output: SessionOutput) {}
 
@@ -93,13 +103,14 @@ class StreamedText {
       this.printed += end + 1;
     }
     const rest = this.text.slice(this.printed);
-    this.output.draft?.(rest ? this.format(rest) : undefined);
+    this.output.draft?.(rest ? this.draftOf(rest) : undefined);
   }
 
   /** The message is complete: its last line, then a blank line, as a whole reply ends. */
   end(): void {
     const rest = this.text.slice(this.printed);
     if (rest) this.printLine(rest);
+    for (const line of this.markdown.flush()) this.show(line);
     this.output.draft?.(undefined);
     this.output.print('');
     this.started = false;
@@ -107,17 +118,28 @@ class StreamedText {
     this.text = '';
     this.printed = 0;
     this.lines = 0;
+    this.markdown = new MarkdownLines();
   }
 
+  /** A finished line of Markdown: shown as it renders (a table waits for its last row). */
   private printLine(line: string): void {
+    for (const rendered of this.markdown.push(line)) this.show(rendered);
+  }
+
+  private show(rendered: string): void {
     // A reply opens with a blank line and its marker, like everything Dazza says.
-    this.output.print(this.lines === 0 ? `\n${this.format(line)}` : this.format(line));
+    this.output.print(this.lines === 0 ? `\n${this.place(rendered)}` : this.place(rendered));
     this.lines++;
   }
 
-  private format(line: string): string {
-    if (this.lines === 0) return `${paint.hex(BRAND, '●')} ${this.label}${renderInline(line)}`;
-    return line ? `  ${renderInline(line)}` : '';
+  private place(rendered: string): string {
+    if (this.lines === 0) return `${paint.hex(BRAND, '●')} ${this.label}${rendered}`;
+    return rendered ? `  ${rendered}` : '';
+  }
+
+  /** The line still being written: inline styling only, until it's whole. */
+  private draftOf(line: string): string {
+    return this.place(this.markdown.inCode ? codeLine(line) : renderInline(line));
   }
 }
 
@@ -176,6 +198,11 @@ export class ChatSession {
   private contextWindow = 200_000;
   /** Tasks being built right now. */
   private readonly inProgress = new Set<string>();
+  /**
+   * Show every step builders take (every read, edit and command) rather than
+   * just the highlights. Ctrl+O switches it; /settings keeps it.
+   */
+  everyStep = false;
 
   constructor(private readonly options: SessionOptions) {}
 
@@ -214,6 +241,15 @@ export class ChatSession {
 
   send(message: string, origin: MessageOrigin = 'terminal'): void {
     this.queue.push({ text: message, origin });
+    // Mid-reply: say it's been heard and will be answered next, as Claude Code does.
+    if (this.chat && origin === 'terminal') {
+      const waiting = this.queue.length;
+      this.options.output.print(
+        paint.dim(
+          `  Queued${waiting > 1 ? ` (${waiting} waiting)` : ''}: I’ll answer once I’ve finished this reply. Esc stops the reply and drops what’s queued.`,
+        ),
+      );
+    }
     if (!this.chat) {
       const controller = new AbortController();
       this.chat = { controller, done: this.drain(controller.signal) };
@@ -378,7 +414,7 @@ export class ChatSession {
           // Amid a build's output, a reply needs a name on it to be seen.
           const label = this.isBuilding && reply.length === 1 ? replyLabel() : '';
           showStep(steps.flush());
-          output.say(label + renderInline(event.text));
+          output.say(label + renderMarkdown(event.text));
         } else if (event.type === 'tool_use') {
           rewrotePlan ||= event.tool === McpTools.savePlan;
           if (event.tool === McpTools.savePlan) {
@@ -441,7 +477,12 @@ export class ChatSession {
 
   private async runBuild(signal: AbortSignal): Promise<void> {
     const { store, config, provider, workerMcp, output, onBuildEvent } = this.options;
-    const render = createBuildRenderer(store.root);
+    const render = createBuildRenderer(store.root, () => !this.everyStep);
+    /** What each building task is doing right now, one line each above the status line. */
+    const doing = new Map<string, string>();
+    const showDoing = () => output.panel?.(doing.size > 0 ? [...doing.values()] : undefined);
+    const doingLine = (task: { id: string; title: string }, what: string) =>
+      `  ${paint.dim(task.id)} ${task.title} ${paint.dim(`· ${what}`)}`;
     output.status('build', 'Getting ready to build');
     const building = this.inProgress;
     building.clear();
@@ -501,6 +542,19 @@ export class ChatSession {
         await activity.record(event);
         if (event.type === 'task_started') building.add(event.task.id);
         if (event.type === 'task_finished') building.delete(event.task.id);
+        if (event.type === 'task_started') {
+          doing.set(event.task.id, doingLine(event.task, 'Starting'));
+          showDoing();
+        } else if (event.type === 'task_finished') {
+          doing.delete(event.task.id);
+          showDoing();
+        } else if (event.type === 'agent' && event.event.type === 'tool_use') {
+          doing.set(
+            event.task.id,
+            doingLine(event.task, describeTool(event.event.tool, event.event.input)),
+          );
+          showDoing();
+        }
         if (event.type === 'task_started' || event.type === 'task_finished') {
           held.delete(event.task.id);
           await showProgress();
@@ -541,6 +595,7 @@ export class ChatSession {
     } finally {
       clearInterval(ticker);
       this.building = undefined;
+      output.panel?.(undefined);
       output.status('build', undefined);
       this.options.onBuildEnd?.();
     }

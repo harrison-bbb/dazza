@@ -1,3 +1,4 @@
+import { stdout } from 'node:process';
 import { approvePlan } from '../core/actions.js';
 import {
   type Config,
@@ -7,6 +8,7 @@ import {
   type Limits,
 } from '../core/config.js';
 import { clock } from '../core/errors.js';
+import type { Plan, Task } from '../core/schema.js';
 import type { Store } from '../core/store.js';
 import type { JevKeyCheck } from '../jev/providers.js';
 import type { ChannelId } from '../notify/channel.js';
@@ -20,6 +22,7 @@ import { editJev } from './jev.js';
 import { projectEstimate } from './progress.js';
 import { editSettings } from './settings.js';
 import { paint } from './style.js';
+import { wrap } from './terminal.js';
 import { WORK_COMMANDS } from './workCommands.js';
 
 /** What a command can reach. Kept small so commands are easy to test. */
@@ -286,16 +289,27 @@ export const COMMANDS: Command[] = [
   },
   {
     name: 'model',
-    args: '[name or number]',
-    description: 'Show the models you can use, or switch model',
-    async run({ provider, config, say, status }, args) {
+    args: '[name]',
+    description: 'Pick the model, or switch straight to one by name',
+    async run({ provider, config, say, status, select }, args) {
       status('Checking your models');
       const models = await provider.listModels().finally(() => status(undefined));
       const current = (await config.readSettings()).model ?? models[0]?.id;
 
       if (!args) {
-        say(modelList(models, current));
-        return;
+        const picked = await select(
+          'Which model? Esc keeps the one you have',
+          models.map((m) => ({
+            label: m.id === current ? `${m.name} (now)` : m.name,
+            hint: m.description,
+            value: m,
+          })),
+        );
+        if (!picked || picked.id === current) return say(paint.dim('Kept the model you have.'));
+        await config.updateSettings({ model: picked.id });
+        return say(
+          `${paint.green('✔')} Switched to ${paint.bold(picked.name)}. Dazza uses it from your next message.`,
+        );
       }
       const choice = pickModel(models, args);
       if (!choice) {
@@ -498,13 +512,127 @@ export function suggest(name: string): Command | undefined {
   return COMMANDS.find((c) => c.name.startsWith(name.slice(0, 2)));
 }
 
-/** The live menu under the input: commands matching what's typed after "/". */
-export function commandMenu(text: string): MenuItem[] {
-  if (!text.startsWith('/') || text.includes(' ')) return [];
+/** What the menu knows about the project, to offer what fits it now. */
+export interface MenuContext {
+  plan?: Plan | undefined;
+  /** Tasks waiting on the user's OK for a command. */
+  permissions?: Record<string, unknown> | undefined;
+  building?: boolean | undefined;
+}
+
+/**
+ * The live menu under the input: commands matching what's typed after "/",
+ * the ones that fit where the project is first; then, once a command that
+ * takes a task is typed, the tasks it can take.
+ */
+export function commandMenu(text: string, context: MenuContext = {}): MenuItem[] {
+  if (!text.startsWith('/')) return [];
+  const withArg = /^\/([\w-]+) (\S*)$/.exec(text);
+  if (withArg) return taskMenu(withArg[1]?.toLowerCase() ?? '', withArg[2] ?? '', context);
+  if (text.includes(' ')) return [];
   const typed = text.slice(1).toLowerCase();
-  return COMMANDS.filter((c) =>
+  const matching = COMMANDS.filter((c) =>
     [c.name, ...(c.aliases ?? [])].some((n) => n.startsWith(typed)),
-  ).map((c) => ({ value: `/${c.name}`, hint: c.description }));
+  );
+  const first = relevantCommands(context);
+  const rank = (c: Command) => {
+    const i = first.indexOf(c.name);
+    return i < 0 ? first.length : i;
+  };
+  return matching
+    .map((c, i) => ({ c, i }))
+    .sort((a, b) => rank(a.c) - rank(b.c) || a.i - b.i)
+    .map(({ c }) => ({ value: `/${c.name}`, hint: c.description }));
+}
+
+/** The commands that fit where the project is, most useful first. */
+function relevantCommands({ plan, permissions = {}, building }: MenuContext): string[] {
+  if (!plan) return [];
+  if (!plan.approvedAt) return ['approve', 'scope', 'tasks'];
+  const has = (status: Task['status']) => plan.tasks.some((t) => t.status === status);
+  return [
+    ...(Object.keys(permissions).length > 0 ? ['allow', 'deny'] : []),
+    ...(has('review') ? ['review', 'try', 'accept', 'changes'] : []),
+    ...(has('blocked') ? ['review'] : []),
+    ...(building ? ['stop', 'status'] : has('planned') ? ['build'] : []),
+  ];
+}
+
+/** Which tasks each command can take, and whether more is typed after the task. */
+const TASK_ARGS: Record<
+  string,
+  { fits: (task: Task, permissions: Record<string, unknown>) => boolean; more?: boolean }
+> = {
+  accept: { fits: (t) => t.status === 'review' },
+  changes: { fits: (t) => t.status === 'review', more: true },
+  try: { fits: (t) => ['review', 'building', 'blocked'].includes(t.status) },
+  diff: { fits: (t) => ['review', 'building', 'blocked', 'closed'].includes(t.status) },
+  allow: { fits: (t, p) => p[t.id] !== undefined },
+  deny: { fits: (t, p) => p[t.id] !== undefined },
+  next: { fits: (t) => t.status === 'planned' || t.status === 'backlog' },
+  redo: { fits: (t) => ['review', 'building', 'blocked', 'closed'].includes(t.status), more: true },
+  cancel: { fits: (t) => t.status !== 'closed' && t.status !== 'cancelled' },
+};
+
+const STATUS_WORDS: Record<Task['status'], string> = {
+  review: 'in review',
+  building: 'building',
+  blocked: 'waiting on you',
+  planned: 'planned',
+  backlog: 'backlog',
+  closed: 'closed',
+  cancelled: 'cancelled',
+};
+
+/** "/accept " offers the tasks in review; "/allow " the ones asking to run a command. */
+function taskMenu(
+  name: string,
+  typed: string,
+  { plan, permissions = {} }: MenuContext,
+): MenuItem[] {
+  const command = COMMANDS.find((c) => c.name === name || c.aliases?.includes(name));
+  const args = command && TASK_ARGS[command.name];
+  if (!command || !args || !plan) return [];
+  const query = typed.toLowerCase();
+  return plan.tasks
+    .filter((t) => args.fits(t, permissions))
+    .filter((t) => t.id.toLowerCase().startsWith(query))
+    .map((t) => ({
+      value: `/${command.name} ${t.id}`,
+      label: t.id,
+      hint: `${t.title} · ${STATUS_WORDS[t.status]}`,
+      ...(args.more && { insert: true }),
+    }));
+}
+
+/** Keys that do something at the prompt, for `?` and /help. */
+export const SHORTCUTS: [string, string][] = [
+  ['Enter', 'send · \\ then Enter, Option+Enter or Ctrl+J for a new line'],
+  ['Esc', 'stop my reply'],
+  ['↑ ↓', 'earlier messages · Ctrl+R to search them'],
+  ['Tab', 'complete a command, a task or a file'],
+  ['/  @  !', 'commands · point me at a file · run a shell command yourself'],
+  ['Ctrl+V', 'paste a screenshot'],
+  ['Option+← →', 'move a word at a time · Option+Backspace deletes one'],
+  ['Ctrl+A E U K W', 'start, end, delete to start, to end, the word before'],
+  ['Ctrl+O', 'show every step builders take, or just the highlights'],
+  ['Ctrl+L', 'clear the screen'],
+  ['Ctrl-C twice', 'leave'],
+];
+
+/** `?` on an empty prompt: the shortcuts, as a menu to glance at. Enter prints them. */
+export function shortcutMenu(): MenuItem[] {
+  return SHORTCUTS.map(([keys, what]) => ({ value: '?', label: keys, hint: what }));
+}
+
+export function shortcutsText(): string {
+  const width = Math.max(...SHORTCUTS.map(([keys]) => keys.length)) + 3;
+  return [
+    'Shortcuts:',
+    ...SHORTCUTS.map(
+      ([keys, what]) => `  ${paint.hex(BRAND, keys.padEnd(width))}${paint.dim(what)}`,
+    ),
+  ].join('\n');
 }
 
 /** /help's sections, in the README's order. Anything unlisted goes under Setup. */
@@ -533,10 +661,26 @@ const HELP_HIDDEN = new Set([
   'phone-merge',
 ]);
 
-export function helpText(): string {
+/** Where /help's descriptions start, so they line up. */
+const HELP_COLUMN = 26;
+
+export function helpText(width = (stdout.columns || 80) - 1): string {
+  // Each row sits under Dazza's marker (two columns) and is indented two more.
+  const room = Math.max(24, width - 4 - HELP_COLUMN);
+  const under = (text: string) =>
+    wrap(text, room)
+      .split('\n')
+      .map((line) => `  ${' '.repeat(HELP_COLUMN)}${paint.dim(line)}`);
   const row = (c: Command) => {
     const usage = `/${c.name}${c.args ? ` ${c.args}` : ''}`;
-    return `  ${paint.hex(BRAND, usage.padEnd(26))}${paint.dim(c.description)}`;
+    const [first = '', ...rest] = under(c.description);
+    // A long usage (/changes <task> <what to change>) gets a line of its own.
+    if (usage.length >= HELP_COLUMN - 1) {
+      return [`  ${paint.hex(BRAND, usage)}`, first, ...rest].join('\n');
+    }
+    return [`  ${paint.hex(BRAND, usage.padEnd(HELP_COLUMN))}${first.trimStart()}`, ...rest].join(
+      '\n',
+    );
   };
   const listed = new Set(HELP_GROUPS.flatMap(([, names]) => names));
   const sections = HELP_GROUPS.map(([title, names]) => {
@@ -548,24 +692,15 @@ export function helpText(): string {
       paint.bold(title),
       ...commands.flatMap((c) =>
         c.name === 'settings'
-          ? [row(c), `  ${' '.repeat(26)}${paint.dim(`Or straight to one: ${SETTING_SHORTCUTS}`)}`]
+          ? [row(c), ...under(`Or straight to one: ${SETTING_SHORTCUTS}`)]
           : [row(c)],
       ),
     ].join('\n');
   });
   const tips = paint.dim(
-    'Start a line with ! to run a shell command yourself, and @ to point me at a file. Ctrl+V pastes a screenshot. \\ then Enter (or Option+Enter) starts a new line. Esc stops my reply.',
+    '@ points me at a file, ! runs a shell command yourself. ? lists the keyboard shortcuts.',
   );
   return `Just type to talk to me. Or use a command:\n${tips}\n\n${sections.join('\n\n')}`;
-}
-
-export function modelList(models: ModelOption[], current: string | undefined): string {
-  const width = Math.max(...models.map((m) => m.name.length));
-  const rows = models.map((m, i) => {
-    const marker = m.id === current ? paint.green('●') : ' ';
-    return `${marker} ${paint.dim(String(i + 1).padStart(2))}  ${m.name.padEnd(width)}  ${paint.dim(m.description)}`;
-  });
-  return `Models you can use:\n${rows.join('\n')}\n${paint.dim('Switch with /model <number or name>, e.g. /model 2')}`;
 }
 
 /** Match by list number, id ("sonnet") or display name ("Sonnet 5"). */

@@ -37,6 +37,11 @@ export const Settings = z.object({
    * for the user to approve it (`/build-ahead off` waits). Unset means on.
    */
   buildAhead: z.boolean().optional(),
+  /**
+   * Show every step builders take (each read, edit and command) instead of
+   * just the highlights. Ctrl+O switches it. Unset means just the highlights.
+   */
+  buildSteps: z.boolean().optional(),
   /** One-off tips already shown, so each is said once (e.g. 'background' on leaving mid-build). */
   tipsShown: z.array(z.string()).optional(),
   /** The user chose not to connect Slack or Telegram during onboarding; don't ask again. */

@@ -31,6 +31,13 @@ function press(keys: (string | Key)[], start: EditorState = initialState()) {
 
 const key = (name: string, extra: Partial<Key> = {}): Key => ({ name, ...extra });
 
+/** The editor's state after the keys, for tests that keep going from there. */
+function stateAfter(keys: (string | Key)[], start?: EditorState): EditorState {
+  const outcome = press(keys, start);
+  if (outcome.type !== 'edit') throw new Error(`expected an edit, got ${outcome.type}`);
+  return outcome.state;
+}
+
 describe('editor', () => {
   it('types, moves and deletes', () => {
     const result = press(['helo', key('left'), 'l', key('end'), '!', key('backspace')]);
@@ -215,5 +222,70 @@ describe('clipVisible', () => {
     const cut = clipVisible(coloured, 10);
     expect(cut).toBe('\x1b[2mBuilding …\x1b[0m');
     expect(stripAnsi(cut)).toHaveLength(10);
+  });
+});
+
+describe('moving a word at a time', () => {
+  it('jumps words with Option or Ctrl and the arrows, and Option+b/f', () => {
+    const start = stateAfter(['make the button bigger']);
+    expect(press([key('left', { meta: true })], start)).toMatchObject({ state: { cursor: 16 } });
+    expect(press([key('left', { ctrl: true }), key('left', { ctrl: true })], start)).toMatchObject({
+      state: { cursor: 9 },
+    });
+    expect(
+      press([key('home'), key('f', { meta: true }), key('right', { ctrl: true })], start),
+    ).toMatchObject({ state: { cursor: 8 } });
+  });
+
+  it('deletes the word before the cursor with Option+Backspace', () => {
+    expect(press(['make it bigger', key('backspace', { meta: true })])).toMatchObject({
+      state: { text: 'make it ', cursor: 8 },
+    });
+  });
+});
+
+describe('searching history (Ctrl+R)', () => {
+  const history = ['build the login page', '/accept T2', 'make the login button blue'];
+
+  it('finds the latest message containing what’s typed, and older ones on Ctrl+R', () => {
+    const found = press([key('r', { ctrl: true }), 'login'], initialState(history));
+    expect(found).toMatchObject({
+      state: { text: 'make the login button blue', search: { query: 'login', index: 2 } },
+    });
+    const older = press(
+      [key('r', { ctrl: true })],
+      stateAfter([key('r', { ctrl: true }), 'login'], initialState(history)),
+    );
+    expect(older).toMatchObject({ state: { text: 'build the login page', search: { index: 0 } } });
+  });
+
+  it('keeps the match to edit on Enter, and goes back to what was typed on Esc', () => {
+    const start = stateAfter(['draft', key('r', { ctrl: true }), 'T2'], initialState(history));
+    const kept = press([key('return')], start);
+    expect(kept).toMatchObject({ type: 'edit', state: { text: '/accept T2', search: undefined } });
+    const cancelled = press([key('escape')], start);
+    expect(cancelled).toMatchObject({ state: { text: 'draft', search: undefined } });
+  });
+
+  it('says when nothing matches', () => {
+    const state = stateAfter([key('r', { ctrl: true }), 'zzz'], initialState(history));
+    expect(state.text).toBe('');
+    expect(stripAnsi(layout('› ', state, [], false, 80).lines.at(-1) ?? '')).toContain(
+      'search history: zzz  no match',
+    );
+  });
+});
+
+describe('the footer', () => {
+  it('goes under the input, and gives way to the menu', () => {
+    const state = initialState();
+    expect(layout('› ', state, [], false, 40, undefined, ['  footer']).lines).toEqual([
+      '› ',
+      '  footer',
+    ]);
+    const withMenu = layout('› ', { ...state, text: '/' }, menu('/'), false, 60, undefined, [
+      '  footer',
+    ]);
+    expect(withMenu.lines.join('\n')).not.toContain('footer');
   });
 });

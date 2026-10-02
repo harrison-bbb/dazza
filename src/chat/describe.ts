@@ -2,7 +2,7 @@ import { basename } from 'node:path';
 import { humanDuration, minutesLeft, type TimeLeft } from '../core/estimates.js';
 import { currentMilestone } from '../core/milestones.js';
 import { currentTask, nextTask, progress } from '../core/plan.js';
-import type { Plan, Task } from '../core/schema.js';
+import type { Event, Plan, Task } from '../core/schema.js';
 import { McpTools } from '../mcp/server.js';
 import { paint } from './style.js';
 
@@ -19,6 +19,8 @@ export interface GreetingContext {
   left?: TimeLeft;
   /** Tasks start on top of work in review (/build-ahead). */
   ahead?: boolean;
+  /** The event log, to quote what blocked tasks are asking. */
+  events?: Event[];
 }
 
 /** What to tell the user when they open `dazza`, based on where the project is at. */
@@ -62,29 +64,63 @@ function greetingFor(plan: Plan | undefined, context: GreetingContext): string {
   const withStatus = (status: Task['status']) => plan.tasks.filter((t) => t.status === status);
   const stage = currentMilestone(plan);
   const left = context.left?.wall ?? minutesLeft(plan);
+  const review = withStatus('review');
+  const blocked = withStatus('blocked');
+  const asking = (task: Task) =>
+    context.events
+      ?.filter((e) => e.type === 'comment' && e.actor === 'dazza' && e.taskId === task.id)
+      .at(-1)?.message;
+  // One line for where things stand, then one for each thing to know about.
   return [
-    `${closed}/${total} tasks closed${left ? ` (${humanDuration(left)} of building left)` : ''}.`,
-    stage &&
-      `Working towards ${stage.milestone.id} ${stage.milestone.title} (${stage.closed}/${stage.total}).`,
-    current && `Building ${current.id} ${current.title}.`,
-    waiting(withStatus('review'), 'waiting for your review'),
-    waiting(withStatus('blocked'), 'blocked on you'),
-    withStatus('review').length + withStatus('blocked').length > 0 &&
-      (remote ? 'Their messages are above.' : '/review to go through them.'),
+    [
+      `${closed}/${total} tasks closed`,
+      left ? `${humanDuration(left)} of building left` : undefined,
+      stage &&
+        `working towards ${stage.milestone.id} ${stage.milestone.title} (${stage.closed}/${stage.total})`,
+    ]
+      .filter(Boolean)
+      .join(' · '),
+    current && `${paint.green('◐')} Building ${current.id} ${current.title}`,
+    ...listed(
+      review,
+      `${paint.amber('◉')} `,
+      (t) => `${t.id} ${t.title} is waiting for your review`,
+      (n, ids) => `${n} tasks are waiting for your review (${ids})`,
+    ),
+    ...listed(
+      blocked,
+      `${paint.red('⊘')} `,
+      (t) => {
+        const question = asking(t);
+        return `${t.id} ${t.title} needs you${question ? `: ${clipped(question)}` : ''}`;
+      },
+      (n, ids) => `${n} tasks are blocked on you (${ids})`,
+    ),
+    review.length + blocked.length > 0 &&
+      paint.dim(remote ? 'Their messages are above.' : '/review to go through them.'),
     next &&
       `Next up: ${next.id} ${next.title}. ${remote ? 'Tell me to start building.' : 'Run /build to start.'}`,
   ]
     .filter(Boolean)
-    .join(' ');
+    .join('\n');
 }
 
-/** "T3 Editor is waiting for your review", or "2 tasks are … (T3, T4)". */
-function waiting(tasks: Task[], what: string): string | undefined {
-  const [only] = tasks;
-  if (!only) return undefined;
-  return tasks.length === 1
-    ? `${only.id} ${only.title} is ${what}.`
-    : `${tasks.length} tasks are ${what} (${tasks.map((t) => t.id).join(', ')}).`;
+/** A line per task, or one line for all of them when there are more than a few. */
+function listed(
+  tasks: Task[],
+  icon: string,
+  each: (task: Task) => string,
+  all: (count: number, ids: string) => string,
+): string[] {
+  if (tasks.length === 0) return [];
+  if (tasks.length > 3) return [`${icon}${all(tasks.length, tasks.map((t) => t.id).join(', '))}`];
+  return tasks.map((t) => `${icon}${each(t)}`);
+}
+
+/** A question, cut to a line's worth. */
+function clipped(text: string): string {
+  const line = text.split('\n')[0]?.trim() ?? '';
+  return line.length > 100 ? `${line.slice(0, 99)}…` : line;
 }
 
 /** What every command says before there's a plan. */
@@ -157,12 +193,65 @@ export function describeTool(tool: string, input: unknown): string {
     case 'Glob':
     case 'Grep':
       return 'Looking around the codebase';
+    case 'Edit':
+    case 'NotebookEdit':
+      return path ? `Editing ${basename(path)}` : 'Editing';
+    case 'Write':
+      return path ? `Writing ${basename(path)}` : 'Writing a file';
+    case 'Bash':
+    case 'Monitor': {
+      const command = commandOf(input);
+      return command
+        ? `Running ${command.length > 48 ? `${command.slice(0, 47)}…` : command}`
+        : 'Running a command';
+    }
+    case 'WebFetch':
+    case 'WebSearch':
+      return 'Looking something up';
+    case McpTools.updateSubtask:
+      return 'Ticking off a subtask';
+    case McpTools.checkMessages:
+      return 'Checking your messages';
+    case McpTools.block:
+      return 'Asking you something';
+    case McpTools.askPermission:
+      return 'Asking to run a command';
+    case McpTools.submit:
+      return 'Handing it over';
     default:
       return 'Working';
   }
 }
 
+function commandOf(input: unknown): string | undefined {
+  if (typeof input !== 'object' || input === null || !('command' in input)) return undefined;
+  return typeof input.command === 'string' ? input.command.split('\n')[0]?.trim() : undefined;
+}
+
 function pathOf(input: unknown): string | undefined {
   if (typeof input !== 'object' || input === null || !('file_path' in input)) return undefined;
   return typeof input.file_path === 'string' ? input.file_path : undefined;
+}
+
+/**
+ * What to say on the way out, as Codex does: what's still waiting on the user,
+ * and how to pick the conversation back up.
+ */
+export function farewell(
+  plan: Plan | undefined,
+  { conversation }: { conversation: boolean },
+): string {
+  const lines: string[] = [];
+  if (plan) {
+    const review = plan.tasks.filter((t) => t.status === 'review');
+    const blocked = plan.tasks.filter((t) => t.status === 'blocked');
+    if (review.length > 0) {
+      lines.push(`Waiting for your review: ${review.map((t) => `${t.id} ${t.title}`).join(', ')}.`);
+    }
+    if (blocked.length > 0) {
+      lines.push(`Waiting on your answer: ${blocked.map((t) => `${t.id} ${t.title}`).join(', ')}.`);
+    }
+  }
+  if (conversation) lines.push(paint.dim('`dazza --continue` picks this conversation back up.'));
+  return lines.join('\n');
 }
