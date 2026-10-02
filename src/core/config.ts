@@ -41,6 +41,8 @@ export const Settings = z.object({
   tipsShown: z.array(z.string()).optional(),
   /** The user chose not to connect Slack or Telegram during onboarding; don't ask again. */
   messagingSkipped: z.boolean().optional(),
+  /** The user chose not to connect Jev during onboarding; don't ask again. */
+  jevSkipped: z.boolean().optional(),
   /**
    * What Jev does, each on its own (`/jev`). Only with Jev connected; then
    * unset means on, since connecting it was the choice to use it.

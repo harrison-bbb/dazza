@@ -85,6 +85,8 @@ The first run asks how Dazza should reach the AI, then offers to link Slack or T
 
 On a subscription, Dazza uses the agent CLI's own sign-in. It strips any API key or other billing setting in your shell from the agent's environment, so billing can't quietly switch.
 
+Last, it offers Jev, which is optional. Jev is TypeSafe's fast classifier. With your own key (from TypeSafe, OpenRouter or Vercel AI Gateway), simple tasks build on a cheaper model, and work that isn't really finished goes back to the builder before you see it. It's asked once: skip it, and `/jev` connects it any time.
+
 ## Commands
 
 Just type to talk to Dazza, about anything in the project. Type `/` for commands; they're instant and cost nothing. It works like Claude Code: replies stream in, `!npm test` runs a command yourself (Dazza hears how it went), `@src/app.ts` points at a file, Ctrl+V pastes a screenshot, `\` then Enter (or Option+Enter) starts a new line, ↑ recalls earlier messages, and Esc stops a reply.

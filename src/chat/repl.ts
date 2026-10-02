@@ -58,6 +58,7 @@ import {
 import { BRAND, logo, sessionInfo } from './banner.js';
 import { type CommandContext, commandMenu, parseCommand, suggest } from './commands.js';
 import { greeting, NO_PLAN } from './describe.js';
+import { offerJev } from './jev.js';
 import { projectEstimate } from './progress.js';
 import { ChatSession } from './session.js';
 import { runShell } from './shell.js';
@@ -702,6 +703,16 @@ async function firstConnect(terminal: Terminal, config: Config): Promise<Connect
         await config.updateSettings({ messagingSkipped: true });
       }
     }
+    // Then Jev, also optional and also asked once.
+    await offerJev(
+      config,
+      {
+        say,
+        select: (question, choices) => terminal.select(question, choices),
+        readLine: (options) => terminal.readLine(options),
+      },
+      (link) => checkJevKey(link),
+    );
   }
   return connection;
 }

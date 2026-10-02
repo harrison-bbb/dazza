@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { connectJev, editJev, type JevUI } from '../../src/chat/jev.js';
+import { connectJev, editJev, type JevUI, offerJev } from '../../src/chat/jev.js';
 import type { JevLink } from '../../src/core/config.js';
 import { jevOn } from '../../src/jev/features.js';
 import { useTempProject } from '../helpers.js';
@@ -88,5 +88,40 @@ describe('editJev', () => {
     expect(await editJev(project.config, ui, goodKey)).toEqual(['Jev: key forgotten']);
     expect(await project.config.readJev()).toBeUndefined();
     expect((await project.config.readSettings()).jev).toEqual({ modelRouting: false });
+  });
+});
+
+describe('offerJev (first run)', () => {
+  const project = useTempProject();
+
+  it('connects Jev when the user wants it, with both features on', async () => {
+    const { ui, said } = scripted(['Connect Jev', 'OpenRouter'], ['good-key']);
+    expect(await offerJev(project.config, ui, goodKey)).toBe(true);
+    expect(await project.config.readJev()).toEqual({ provider: 'openrouter', apiKey: 'good-key' });
+    expect(said[0]).toContain('never sees your code');
+    expect(said.at(-1)).toContain('model routing and the scope check are on');
+  });
+
+  it('remembers a skip, and doesn’t ask again', async () => {
+    const first = scripted(['Skip for now']);
+    expect(await offerJev(project.config, first.ui, goodKey)).toBe(false);
+    expect((await project.config.readSettings()).jevSkipped).toBe(true);
+    const again = scripted([]);
+    expect(await offerJev(project.config, again.ui, goodKey)).toBe(false);
+    expect(again.menus).toEqual([]);
+  });
+
+  it('counts backing out of the key as a skip', async () => {
+    const { ui } = scripted(['Connect Jev', 'TypeSafe'], [undefined]);
+    expect(await offerJev(project.config, ui, goodKey)).toBe(false);
+    expect((await project.config.readSettings()).jevSkipped).toBe(true);
+    expect(await project.config.readJev()).toBeUndefined();
+  });
+
+  it('doesn’t ask when Jev is already connected', async () => {
+    await project.config.writeJev({ provider: 'typesafe', apiKey: 'good-key' });
+    const { ui, menus } = scripted([]);
+    expect(await offerJev(project.config, ui, goodKey)).toBe(false);
+    expect(menus).toEqual([]);
   });
 });

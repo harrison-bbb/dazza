@@ -56,6 +56,40 @@ export async function connectJev(
   return undefined;
 }
 
+/**
+ * First run: offer Jev once, after the agent and messaging are set up. It's
+ * optional and uses the user's own key, so skipping is remembered and the
+ * question isn't asked again; /jev connects it any time. Resolves whether it
+ * was connected.
+ */
+export async function offerJev(
+  config: Config,
+  ui: JevUI,
+  checkKey: (link: JevLink) => Promise<JevKeyCheck>,
+): Promise<boolean> {
+  if ((await config.readSettings()).jevSkipped || (await config.readJev())) return false;
+  ui.say(
+    'Optional: Jev, a fast classifier from TypeSafe. With it, simple tasks build on a cheaper, ' +
+      'faster model, and work that isn’t really finished goes back to the builder before you see it. ' +
+      'It uses your own key (TypeSafe, OpenRouter or Vercel), costs a fraction of a cent a task, ' +
+      'and never sees your code.',
+  );
+  const connect = await ui.select('Connect Jev?', [
+    { label: 'Connect Jev', hint: 'paste a key now', value: true },
+    { label: 'Skip for now', hint: 'run /jev any time', value: false },
+  ]);
+  const link = connect ? await connectJev(ui, checkKey) : undefined;
+  if (!link) {
+    await config.updateSettings({ jevSkipped: true });
+    return false;
+  }
+  await config.writeJev(link);
+  ui.say(
+    `Jev connected through ${JEV_PROVIDERS[link.provider].name}: model routing and the scope check are on. /jev switches either off.`,
+  );
+  return true;
+}
+
 type Row = { feature: JevFeature } | 'key' | 'forget';
 
 /**
