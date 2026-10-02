@@ -64,6 +64,17 @@ export const TaskBuild = z.object({
   sessionId: z.string().optional(),
   /** How much of the event log the worker has seen, so new comments reach it once. */
   seenEvents: z.number().int().nonnegative().default(0),
+  /**
+   * The model Jev routing picked (src/jev/taskModel.ts), kept so a resumed
+   * task carries on with it. `model` is unset when it kept the user's own.
+   */
+  route: z
+    .object({
+      model: z.string().optional(),
+      /** How many times the work had been sent back when it was decided. */
+      sentBack: z.number().int().nonnegative(),
+    })
+    .optional(),
 });
 export type TaskBuild = z.infer<typeof TaskBuild>;
 const BuildState = z.record(z.string(), TaskBuild);

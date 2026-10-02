@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **`/jev`: the right model for each task, and work checked against its scope.** Connect Jev, TypeSafe's classifier, with your own key through TypeSafe, OpenRouter or Vercel AI Gateway. Each part switches on and off by itself in `/jev`:
+  - **Model routing.** Before a builder starts a task, Jev judges what it needs, and simple work builds on a cheaper, faster model. It never goes above the model you chose with `/model`, and keeps it for anything touching money, credentials or production. The choice shows on the task's timeline.
+  - **Scope check.** When a builder hands work over, Jev checks whether its evidence shows each criterion is met, rather than just saying so. Weak work goes back to the builder before you see it (twice at most). What's still doubtful is marked **unproven** in your review, on the board and on your phone.
+
+  First-time setup offers it once, after Slack and Telegram (skip it and `/jev` connects it later). Jev sees task descriptions and builders' reports, never code. It costs a fraction of a cent per task, and if it can't be reached Dazza works as it did without it. `dazza doctor` checks the key.
+
 ## 0.1.5
 
 - **Built like a senior engineer and a designer would, even from one line.** A short request is treated as a brief to fill out properly (every screen's empty, loading and error states, validation, phones, keyboard access, realistic data), not a thin build and not a quiz. Every plan with a screen now has a design direction (feel, colour tokens, type, spacing, components, what to avoid) that you see in the play-back, set up as code in the first task. Builders follow a UI standard that rules out the generic AI look, and review their own screenshots like a designer before handing over. Dazza refuses handoffs with TODO comments, unimplemented stubs or lorem ipsum.

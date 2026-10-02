@@ -85,6 +85,8 @@ The first run asks how Dazza should reach the AI, then offers to link Slack or T
 
 On a subscription, Dazza uses the agent CLI's own sign-in. It strips any API key or other billing setting in your shell from the agent's environment, so billing can't quietly switch.
 
+Last, it offers Jev, which is optional. Jev is TypeSafe's fast classifier. With your own key (from TypeSafe, OpenRouter or Vercel AI Gateway), simple tasks build on a cheaper model, and work that isn't really finished goes back to the builder before you see it. It's asked once: skip it, and `/jev` connects it any time.
+
 ## Commands
 
 Just type to talk to Dazza, about anything in the project. Type `/` for commands; they're instant and cost nothing. It works like Claude Code: replies stream in, `!npm test` runs a command yourself (Dazza hears how it went), `@src/app.ts` points at a file, Ctrl+V pastes a screenshot, `\` then Enter (or Option+Enter) starts a new line, ↑ recalls earlier messages, and Esc stops a reply.
@@ -120,6 +122,7 @@ Just type to talk to Dazza, about anything in the project. Type `/` for commands
 | Setup | |
 |---|---|
 | `/settings` | How Dazza works, in one list: pick one to change it (below) |
+| `/jev` | Optional: connect Jev (a fast classifier, through TypeSafe, OpenRouter or Vercel) so each task gets the model it needs and weak handoffs go back to the builder. Each part switches on and off by itself |
 | `/model`, `/usage` | Switch models; see your plan's limits or API spend |
 | `/mcp [on\|off]` | The MCP servers you have in Claude Code or Codex. Dazza's chat can use them (builders can't) |
 | `/slack`, `/telegram` | Connect (or check) Slack or Telegram. `-disconnect` to unlink |

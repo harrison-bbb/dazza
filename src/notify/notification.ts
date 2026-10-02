@@ -102,7 +102,10 @@ export async function notificationFor(
   const failing = checks.filter((c) => !c.passed).length;
   const criteria = handoff?.criteria ?? [];
   const unmet = criteria.filter((c) => !c.met).length;
+  const doubts = handoff?.doubts?.length ?? 0;
   const facts = [
+    doubts > 0 &&
+      (doubts === 1 ? '1 criterion looks unproven' : `${doubts} criteria look unproven`),
     criteria.length > 0 &&
       (unmet
         ? `${unmet} of ${criteria.length} criteria not met`

@@ -68,6 +68,11 @@ export const Handoff = z.object({
   checks: z.array(z.object({ name: z.string().min(1), passed: z.boolean() })).default([]),
   /** Screenshots of the finished work, when it has a UI worth showing. */
   screenshots: z.array(MediaPath).default([]),
+  /**
+   * Criteria the builder says are met but the scope check (src/jev/scopeCheck.ts)
+   * wasn't convinced by the evidence for: the user should check these first.
+   */
+  doubts: z.array(z.string()).optional(),
   submittedAt: Timestamp,
 });
 
@@ -183,6 +188,10 @@ export const EventType = z.enum([
   'comment',
   /** Dazza's guard stopped something the builder tried, or let it through with the user's OK. */
   'guarded',
+  /** Jev routing picked the model a task is built with. */
+  'routed',
+  /** The scope check sent a handoff back to its builder: the evidence didn't show the work was done. */
+  'sent_back',
 ]);
 
 export const Actor = z.enum(['user', 'dazza']);

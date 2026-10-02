@@ -1,9 +1,11 @@
 import { basename } from 'node:path';
 import { styleText } from 'node:util';
 import pkg from '../../package.json' with { type: 'json' };
-import { Config, type Connection } from '../core/config.js';
+import { Config, type Connection, type JevLink } from '../core/config.js';
 import { newerDazza, updateNotice } from '../core/updates.js';
 import { gitInstall, hasGit } from '../git/install.js';
+import { JEV_FEATURES, jevOn } from '../jev/features.js';
+import { checkJevKey, JEV_PROVIDERS, type JevKeyCheck } from '../jev/providers.js';
 import { findBrowser } from '../preview/capture.js';
 import { createProvider, PROVIDER_HELP, providerFor } from '../providers/index.js';
 import type { ProviderId } from '../providers/types.js';
@@ -32,6 +34,7 @@ export async function doctor(): Promise<void> {
     checkConnection(connection),
     checkSlack(),
     checkTelegram(),
+    checkJev(config),
     checkBrowser(),
   ]);
   // After the rest: reading a secret saved in a file moves it into the keychain.
@@ -122,6 +125,36 @@ async function checkTelegram(): Promise<Check> {
       ? `linked to @${link.botUsername}`
       : 'not linked (optional; /telegram in the chat)',
   };
+}
+
+/** Jev is optional; a key that stopped working is worth knowing about, since it quietly does nothing. */
+export async function checkJev(
+  config: Config,
+  check: (link: JevLink) => Promise<JevKeyCheck> = (link) => checkJevKey(link),
+): Promise<Check> {
+  const link = await config.readJev();
+  if (!link)
+    return { label: 'Jev', ok: true, detail: 'not connected (optional; /jev in the chat)' };
+  const { name } = JEV_PROVIDERS[link.provider];
+  const settings = await config.readSettings();
+  const on = JEV_FEATURES.filter((f) => jevOn(settings, f.key)).map((f) => f.label.toLowerCase());
+  const doing = on.length > 0 ? on.join(' and ') : 'everything switched off';
+  switch (await check(link)) {
+    case 'valid':
+      return { label: 'Jev', ok: true, detail: `through ${name} · ${doing}` };
+    case 'invalid':
+      return {
+        label: 'Jev',
+        ok: false,
+        detail: `${name} doesn’t accept the key, so Jev isn’t doing anything (in the chat, /jev, then Key)`,
+      };
+    default:
+      return {
+        label: 'Jev',
+        ok: true,
+        detail: `through ${name}, but couldn’t reach it to check the key`,
+      };
+  }
 }
 
 async function checkSecrets(config: Config): Promise<Check> {

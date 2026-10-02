@@ -1,0 +1,161 @@
+import type { Config, JevLink } from '../core/config.js';
+import { JEV_FEATURES, type JevFeature, jevOn } from '../jev/features.js';
+import {
+  JEV_PROVIDER_IDS,
+  JEV_PROVIDERS,
+  type JevKeyCheck,
+  type JevProviderId,
+} from '../jev/providers.js';
+
+/**
+ * `/jev`: what Jev does for Dazza, each switched on or off by itself, and the
+ * key it uses. Jev is a fast classifier: it makes the small decisions (which
+ * model a task needs, whether a handoff holds up) so the coding agent doesn't
+ * spend its own time and limits on them.
+ */
+
+export interface JevUI {
+  say(text: string): void;
+  select<T>(
+    question: string,
+    choices: { label: string; hint?: string; value: T }[],
+  ): Promise<T | undefined>;
+  readLine(options: { prompt: string; mask?: boolean }): Promise<string | undefined>;
+}
+
+const KEY_ATTEMPTS = 3;
+
+/** Pick where to call Jev and paste a key for it, checked. Undefined if they back out. */
+export async function connectJev(
+  ui: JevUI,
+  checkKey: (link: JevLink) => Promise<JevKeyCheck>,
+): Promise<JevLink | undefined> {
+  const provider = await ui.select<JevProviderId>(
+    'Where should Dazza call Jev?',
+    JEV_PROVIDER_IDS.map((id) => ({
+      label: JEV_PROVIDERS[id].name,
+      hint: JEV_PROVIDERS[id].hint,
+      value: id,
+    })),
+  );
+  if (!provider) return undefined;
+  const { name, keyName, keyUrl } = JEV_PROVIDERS[provider];
+  ui.say(`Paste ${keyName}. Make one at ${keyUrl}`);
+  for (let attempt = 1; attempt <= KEY_ATTEMPTS; attempt++) {
+    const apiKey = (await ui.readLine({ prompt: 'API key: ', mask: true }))?.trim();
+    if (!apiKey) return undefined;
+    const link = { provider, apiKey };
+    const check = await checkKey(link);
+    if (check === 'valid') return link;
+    ui.say(
+      check === 'invalid'
+        ? `${name} didn’t accept that key. Check it and try again.`
+        : `Couldn’t reach ${name} to check the key. Check your connection and try again.`,
+    );
+  }
+  return undefined;
+}
+
+/**
+ * First run: offer Jev once, after the agent and messaging are set up. It's
+ * optional and uses the user's own key, so skipping is remembered and the
+ * question isn't asked again; /jev connects it any time. Resolves whether it
+ * was connected.
+ */
+export async function offerJev(
+  config: Config,
+  ui: JevUI,
+  checkKey: (link: JevLink) => Promise<JevKeyCheck>,
+): Promise<boolean> {
+  if ((await config.readSettings()).jevSkipped || (await config.readJev())) return false;
+  ui.say(
+    'Optional: Jev, a fast classifier from TypeSafe. With it, simple tasks build on a cheaper, ' +
+      'faster model, and work that isn’t really finished goes back to the builder before you see it. ' +
+      'It uses your own key (TypeSafe, OpenRouter or Vercel), costs a fraction of a cent a task, ' +
+      'and never sees your code.',
+  );
+  const connect = await ui.select('Connect Jev?', [
+    { label: 'Connect Jev', hint: 'paste a key now', value: true },
+    { label: 'Skip for now', hint: 'run /jev any time', value: false },
+  ]);
+  const link = connect ? await connectJev(ui, checkKey) : undefined;
+  if (!link) {
+    await config.updateSettings({ jevSkipped: true });
+    return false;
+  }
+  await config.writeJev(link);
+  ui.say(
+    `Jev connected through ${JEV_PROVIDERS[link.provider].name}: model routing and the scope check are on. /jev switches either off.`,
+  );
+  return true;
+}
+
+type Row = { feature: JevFeature } | 'key' | 'forget';
+
+/**
+ * The `/jev` list: pick a feature to switch it on or off, or change or forget
+ * the key, until Esc. Asks for a key first if there isn't one. Resolves what
+ * changed, in words.
+ */
+export async function editJev(
+  config: Config,
+  ui: JevUI,
+  checkKey: (link: JevLink) => Promise<JevKeyCheck>,
+): Promise<string[]> {
+  const changed: string[] = [];
+  let link = await config.readJev();
+  if (!link) {
+    ui.say(
+      'Jev is a fast classifier from TypeSafe. Dazza uses it for small decisions: which model ' +
+        'each task needs, and whether finished work holds up, for a fraction of a cent each.\n' +
+        'Dazza sends it task descriptions and builders’ reports, never your code.',
+    );
+    link = await connectJev(ui, checkKey);
+    if (!link) return changed;
+    await config.writeJev(link);
+    changed.push(`Jev: through ${JEV_PROVIDERS[link.provider].name}`);
+  }
+
+  for (;;) {
+    const settings = await config.readSettings();
+    const width = Math.max(...JEV_FEATURES.map((f) => f.label.length), 'Key'.length);
+    const where = (await config.jevKeyKeptIn()) ?? 'Dazza’s config folder (owner-only)';
+    const row = await ui.select<Row>('Jev: pick one to switch it, Esc when you’re done', [
+      ...JEV_FEATURES.map((feature) => ({
+        label: `${feature.label.padEnd(width)}  ${jevOn(settings, feature.key) ? 'On' : 'Off'}`,
+        hint: feature.about,
+        value: { feature },
+      })),
+      {
+        label: `${'Key'.padEnd(width)}  ${JEV_PROVIDERS[link.provider].name}`,
+        hint: `Kept in ${where}. Pick to change where Dazza calls Jev`,
+        value: 'key' as const,
+      },
+      {
+        label: 'Forget the key',
+        hint: 'Jev stops; Dazza works as it did without it',
+        value: 'forget' as const,
+      },
+    ]);
+    if (!row) return changed;
+
+    if (row === 'forget') {
+      await config.clearJev();
+      changed.push('Jev: key forgotten');
+      return changed;
+    }
+    if (row === 'key') {
+      const next = await connectJev(ui, checkKey);
+      if (next) {
+        await config.writeJev(next);
+        link = next;
+        changed.push(`Jev: through ${JEV_PROVIDERS[next.provider].name}`);
+      }
+      continue;
+    }
+    const { key, label } = row.feature;
+    const on = !jevOn(settings, key);
+    await config.updateSettings({ jev: { ...settings.jev, [key]: on } });
+    changed.push(`${label}: ${on ? 'On' : 'Off'}`);
+  }
+}

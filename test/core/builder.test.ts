@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type BuildEvent, build, resumeBrief, taskBrief } from '../../src/core/builder.js';
 import type { Event } from '../../src/core/schema.js';
 import { blockTask, submitTask } from '../../src/core/work.js';
@@ -77,6 +77,45 @@ describe('build loop', () => {
     expect(t1).toMatchObject({ autonomous: true, cwd: project.store.worktreeDir('T1') });
     expect(provider.runs[0]?.allowedTools).toContain('mcp__dazza__submit');
     expect(provider.runs[0]?.allowedTools).not.toContain('mcp__dazza__save_plan');
+  });
+
+  describe('with Jev routing', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('builds each task with the model Jev routes it to', async () => {
+      vi.stubGlobal('fetch', async () =>
+        Response.json({
+          model: 'jev',
+          answers: {
+            tier: {
+              type: 'choice',
+              choice: 'fast',
+              probabilities: { fast: 0.95, balanced: 0.05, deep: 0 },
+              confidence: 0.95,
+            },
+            risky: { type: 'noul', noul: 0.01 },
+          },
+        }),
+      );
+      await project.config.writeJev({ provider: 'typesafe', apiKey: 'k' });
+      await project.config.updateSettings({ parallelTasks: 1 });
+      const provider = new FakeProvider(undefined, [
+        { id: 'opus', name: 'Opus 5.5', description: '', autonomous: true },
+        { id: 'haiku', name: 'Haiku 4.5', description: '', autonomous: true },
+      ]);
+      provider.onRun = async (options) => {
+        await submitTask(project.store, currentTask(options), report);
+      };
+      await run(provider);
+      expect(provider.runs.map((r) => r.model)).toEqual(['haiku', 'haiku']);
+      // The session id written as the run started kept the choice alongside it.
+      expect(await project.store.readTaskBuild('T1')).toMatchObject({
+        sessionId: 'session-1',
+        route: { model: 'haiku', sentBack: 0 },
+      });
+    });
   });
 
   it('builds ahead on work waiting for review, so building doesn’t stop for it', async () => {

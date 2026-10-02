@@ -15,6 +15,7 @@ import { reportRequest } from '../core/report.js';
 import { StateError, Store } from '../core/store.js';
 import { newerDazza, updateNotice } from '../core/updates.js';
 import { gitInstall, hasGit } from '../git/install.js';
+import { checkJevKey } from '../jev/providers.js';
 import type {
   Channel,
   ChannelHandlers,
@@ -57,6 +58,7 @@ import {
 import { BRAND, logo, sessionInfo } from './banner.js';
 import { type CommandContext, commandMenu, parseCommand, suggest } from './commands.js';
 import { greeting, NO_PLAN } from './describe.js';
+import { offerJev } from './jev.js';
 import { projectEstimate } from './progress.js';
 import { ChatSession } from './session.js';
 import { runShell } from './shell.js';
@@ -410,6 +412,8 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
         { label: 'No', value: false },
       ])) === true,
     select: (question, choices) => terminal.select(question, choices),
+    readLine: (options) => terminal.readLine(options),
+    checkJevKey: (link) => checkJevKey(link),
     status: (text) => terminal.setStatus('chat', text),
     link: async (channel) => {
       if (await setUpChannel(channel, terminal, config)) {
@@ -699,6 +703,16 @@ async function firstConnect(terminal: Terminal, config: Config): Promise<Connect
         await config.updateSettings({ messagingSkipped: true });
       }
     }
+    // Then Jev, also optional and also asked once.
+    await offerJev(
+      config,
+      {
+        say,
+        select: (question, choices) => terminal.select(question, choices),
+        readLine: (options) => terminal.readLine(options),
+      },
+      (link) => checkJevKey(link),
+    );
   }
   return connection;
 }

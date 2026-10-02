@@ -40,6 +40,7 @@ import {
 } from '../core/work.js';
 import { Git } from '../git/git.js';
 import { judge } from '../guard/policy.js';
+import { scopeChecker } from '../jev/scopeCheck.js';
 import { ScreenshotRequest, Screenshots } from '../preview/screenshots.js';
 import { errorMessage } from '../util/text.js';
 import { MCP_SERVER_NAME } from './name.js';
@@ -681,7 +682,11 @@ function registerWorkerTools(server: McpServer, store: Store, taskId?: string): 
       inputSchema: { taskId: z.string(), ...WorkReport.shape },
     },
     async ({ taskId, ...report }) =>
-      ownTask(taskId, async () => toResult(await submitTask(store, taskId, report))),
+      ownTask(taskId, async () =>
+        toResult(
+          await submitTask(store, taskId, report, new Date(), scopeChecker(store, new Config())),
+        ),
+      ),
   );
 }
 

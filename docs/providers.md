@@ -89,6 +89,26 @@ Headless runs use `codex exec --json --skip-git-repo-check`, with configuration 
 
 Order matters: "usage credit limit reached" is about credits, not a usage limit. `credits` and `auth` are hopeless: retrying won't fix them. When a CLI starts retrying one of those, the adapter aborts it and finishes the run with the error straight away, instead of waiting minutes for the CLI to give up.
 
+## Model routing with Jev
+
+With Jev connected and model routing on (`/jev`), a builder doesn't always use the model chosen with `/model`. Before a task starts, `taskModel` (`src/jev/taskModel.ts`) asks Jev two questions about it: how capable a model it needs (`fast`, `balanced` or `deep`), and whether it touches money, credentials, auth, production data or anything hard to undo. `routeModel` (`src/jev/routing.ts`) then picks:
+
+- **The model chosen with `/model` is the ceiling.** Routing only steps down from it.
+- **It steps down only when it's safe to.** A task moves to a cheaper tier only if Jev puts the chance it needs more than that tier at 25% or less. Jev's probabilities are calibrated, so that's a real one-in-four.
+- **Risky tasks keep the ceiling.**
+- **Tiers come from the model family.** Haiku is `fast`, Sonnet `balanced`, Opus and Fable `deep`. On Codex, models named mini, nano, lite, flash or spark are `fast`. A model Dazza can't place is never routed to, and only models that can build on their own are picked.
+- **Work sent back twice gets a tier more.** That's twice by you or by the scope check.
+
+The choice is kept in the task's build record (`route` in `.dazza/build.json`), so a resumed session keeps its model, and it's shown on the task's timeline as a `routed` event. If Jev fails, the model list can't be read, or routing is off, the task builds with the `/model` choice as before.
+
+Jev is called through one of three providers (`src/jev/providers.ts`). All three speak TypeSafe's System One API (`POST <base>/v1/systemone`), so only the address and the model's name differ:
+
+| Provider | Base URL | Model |
+|---|---|---|
+| TypeSafe | `https://api.typesafe.ai` | `jev-latest` |
+| OpenRouter | `https://openrouter.ai/api` | `jev-1.13` |
+| Vercel AI Gateway | `https://ai-gateway.vercel.sh/typesafe` | `typesafe-ai/jev` |
+
 ## Adding a provider
 
 1. Implement `AgentProvider` in `src/providers/<name>.ts`. Keep argument building (`build<Name>Args`) and stream parsing as exported pure functions so they can be tested without spawning anything.

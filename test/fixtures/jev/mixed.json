@@ -1,0 +1,20 @@
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "tier": {
+      "type": "choice",
+      "choice": "balanced",
+      "probabilities": { "fast": 0.1, "balanced": 0.82, "deep": 0.08 },
+      "confidence": 0.81
+    },
+    "risky": { "type": "noul", "noul": 0.07 },
+    "clarity": {
+      "type": "score",
+      "score": 1.05,
+      "legend": { "0": "Vague", "1": "Workable", "2": "Precise" },
+      "probabilities": { "0": 0.0, "1": 0.95, "2": 0.05 },
+      "confidence": 0.92
+    }
+  },
+  "usage": { "input_tokens": 318, "output_tokens": 34 }
+}

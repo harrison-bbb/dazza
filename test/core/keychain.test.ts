@@ -81,6 +81,20 @@ describe('secrets in the OS keychain', () => {
     expect(await config.secretsKeptIn()).toEqual(['Dazza’s config folder (owner-only)']);
   });
 
+  it('keeps the Jev key in the keychain too, and says where', async () => {
+    const { store, kept } = memoryStore();
+    const config = new Config(project.config.dir, store);
+    await config.writeJev({ provider: 'openrouter', apiKey: 'sk-or-secret' });
+    const raw = await readFile(join(project.config.dir, 'jev.json'), 'utf8');
+    expect(raw).not.toContain('sk-or-secret');
+    expect([...kept.values()]).toEqual(['sk-or-secret']);
+    expect(await config.readJev()).toEqual({ provider: 'openrouter', apiKey: 'sk-or-secret' });
+    expect(await config.jevKeyKeptIn()).toBe('the test keychain');
+    await config.clearJev();
+    expect(kept.size).toBe(0);
+    expect(await config.jevKeyKeptIn()).toBeUndefined();
+  });
+
   it('is off when DAZZA_KEYCHAIN=off, as in these tests', () => {
     expect(secretStore('darwin', { DAZZA_KEYCHAIN: 'off' })).toBeUndefined();
     expect(secretStore('darwin', {})).toBeDefined();

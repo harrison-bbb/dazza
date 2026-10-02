@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
+import { JEV_PROVIDER_IDS } from '../jev/providers.js';
 import { isSealed, type SecretStore, secretStore } from './keychain.js';
 
 /**
@@ -40,6 +41,20 @@ export const Settings = z.object({
   tipsShown: z.array(z.string()).optional(),
   /** The user chose not to connect Slack or Telegram during onboarding; don't ask again. */
   messagingSkipped: z.boolean().optional(),
+  /** The user chose not to connect Jev during onboarding; don't ask again. */
+  jevSkipped: z.boolean().optional(),
+  /**
+   * What Jev does, each on its own (`/jev`). Only with Jev connected; then
+   * unset means on, since connecting it was the choice to use it.
+   */
+  jev: z
+    .object({
+      /** Pick each task's model from what it needs, up to the one chosen with /model. */
+      modelRouting: z.boolean().optional(),
+      /** Send a handoff back to its builder when the evidence doesn't show the work is done. */
+      scopeCheck: z.boolean().optional(),
+    })
+    .optional(),
 });
 export type Settings = z.infer<typeof Settings>;
 
@@ -86,6 +101,13 @@ export const SlackLink = z.object({
 });
 export type SlackLink = z.infer<typeof SlackLink>;
 
+/** Where Dazza calls Jev, and the key for it. A secret, hence 0600 and the keychain. */
+export const JevLink = z.object({
+  provider: z.enum(JEV_PROVIDER_IDS),
+  apiKey: z.string().min(1),
+});
+export type JevLink = z.infer<typeof JevLink>;
+
 export const Limits = z.object({
   checkedAt: z.iso.datetime(),
   windows: z.array(
@@ -103,6 +125,7 @@ const SECRET_FIELDS: Record<string, readonly string[]> = {
   'connection.json': ['apiKey'],
   'telegram.json': ['botToken'],
   'slack.json': ['botToken', 'appToken'],
+  'jev.json': ['apiKey'],
 };
 
 export class Config {
@@ -118,12 +141,22 @@ export class Config {
     for (const [file, fields] of Object.entries(SECRET_FIELDS)) {
       const raw = await this.readRaw(file);
       for (const field of fields) {
-        const value = raw?.[field];
-        if (isSealed(value)) places.add(this.secrets?.name ?? 'the system’s secret store');
-        else if (typeof value === 'string') places.add('Dazza’s config folder (owner-only)');
+        const place = this.placeOf(raw?.[field]);
+        if (place) places.add(place);
       }
     }
     return [...places];
+  }
+
+  /** Where the Jev key is kept, if there is one. */
+  async jevKeyKeptIn(): Promise<string | undefined> {
+    return this.placeOf((await this.readRaw('jev.json'))?.apiKey);
+  }
+
+  private placeOf(value: unknown): string | undefined {
+    if (isSealed(value)) return this.secrets?.name ?? 'the system’s secret store';
+    if (typeof value === 'string') return 'Dazza’s config folder (owner-only)';
+    return undefined;
   }
 
   async readSettings(): Promise<Settings> {
@@ -187,6 +220,18 @@ export class Config {
 
   async clearSlack(): Promise<void> {
     await this.remove('slack.json');
+  }
+
+  readJev(): Promise<JevLink | undefined> {
+    return this.read('jev.json', JevLink);
+  }
+
+  writeJev(link: JevLink): Promise<void> {
+    return this.write('jev.json', link);
+  }
+
+  async clearJev(): Promise<void> {
+    await this.remove('jev.json');
   }
 
   /** Where one Dazza window claims the Slack connection, so replies don't go astray. */
