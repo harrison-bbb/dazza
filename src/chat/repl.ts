@@ -64,14 +64,15 @@ import {
   shortcutsText,
   suggest,
 } from './commands.js';
+import { decisionsIn } from './decisions.js';
 import { farewell, greeting, NO_PLAN } from './describe.js';
 import { footerText, modelLabel } from './footer.js';
 import { offerJev } from './jev.js';
 import { projectEstimate } from './progress.js';
 import { ChatSession } from './session.js';
 import { runShell } from './shell.js';
-import { paint, stripAnsi } from './style.js';
-import { Terminal } from './terminal.js';
+import { paint, renderInline, stripAnsi } from './style.js';
+import { Terminal, WOKEN } from './terminal.js';
 
 /** Messages with more lines than this (big pastes, usually) aren't kept for ↑. */
 const MAX_RECALLED_LINES = 20;
@@ -216,7 +217,10 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
     onReply: (reply, origin) => {
       if (origin !== 'terminal') void channels.get(origin.channel)?.reply(reply, origin);
     },
-    onChatDone: () => void resumeIfReady(),
+    onChatDone: () => {
+      void resumeIfReady();
+      offerSoon();
+    },
     onBuildEvent: (event) => {
       if (event.type === 'task_started') refresh();
       // After waiting out a limit, say when work starts again.
@@ -354,6 +358,8 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
   /** The latest plan and permission requests, for the footer and menus (which can't wait on disk). */
   let latestPlan = startPlan;
   let pending = await store.readPendingPermissions();
+  /** Decisions already put to the user (see offerDecisions); ones from before are in the greeting. */
+  const asked = new Set(decisionsIn(startPlan, pending).map((d) => d.key));
   let approved = Boolean(startPlan?.approvedAt);
   let complete = Boolean(startPlan && isComplete(startPlan));
   // Milestones reached before this session were announced then.
@@ -366,6 +372,7 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
     latestPlan = plan;
     pending = await store.readPendingPermissions().catch(() => pending);
     terminal.setFooter(footer);
+    offerSoon();
     // Approved in the chat: Dazza's reply already says what's next.
     if (plan.approvedAt && !approved && !session.isBuilding && !session.isChatting) {
       say(`Plan approved. Run ${paint.bold('/build')} when you want me to start.`);
@@ -515,9 +522,67 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
   };
   process.once('SIGHUP', onHangup);
 
+  /**
+   * Decisions that come up while the user's here (a builder asking to run a
+   * command, work handed over) are put to them as a choice, as Claude Code
+   * asks for permission, when they aren't typing. Each is asked once; ones
+   * waiting from before are in the greeting instead.
+   */
+  function decisionsToOffer() {
+    return decisionsIn(latestPlan, pending).filter((d) => !asked.has(d.key));
+  }
+  function offerSoon() {
+    if (options.background || !terminal.interactive || commandRunning || session.isChatting) return;
+    if (decisionsToOffer().length > 0) terminal.wake();
+  }
+  const offerDecisions = async () => {
+    for (const decision of decisionsToOffer()) {
+      asked.add(decision.key);
+      const { task } = decision;
+      if (decision.kind === 'permission') {
+        const choice = await terminal.select(
+          `${task.id} ${task.title} asks to run: ${decision.command}${decision.why ? `  (${decision.why})` : ''}`,
+          [
+            {
+              label: 'Allow once',
+              hint: 'just this command, for this task',
+              value: 'allow' as const,
+            },
+            {
+              label: 'Don’t allow',
+              hint: 'it finds another way, or asks you',
+              value: 'deny' as const,
+            },
+            {
+              label: 'Decide later',
+              hint: `/allow ${task.id} or /deny ${task.id}`,
+              value: undefined,
+            },
+          ],
+        );
+        if (choice) say((await answerPermission(store, task.id, choice === 'allow')).message);
+      } else {
+        const choice = await terminal.select(`${task.id} ${task.title} is ready for your review`, [
+          { label: 'Try it', hint: 'start it and open it', value: 'try' as const },
+          { label: 'Accept', hint: 'merge it into your branch', value: 'accept' as const },
+          { label: 'Request changes', hint: 'say what to change', value: 'changes' as const },
+          { label: 'Look later', hint: '/review when you’re ready', value: undefined },
+        ]);
+        if (choice === 'try') await runCommand(`/try ${task.id}`, context);
+        if (choice === 'accept') say((await closeTask(store, task.id)).message);
+        if (choice === 'changes') {
+          const note = (await terminal.readLine({ prompt: 'What should change? ' }))?.trim();
+          if (note) say((await requestChanges(store, task.id, note)).message);
+        }
+      }
+    }
+    await resumeIfReady();
+  };
+
   /** When Ctrl-C was last pressed at an empty prompt: a second one soon after leaves. */
   let lastCancel = 0;
   while (!exiting) {
+    if (decisionsToOffer().length > 0) await offerDecisions();
     const input = await terminal.readLine({
       prompt: PROMPT,
       menu: (text) =>
@@ -541,6 +606,8 @@ async function chat(projectRoot: string, terminal: Terminal, options: ChatOption
         if (session.isChatting) void session.stopChat();
       },
     });
+    // Woken to ask about something that came up: ask, then read again.
+    if (input === WOKEN) continue;
     if (input === undefined) {
       if (hungUp) break;
       // Piped input ran out: let queued work finish.
@@ -830,7 +897,7 @@ let write: (text: string) => void = (text) => console.log(text);
 
 /** Print Dazza's words with a little breathing room, indented under a marker. */
 function say(text: string): void {
-  const [first = '', ...rest] = text.trim().split('\n');
+  const [first = '', ...rest] = renderInline(text.trim()).split('\n');
   const body = rest.map((line) => (line.trim() ? `\n  ${line}` : '\n')).join('');
   write(`\n${paint.hex(BRAND, '●')} ${first}${body}\n`);
 }
