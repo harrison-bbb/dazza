@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **A terminal that feels like Claude Code's.**
+  - Replies render Markdown: headings, lists, code blocks and tables. Code blocks used to lose a backtick.
+  - A line under the prompt shows the model, how much room the conversation has left, and what's waiting on you. `?` lists the shortcuts.
+  - Builds show the highlights (tasks starting, subtasks done, questions, handovers), with a live line per building task. Ctrl+O shows every step again.
+  - When a builder asks to run a command or hands work over, Dazza asks you there and then, if you're not typing: Allow once, Try it, Accept, Request changes.
+  - Tab after `/accept`, `/changes`, `/try`, `/allow` and the rest offers just the tasks that fit. The commands that fit where the project is come first in the menu.
+  - Ctrl-C at an empty prompt asks for a second press before leaving (it used to stop a build straight away). Leaving says what's waiting and how to pick the conversation back up.
+  - Ctrl+R searches earlier messages, Option+arrows move a word, Option+Backspace deletes one, Ctrl+L clears the screen.
+  - `/model` is a picker. Messages sent while Dazza replies say they're queued. `/review` shows unproven criteria. `/help` lines up.
+  - The big logo shows on the first launch; after that the header is one line. The greeting is a list, and quotes what a blocked task is asking.
+
 - **`/jev`: the right model for each task, and work checked against its scope.** Connect Jev, TypeSafe's classifier, with your own key through TypeSafe, OpenRouter or Vercel AI Gateway. Each part switches on and off by itself in `/jev`:
   - **Model routing.** Before a builder starts a task, Jev judges what it needs, and simple work builds on a cheaper, faster model. It never goes above the model you chose with `/model`, and keeps it for anything touching money, credentials or production. The choice shows on the task's timeline.
   - **Scope check.** When a builder hands work over, Jev checks whether its evidence shows each criterion is met, rather than just saying so. Weak work goes back to the builder before you see it (twice at most). What's still doubtful is marked **unproven** in your review, on the board and on your phone.

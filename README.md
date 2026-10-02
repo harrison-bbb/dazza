@@ -128,6 +128,8 @@ Just type to talk to Dazza, about anything in the project. Type `/` for commands
 | `/slack`, `/telegram` | Connect (or check) Slack or Telegram. `-disconnect` to unlink |
 | `/logout`, `/help`, `/exit` | |
 
+At the prompt, `?` lists the keyboard shortcuts: Ctrl+R searches what you've typed before, Tab completes commands, task IDs and files, Option+arrows move a word at a time, and Ctrl-C twice leaves. The line under the prompt shows the model, how much room the conversation has left, and what's waiting on you. When a builder asks to run a command, or hands work over, Dazza asks you right there if you're not typing.
+
 `/settings` has everything that changes how Dazza works, each with a sensible default. Each also has its own command, for anyone who'd rather type it:
 
 | Setting | Default | Command |
@@ -135,6 +137,7 @@ Just type to talk to Dazza, about anything in the project. Type `/` for commands
 | Keep building while you review: the next tasks start on top of work waiting for your review. Sending it back or starting it over carries through | on | `/build-ahead on\|off` |
 | Keep building after you close Dazza: `dazza stop`, or "stop" from your phone, stops it; opening `dazza` takes it back | off | `/background on\|off` |
 | Tasks built at once: more finishes sooner, but uses your plan's limits faster | 2 | `/parallel 1–3` |
+| Show every build step: every read, edit and command, or just the highlights with a live line per task | off | Ctrl+O |
 | Desktop notifications when a task needs you | on | `/notify on\|off` |
 | Approving from your phone merges: off keeps merging to this computer | on | `/phone-merge on\|off` |
 | Use your MCP servers in chat (builders never get them) | on | `/mcp on\|off` |
